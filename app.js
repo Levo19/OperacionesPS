@@ -1,7 +1,6 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzi5aD18Xj0ikbQJZkiMSjZPkMg3HVFneL6XTEirRVg2MISZyDN-tTc-0OuUkakGXYWHw/exec';
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("SOT MVP Inicializado - Fetcheando datos en vivo...");
     fetchDashboardData();
 });
 
@@ -16,29 +15,30 @@ function switchTab(tabId, title, btnElement) {
     document.getElementById('app-title').innerText = title;
 }
 
+// ==========================
+// RENDERIZADO
+// ==========================
 function fetchDashboardData() {
+    toggleSpinner(true);
     fetch(GAS_URL + "?action=getDashboardData")
         .then(res => res.json())
         .then(data => {
-            if(data.status === 'error') {
-                console.error("Error del backend:", data.error);
-                return;
-            }
+            toggleSpinner(false);
+            if(data.status === 'error') return console.error("Error backend:", data.error);
             renderOperaciones(data.operaciones_abiertas);
             renderReservas(data.sala_de_espera);
             renderCaja(data.movimientos_dia);
         })
         .catch(err => {
-            console.error(err);
-            document.getElementById('operaciones-container').innerHTML = `<div class="text-center text-red-500 py-5">Error conectando con la URL del Servidor. Intenta actualizar.</div>`;
-            document.getElementById('reservas-container').innerHTML = `<div class="text-center text-red-500 py-5">Error conectando al servidor</div>`;
+            toggleSpinner(false);
+            alert("Hubo un error cargando los datos. Revisa la URL y tus permisos CORS.");
         });
 }
 
 function renderOperaciones(operaciones) {
     const container = document.getElementById('operaciones-container');
     if(!operaciones || operaciones.length === 0) {
-        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> No hay lanchas abiertas hoy.</div>`;
+        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> No hay lanchas programadas.</div>`;
         return;
     }
     
@@ -47,18 +47,22 @@ function renderOperaciones(operaciones) {
         return `
         <div class="bg-white rounded-2xl shadow-sm p-4 mb-4 border border-gray-100 relative overflow-hidden">
             <div class="absolute top-0 right-0 w-2 h-full bg-green-500"></div>
-            <div class="flex justify-between items-center mb-3">
-                <h3 class="font-bold text-lg text-blue-900"><i class="fas fa-ship fa-sm mr-2 text-blue-400"></i>${op.bote} <span class="text-xs text-gray-400">(${op.id})</span></h3>
-                <span class="bg-green-100 text-green-800 text-xs px-2.5 py-1 rounded-full font-bold">${op.ocupados} / ${op.capacidad} PAX</span>
+            <div class="flex justify-between items-center mb-1">
+                <h3 class="font-extrabold text-lg text-blue-900"><i class="fas fa-ship fa-sm mr-2 text-blue-400"></i>${op.bote}</h3>
+                <span class="bg-green-100 text-green-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">${op.ocupados} / ${op.capacidad} PAX</span>
             </div>
-            <div class="w-full bg-gray-100 rounded-full h-2.5 mb-3">
-                <div class="bg-gradient-to-r from-green-400 to-green-500 h-2.5 rounded-full" style="width: ${porcentaje}%"></div>
+            <span class="text-[10px] text-gray-400 font-bold block mb-3 uppercase tracking-wider ml-6">CÓDIGO: <span class="text-gray-700">${op.id}</span></span>
+            
+            <div class="w-full bg-gray-100 rounded-full h-2 mb-3">
+                <div class="bg-gradient-to-r from-green-400 to-green-500 h-2 rounded-full" style="width: ${porcentaje}%"></div>
             </div>
-            <div class="text-sm text-gray-500 flex justify-between mb-4">
-                <span><i class="fas fa-anchor text-gray-300 mr-1"></i>Capitán: ${op.capitan}</span>
+            <div class="text-xs text-gray-600 flex justify-between mb-4 font-medium px-1">
+                <span><i class="fas fa-user-tie text-gray-300 mr-1"></i>Capitán: ${op.capitan}</span>
                 <span><i class="fas fa-clock text-gray-300 mr-1"></i>Salida: ${op.hora_salida}</span>
             </div>
-            <button class="w-full bg-blue-600 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-700 shadow-sm transition active:scale-95">Gestionar Pasajeros</button>
+            <button class="w-full bg-blue-50 text-blue-700 font-bold py-2.5 rounded-xl border border-blue-200 hover:bg-blue-100 shadow-sm transition active:scale-95" onclick="alert('La funcionalidad Detalle de Manifestos y Reubicar Pasajeros está en construcción. Permite ver nombres detallados de quienes subieron.')">
+                <i class="fas fa-users mr-1"></i> Gestionar Pasajeros
+            </button>
         </div>
         `;
     }).join('');
@@ -67,7 +71,7 @@ function renderOperaciones(operaciones) {
 function renderReservas(reservas) {
     const container = document.getElementById('reservas-container');
     if(!reservas || reservas.length === 0) {
-        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-clipboard-list text-4xl mb-3 opacity-20 block"></i> No hay pasajeros en sala de espera.</div>`;
+        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-clipboard-list text-4xl mb-3 opacity-20 block"></i> No hay pasajeros pendientes en sala.</div>`;
         return;
     }
 
@@ -77,15 +81,15 @@ function renderReservas(reservas) {
             <div class="flex justify-between items-start">
                 <div>
                     <h3 class="font-bold text-gray-800 text-lg">${res.cliente}</h3>
-                    <p class="text-xs text-gray-500 mt-0.5"><i class="fas fa-building mr-1"></i>Agencia ID: ${res.contacto}</p>
+                    <p class="text-xs text-gray-500 mt-0.5"><i class="fas fa-building mr-1"></i>Agn. ID: ${res.contacto} | Res: ${res.id}</p>
                 </div>
                 <div class="text-right">
-                    <span class="font-bold text-xl text-blue-600">${res.pax} <span class="text-sm text-gray-400">PAX</span></span>
-                    <p class="text-xs text-gray-400 mt-1 font-semibold">${res.hora}</p>
+                    <span class="font-black text-xl text-blue-600">${res.pax} <span class="text-xs font-semibold text-gray-400 uppercase">PAX</span></span>
+                    <p class="text-[10px] text-gray-400 mt-1 font-bold uppercase">${res.hora}</p>
                 </div>
             </div>
             <div class="flex mt-4 space-x-2">
-                <button class="flex-[2] bg-green-500 text-white py-2 rounded-xl text-sm font-bold shadow-sm hover:bg-green-600 transition active:scale-95" onclick="asignarBote('${res.id}')"><i class="fas fa-check mr-1"></i> Asignar Bote</button>
+                <button class="flex-[2] bg-green-500 text-white py-2.5 rounded-xl text-sm font-bold shadow-md shadow-green-500/20 hover:bg-green-600 transition active:scale-95 border border-green-600" onclick="prepararAsignacion('${res.id}', '${res.cliente}', '${res.pax}', '${res.contacto}')"><i class="fas fa-clipboard-check mr-1"></i> Abordar Lancha</button>
             </div>
         </div>
         `;
@@ -95,118 +99,121 @@ function renderReservas(reservas) {
 function renderCaja(movimientos) {
     const container = document.getElementById('caja-historial-container');
     if(!movimientos || movimientos.length === 0) {
-        container.innerHTML = `<div class="px-4 py-5 text-center text-sm text-gray-500">No hay movimientos registrados hoy.</div>`;
+        container.innerHTML = `<div class="px-4 py-5 text-center text-sm text-gray-500">Sin movimientos.</div>`;
         return;
     }
-
     container.innerHTML = movimientos.map(mov => {
         let isIngreso = parseFloat(mov.monto) > 0 || mov.tipo === 'Caja_Chica';
-        let colorText = isIngreso ? 'text-green-600' : 'text-red-600';
-        let colorBg = isIngreso ? 'bg-green-50' : 'bg-red-50';
+        let clsTxt = isIngreso ? 'text-green-600' : 'text-red-500';
+        let clsBg = isIngreso ? 'bg-green-50' : 'bg-red-50';
         let signo = isIngreso ? '+' : '-';
         return `
-        <div class="px-4 py-3.5 flex justify-between items-center border-b border-gray-100">
+        <div class="px-5 py-3.5 flex justify-between items-center border-b border-gray-100 bg-white">
             <div>
-                <p class="font-bold text-gray-800">${mov.tipo.replace('_', ' ')}</p>
-                <p class="text-xs text-gray-500 font-medium">${mov.hora} • ${mov.descripcion}</p>
+                <p class="font-bold text-gray-800 text-sm">${mov.tipo.replace('_', ' ')}</p>
+                <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mt-0.5">${mov.hora}</p>
             </div>
-            <span class="${colorText} font-bold ${colorBg} px-2 py-1 rounded-lg">${signo} S/ ${Math.abs(mov.monto).toFixed(2)}</span>
+            <span class="${clsTxt} font-black ${clsBg} px-2.5 py-1 rounded-xl shadow-sm text-sm border border-gray-100">${signo} S/ ${Math.abs(mov.monto).toFixed(2)}</span>
         </div>
         `;
     }).join('');
 }
 
-function abrirModalCaja(tipo) {
-    const monto = prompt(`Ingrese el monto para: ${tipo}\n(Ejemplo: 50)`);
-    if(monto && !isNaN(monto)) {
-        
-        fetch(GAS_URL, {
-            method: 'POST',
-            redirect: 'follow', // Necesario para Google Apps Script
-            body: JSON.stringify({
-                action: 'registrar_caja',
-                payload: {
-                    categoria: tipo.replace(' ', '_'),
-                    monto: parseFloat(monto),
-                    metodo_pago: 'Efectivo',
-                    operador: 'Operador_Demo'
-                }
-            }),
-            headers: {'Content-Type': 'text/plain;charset=utf-8'}
-        }).then(res => res.json()).then(data => {
-            alert(`Se registró exitosamente: ${tipo}`);
-            fetchDashboardData(); 
-        }).catch(err => {
-            alert('¡Listo! Se registró el movimiento (Sin embargo revisa CORS si marca error).');
-            fetchDashboardData();
-        });
-
-    } else if (monto) {
-        alert("Por favor ingrese un monto numérico válido.");
-    }
+// ==========================
+// CONTROL DE MODALES UI
+// ==========================
+function abrirModal(id) {
+    document.getElementById('modal-backdrop').classList.remove('hidden');
+    document.getElementById(id).classList.remove('hidden');
 }
 
-function cerrarOperacion() {
-    const fileInput = document.getElementById('zarpe-foto');
-    if (!fileInput.files.length) {
-        alert('Selecciona o toma la foto del documento Zarpe para continuar.');
-        return;
-    }
-
-    const btn = document.querySelector('button[onclick="cerrarOperacion()"]');
-    btn.innerHTML = '<i class="fas fa-circle-notch fa-spin mr-2"></i> PROCESANDO...';
-    btn.disabled = true;
-
-    // Simulate API logic to Drive
-    setTimeout(() => {
-        btn.classList.add('hidden');
-        document.getElementById('pdf-result').classList.remove('hidden');
-    }, 2500);
+function cerrarModales() {
+    document.getElementById('modal-backdrop').classList.add('hidden');
+    document.querySelectorAll('[id^="modal-"]').forEach(m => m.classList.add('hidden'));
 }
 
-document.getElementById('zarpe-foto')?.addEventListener('change', function(e) {
-    if(this.files && this.files.length > 0) {
-        document.getElementById('file-name').innerText = "Archivo listo: " + this.files[0].name;
-    }
-});
-
-function abrirNuevaOperacion() {
-    let idBote = prompt("Ingresa el ID del Bote a abrir (Ej: BOT-01):");
-    if(!idBote) return;
-    fetchPost('abrir_operacion', { id_bote: idBote }).then(() => fetchDashboardData());
+// ==========================
+// FUNCIONES POST BOTONES
+// ==========================
+function confirmarAbrirBote() {
+    let id_bote = document.getElementById('input-bote-id').value.toUpperCase().trim();
+    let id_capitan = document.getElementById('input-capitan-id').value.toUpperCase().trim();
+    if(!id_bote) return alert("❌ El ID de la lancha es obligatorio.");
+    
+    cerrarModales(); toggleSpinner(true);
+    fetchPost('abrir_operacion', { id_bote, id_capitan }).then(() => fetchDashboardData());
 }
 
-function crearNuevaReserva() {
-    let cliente = prompt("Nombre del cliente o Agencia (Ej: Familia Torres):");
-    if(!cliente) return;
-    let pax = prompt("Cantidad de Pasajeros (PAX):");
-    if(!pax) return;
+function confirmarNuevaReserva() {
+    let cliente = document.getElementById('input-reserva-cliente').value.trim();
+    let agencia = document.getElementById('input-reserva-agencia').value.toUpperCase().trim() || 'DIRECTO';
+    let pax = document.getElementById('input-reserva-pax').value.trim();
+    
+    if(!cliente || !pax) return alert("❌ Cliente y PAX son obligatorios.");
+    
+    cerrarModales(); toggleSpinner(true);
     fetchPost('nueva_reserva', {
         fecha: new Date().toLocaleDateString(),
-        hora: 'Libre', 
-        id_contacto: 'CON-00', 
-        cliente: cliente,
-        cant_pax: pax
+        hora: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), 
+        id_contacto: agencia, 
+        cliente, cant_pax: pax
     }).then(() => fetchDashboardData());
 }
 
-function asignarBote(id_reserva) {
-    if(confirm(`¿Confirmas que la reserva ${id_reserva} abordó y sale de Sala de Espera?`)) {
-        fetchPost('asignar_reserva', { id_reserva: id_reserva }).then(() => fetchDashboardData());
+function prepararAsignacion(id_reserva, cliente, pax, contacto) {
+    document.getElementById('hidden-reserva-id').value = id_reserva;
+    document.getElementById('hidden-reserva-pax').value = pax;
+    document.getElementById('hidden-reserva-agencia').value = contacto;
+    document.getElementById('text-cliente').innerText = cliente;
+    document.getElementById('text-pax').innerText = pax;
+    
+    abrirModal('modal-asignar-bote');
+}
+
+function confirmarAsignacion() {
+    let id_reserva = document.getElementById('hidden-reserva-id').value;
+    let pax = document.getElementById('hidden-reserva-pax').value;
+    let contacto = document.getElementById('hidden-reserva-agencia').value;
+    let id_operacion = document.getElementById('input-asignar-op').value.toUpperCase().trim();
+    
+    if(!id_operacion || !id_operacion.startsWith('OP-')) return alert("❌ Escribe el código exacto de la Operación (Ej: OP-12345).");
+    
+    cerrarModales(); toggleSpinner(true);
+    fetchPost('asignar_reserva', { id_reserva, id_operacion, cant_pax: pax, id_contacto: contacto })
+    .then(() => fetchDashboardData());
+}
+
+function registrarCajaRapida(tipo) {
+    let m = prompt(`💰 Ingrese el MONTO EXACTO de efectivo para:\n▶ ${tipo}`);
+    if(m && !isNaN(m)) {
+        toggleSpinner(true);
+        fetchPost('registrar_caja', {
+            categoria: tipo.replace(' ', '_'),
+            monto: parseFloat(m),
+            metodo_pago: 'Efectivo',
+            operador: 'Op_Turno'
+        }).then(() => fetchDashboardData());
     }
 }
 
+// Fetch Helper Unificado
 function fetchPost(action, payload) {
     return fetch(GAS_URL, {
-        method: 'POST',
-        redirect: 'follow',
+        method: 'POST', redirect: 'follow', // OJO: fundamental el follow para redirecciones 302
         body: JSON.stringify({ action: action, payload: payload }),
         headers: {'Content-Type': 'text/plain;charset=utf-8'}
     })
     .then(res => res.json())
     .then(data => { alert(data.message); return data; })
     .catch(err => {
-        alert('Acción completada. (Se detectó bloqueo CORS de browser pero los datos se enviaron a Excel)');
-        return { message: 'ok' };
+        // En Apps Script el 302 causa fetch fail a veces, pero el script atrás corre bien.
+        return { message: 'ok' }; 
     });
+}
+
+function toggleSpinner(show) {
+    const s = document.getElementById('global-spinner');
+    const u = document.getElementById('btn-refresh');
+    if(show) { s.classList.remove('hidden'); u.classList.add('hidden'); }
+    else { s.classList.add('hidden'); u.classList.remove('hidden'); }
 }
