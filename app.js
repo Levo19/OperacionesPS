@@ -25,6 +25,7 @@ function fetchDashboardData() {
         .then(data => {
             toggleSpinner(false);
             if(data.status === 'error') return console.error("Error backend:", data.error);
+            window.operacionesData = data.operaciones_abiertas || [];
             renderOperaciones(data.operaciones_abiertas);
             renderReservas(data.sala_de_espera);
             renderCaja(data.movimientos_dia);
@@ -60,7 +61,7 @@ function renderOperaciones(operaciones) {
                 <span><i class="fas fa-user-tie text-gray-300 mr-1"></i>Capitán: ${op.capitan}</span>
                 <span><i class="fas fa-clock text-gray-300 mr-1"></i>Salida: ${op.hora_salida}</span>
             </div>
-            <button class="w-full bg-blue-50 text-blue-700 font-bold py-2.5 rounded-xl border border-blue-200 hover:bg-blue-100 shadow-sm transition active:scale-95" onclick="alert('La funcionalidad Detalle de Manifestos y Reubicar Pasajeros está en construcción. Permite ver nombres detallados de quienes subieron.')">
+            <button class="w-full bg-blue-50 text-blue-700 font-bold py-2.5 rounded-xl border border-blue-200 hover:bg-blue-100 shadow-sm transition active:scale-95" onclick="abrirModalGestionBote('${op.id}')">
                 <i class="fas fa-users mr-1"></i> Gestionar Pasajeros
             </button>
         </div>
@@ -208,6 +209,58 @@ function fetchPost(action, payload) {
     .catch(err => {
         // En Apps Script el 302 causa fetch fail a veces, pero el script atrás corre bien.
         return { message: 'ok' }; 
+    });
+}
+
+function abrirModalGestionBote(id_op) {
+    let op = window.operacionesData.find(o => o.id === id_op);
+    if(!op) return;
+    
+    document.getElementById('gestion-op-id').innerText = op.id;
+    document.getElementById('gestion-bote-nombre').innerText = op.bote;
+    document.getElementById('hidden-gestion-op').value = op.id;
+    
+    let listaHTML = op.manifiesto.map(m => `
+        <div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-2 rounded-lg mb-2">
+            <div>
+                <span class="text-xs font-bold text-gray-800 uppercase block">${m.contacto}</span>
+                <span class="text-[10px] text-gray-400 font-bold">${m.tipo.replace('_',' ')}</span>
+            </div>
+            <div class="text-right">
+                <span class="font-black text-blue-600">${m.pax} PAX</span>
+                <span class="text-[10px] text-gray-500 block">S/ ${m.monto}</span>
+            </div>
+        </div>
+    `).join('');
+    if(!listaHTML) listaHTML = '<p class="text-xs text-gray-400 text-center py-3">Lancha vacía, no hay abordajes.</p>';
+    
+    document.getElementById('gestion-manifiesto-lista').innerHTML = listaHTML;
+    abrirModal('modal-gestion-bote');
+}
+
+function confirmarVentaDirecta() {
+    let id_op = document.getElementById('hidden-gestion-op').value;
+    let tipo = document.getElementById('input-vd-tipo').value;
+    let contacto = document.getElementById('input-vd-contacto').value.trim();
+    let pax = document.getElementById('input-vd-pax').value.trim();
+    let precio = document.getElementById('input-vd-precio').value.trim();
+    
+    if(!contacto || !pax || !precio) return alert("❌ Cliente, Pax y Precio total son obligatorios.");
+    if(parseFloat(pax) <= 0) return alert("Cantidad de pasajeros errónea");
+    
+    cerrarModales(); toggleSpinner(true);
+    fetchPost('registrar_movimiento_pax', {
+        id_operacion: id_op,
+        tipo: tipo,
+        contacto: contacto.toUpperCase(),
+        pax: pax,
+        precio_unitario: (parseFloat(precio)/parseFloat(pax)).toFixed(2),
+        monto_total: parseFloat(precio)
+    }).then(() => {
+        document.getElementById('input-vd-contacto').value = '';
+        document.getElementById('input-vd-pax').value = '';
+        document.getElementById('input-vd-precio').value = '';
+        fetchDashboardData();
     });
 }
 
