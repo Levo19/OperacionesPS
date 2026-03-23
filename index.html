@@ -93,6 +93,22 @@
                     <option value="">Cargando...</option>
                 </select>
             </div>
+            <div>
+                <label class="text-[10px] font-bold text-blue-800 uppercase tracking-widest block mb-1"><i class="fas fa-clock mr-1"></i> Hora de Salida</label>
+                <select id="select-bote-hora" class="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm font-bold text-gray-700 shadow-sm outline-none focus:border-blue-400">
+                    <option value="07:00 AM">07:00 AM</option>
+                    <option value="08:00 AM">08:00 AM</option>
+                    <option value="09:00 AM">09:00 AM</option>
+                    <option value="10:00 AM">10:00 AM</option>
+                    <option value="11:00 AM">11:00 AM</option>
+                    <option value="12:00 PM">12:00 PM</option>
+                    <option value="01:00 PM">01:00 PM</option>
+                    <option value="02:00 PM">02:00 PM</option>
+                    <option value="03:00 PM">03:00 PM</option>
+                    <option value="04:00 PM">04:00 PM</option>
+                    <option value="05:00 PM">05:00 PM</option>
+                </select>
+            </div>
             <div class="flex space-x-2">
                 <div class="flex-1">
                     <label class="text-[10px] font-bold text-gray-700 uppercase tracking-widest block mb-1"><i class="fas fa-user-tie mr-1"></i> Capitán</label>
@@ -188,9 +204,11 @@
         <input type="hidden" id="hidden-reserva-agencia">
         
         <div class="bg-blue-50 p-4 rounded-2xl border border-blue-100 mb-5">
-            <label class="text-xs font-bold text-blue-800 uppercase tracking-widest block mb-2"><i class="fas fa-ship mr-1"></i> ¿A qué turno (Operación) suben?</label>
-            <input type="text" id="input-asignar-op" class="w-full bg-white border border-blue-200 rounded-xl p-3 text-sm focus:outline-blue-600 font-bold uppercase placeholder:font-normal" placeholder="Código (OP-XXXX)">
-            <p class="text-[10px] text-blue-500 mt-2 font-semibold">* Mira el código OP- en la parte superior del bote en la pestaña Muelle.</p>
+            <label class="text-xs font-bold text-blue-800 uppercase tracking-widest block mb-2"><i class="fas fa-ship mr-1"></i> ¿A qué lancha suben?</label>
+            <select id="select-asignar-op" class="w-full bg-white border border-blue-200 rounded-xl p-3 text-sm focus:outline-blue-600 font-bold shadow-sm">
+                <option value="">Cargando...</option>
+            </select>
+            <p class="text-[10px] text-blue-500 mt-2 font-semibold">* Solo se muestran lanchas abiertas (hoy).</p>
         </div>
 
         <div class="flex space-x-3">
