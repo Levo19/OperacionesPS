@@ -38,10 +38,11 @@ function fetchDashboardData() {
             if(data.status === 'error') return console.error("Error backend:", data.error);
             window.operacionesData = data.operaciones_abiertas || [];
             window.contactosData = data.catalogos ? data.catalogos.contactos : [];
+            window.reservasData = data.sala_de_espera || [];
             
             renderCatalogos(data.catalogos);
-            renderOperaciones(data.operaciones_abiertas);
-            renderReservas(data.sala_de_espera);
+            renderOperaciones(window.operacionesData);
+            renderReservas(window.reservasData);
             renderCaja(data.movimientos_dia);
         })
         .catch(err => {
@@ -64,9 +65,11 @@ function fetchDashboardDataBg() {
             if(data.status === 'error') return;
             window.operacionesData = data.operaciones_abiertas || [];
             window.contactosData = data.catalogos ? data.catalogos.contactos : [];
+            window.reservasData = data.sala_de_espera || [];
+            
             renderCatalogos(data.catalogos);
-            renderOperaciones(data.operaciones_abiertas);
-            renderReservas(data.sala_de_espera);
+            renderOperaciones(window.operacionesData);
+            renderReservas(window.reservasData);
             renderCaja(data.movimientos_dia);
             let isModalOpen = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
             let opId = document.getElementById('hidden-gestion-op').value;
@@ -95,25 +98,45 @@ function renderOperaciones(operaciones) {
     
     container.innerHTML = opHoy.map(op => {
         let porcentaje = op.capacidad > 0 ? (op.ocupados / op.capacidad) * 100 : 0;
+        let isViaje = op.estado === 'En_Viaje';
+        let barColor = isViaje ? 'bg-orange-500' : 'bg-green-500';
+        let titleColor = isViaje ? 'text-orange-900' : 'text-blue-900';
+        let bgStyle = isViaje ? 'bg-orange-50 border-orange-200' : 'bg-white border-gray-100';
+        let tagEstado = isViaje ? `<span class="absolute top-2 right-4 bg-orange-200 text-orange-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-orange-300 z-10 animate-pulse"><i class="fas fa-water mr-1"></i>En Viaje</span>` : '';
+
         return `
-        <div class="bg-white rounded-2xl shadow-sm p-4 mb-4 border border-gray-100 relative overflow-hidden">
-            <div class="absolute top-0 right-0 w-2 h-full bg-green-500"></div>
-            <div class="flex justify-between items-center mb-1">
-                <h3 class="font-extrabold text-lg text-blue-900"><i class="fas fa-ship fa-sm mr-2 text-blue-400 ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
-                <span class="bg-green-100 text-green-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">${op.ocupados} / ${op.capacidad} PAX</span>
+        <div class="${bgStyle} rounded-2xl shadow-sm p-4 mb-4 border relative overflow-hidden">
+            ${tagEstado}
+            <div class="absolute top-0 left-0 w-2 h-full ${barColor}"></div>
+            <div class="flex justify-between items-center mb-1 pl-3">
+                <h3 class="font-extrabold text-lg flex-1 truncate ${titleColor}"><i class="fas fa-ship fa-sm mr-2 ${isViaje ? 'text-orange-400' : 'text-blue-400'} ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
+                <span class="bg-white border text-gray-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ml-2 shrink-0">${op.ocupados} / ${op.capacidad} PAX</span>
             </div>
-            <span class="text-[10px] text-gray-400 font-bold block mb-3 uppercase tracking-wider ml-6">CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
+            <span class="text-[10px] text-gray-400 font-bold block mb-3 uppercase tracking-wider pl-3 ml-6">CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
             
             <div class="w-full bg-gray-100 rounded-full h-2 mb-3">
-                <div class="bg-gradient-to-r from-green-400 to-green-500 h-2 rounded-full" style="width: ${porcentaje}%"></div>
+                <div class="bg-gradient-to-r ${isViaje ? 'from-orange-400 to-orange-500' : 'from-green-400 to-green-500'} h-2 rounded-full" style="width: ${porcentaje}%"></div>
             </div>
-            <div class="text-[10px] text-gray-500 flex justify-between items-center mb-4 font-medium px-2 py-1.5 bg-gray-50 border border-gray-200 rounded-lg">
-                <span class="truncate"><i class="fas fa-user-tie text-blue-400 mr-1"></i><b class="text-gray-700">${op.capitan}</b></span>
+            <div class="text-[10px] text-gray-500 flex justify-between items-center mb-4 font-medium px-2 py-1.5 bg-white border border-gray-200 rounded-lg shadow-inner">
+                <span class="truncate"><i class="fas fa-user-tie ${isViaje ? 'text-orange-400' : 'text-blue-400'} mr-1"></i><b class="text-gray-700">${op.capitan}</b></span>
                 <span class="truncate text-right"><i class="fas fa-user-tag text-green-400 mr-1"></i><b class="text-gray-700">${op.guia}</b></span>
             </div>
-            <button class="w-full bg-blue-50 text-blue-700 font-bold py-2.5 rounded-xl border border-blue-200 hover:bg-blue-100 shadow-sm transition active:scale-95" onclick="abrirModalGestionBote('${op.id}')">
-                <i class="fas fa-users mr-1"></i> Gestionar Pasajeros
-            </button>
+            ${!isViaje ? `
+            <div class="flex space-x-2 mt-2">
+                <button class="flex-[2] bg-blue-50 text-blue-700 font-bold py-2.5 rounded-xl border border-blue-200 hover:bg-blue-100 shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
+                    <i class="fas fa-users mr-1.5"></i> Gest. PAX
+                </button>
+                <button class="flex-1 bg-green-500 text-white font-bold py-2.5 rounded-xl border border-green-600 shadow-md transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarZarpe('${op.id}')">
+                    <i class="fas fa-anchor mr-1.5"></i> Zarpar
+                </button>
+            </div>
+            ` : `
+            <div class="mt-2 w-full">
+                <button class="w-full bg-orange-100 text-orange-800 font-bold py-2.5 rounded-xl border border-orange-200 hover:bg-orange-200 shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
+                    <i class="fas fa-clipboard-list mr-1.5"></i> Ver Manifiesto
+                </button>
+            </div>
+            `}
         </div>
         `;
     }).join('');
@@ -122,11 +145,15 @@ function renderOperaciones(operaciones) {
 function renderReservas(reservas) {
     const container = document.getElementById('reservas-container');
     let hoy = getHoyLocal();
+    let hoyPartes = hoy.split('-');
+    let formatLocal = `${hoyPartes[2]}/${hoyPartes[1]}/${hoyPartes[0]}`; // e.g., 26/03/2026
     
     let resAMostrar = reservas.filter(r => {
-        let isHoy = String(r.fecha).trim() === hoy || !r.fecha;
-        let isMine = String(r.creado_por).trim() === String(myOpName).trim();
-        return isHoy || isMine;
+        let isSyncing = r.id === 'Creando...';
+        let f = String(r.fecha).trim();
+        let isHoy = f === hoy || f === formatLocal || !r.fecha;
+        let isMine = String(r.creado_por || '').trim().toLowerCase() === String(myOpName).trim().toLowerCase();
+        return isHoy || isMine || isSyncing;
     });
 
     if(!resAMostrar || resAMostrar.length === 0) {
@@ -135,28 +162,31 @@ function renderReservas(reservas) {
     }
 
     container.innerHTML = resAMostrar.map(res => {
-        let isHoy = String(res.fecha).trim() === hoy || !res.fecha;
-        let isFutureForMe = !isHoy; // Si pasa el filtro y no es de hoy, es porque es MIA y del Futuro.
+        let isSyncing = res.id === 'Creando...';
+        let f = String(res.fecha).trim();
+        let isHoy = f === hoy || f === formatLocal || !res.fecha;
+        let isFutureForMe = !isHoy && !isSyncing;
         
-        let cardClasses = isFutureForMe ? "opacity-60 grayscale bg-gray-50" : "bg-white border-l-yellow-400";
-        let btnClasses = isFutureForMe ? "pointer-events-none opacity-50 bg-gray-300 border-gray-300 text-gray-500" : "bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600";
-        let btnIcon = isFutureForMe ? "fa-lock" : "fa-clipboard-check";
-        let btnText = isFutureForMe ? "No disponible hoy" : "Abordar Lancha";
-        let tagFecha = isHoy ? `<span class="bg-yellow-100 text-yellow-800 text-[9px] px-2 rounded font-bold mr-1">HOY</span>` : `<span class="bg-gray-200 text-gray-700 text-[9px] px-2 rounded font-bold mr-1">${res.fecha}</span>`;
+        let cardClasses = isSyncing ? "bg-yellow-50 border-yellow-300 border-l-[4px] opacity-90 animate-pulse border-y border-r" : (isFutureForMe ? "opacity-60 grayscale bg-gray-50 border-gray-200 border" : "bg-white border-blue-500 border-l-[4px] border-y border-r border-y-gray-100 border-r-gray-100");
+        let btnClasses = isSyncing ? "pointer-events-none bg-yellow-400 text-white font-bold" : (isFutureForMe ? "pointer-events-none opacity-50 bg-gray-300 border-gray-300 text-gray-500" : "bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600");
+        let btnIcon = isSyncing ? "fa-sync-alt fa-spin" : (isFutureForMe ? "fa-lock" : "fa-clipboard-check");
+        let btnText = isSyncing ? "Registrando..." : (isFutureForMe ? "No disponible hoy" : "Abordar Lancha");
+        let tagFecha = isHoy ? `<span class="bg-green-100 text-green-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-green-200">HOY</span>` : `<span class="bg-yellow-100 text-yellow-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-yellow-200">${res.fecha}</span>`;
 
         return `
-        <div class="${cardClasses} rounded-2xl shadow-sm p-4 border block mb-3 transition-all">
-            <div class="flex justify-between items-start">
+        <div class="${cardClasses} rounded-2xl shadow-sm p-4 block mb-3 transition-all relative overflow-hidden">
+            ${isSyncing ? '<div class="absolute top-2 right-3 text-[10px] items-center text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i> Nube</div>' : ''}
+            <div class="flex justify-between items-start relative z-10">
                 <div>
-                    <h3 class="font-bold text-gray-800 text-lg">${res.cliente}</h3>
-                    <p class="text-[10px] text-gray-500 mt-1 uppercase font-bold tracking-wider">${tagFecha} <i class="fas fa-building text-xs mr-0.5"></i> ${res.contacto.replace('_',' ')}</p>
+                    <h3 class="font-extrabold text-gray-800 text-lg">${res.cliente}</h3>
+                    <p class="text-[10px] text-gray-500 mt-1 uppercase font-bold tracking-wider flex items-center">${tagFecha} <i class="fas fa-building text-xs mx-1 text-gray-400"></i> ${res.contacto.replace('_',' ')}</p>
                 </div>
                 <div class="text-right">
-                    <span class="font-black text-xl text-blue-600">${res.pax} <span class="text-[10px] font-semibold text-gray-400 uppercase">PAX</span></span>
-                    <p class="text-[10px] text-gray-400 mt-1 font-bold uppercase">${res.hora || 'Libre'}</p>
+                    <span class="font-black text-2xl text-blue-600">${res.pax} <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">PAX</span></span>
+                    <p class="text-[10px] text-gray-400 mt-0 font-bold uppercase tracking-widest">${res.hora || 'Libre'}</p>
                 </div>
             </div>
-            <div class="flex mt-4 space-x-2">
+            <div class="flex mt-4 space-x-2 relative z-10">
                 <button class="flex-[2] py-2.5 rounded-xl text-sm font-bold transition active:scale-95 border ${btnClasses}" onclick="prepararAsignacion('${res.id}', '${res.cliente}', '${res.pax}', '${res.contacto}')"><i class="fas ${btnIcon} mr-1"></i> ${btnText}</button>
             </div>
         </div>
@@ -247,6 +277,21 @@ function confirmarAbrirBote() {
     fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, creador: myOpName }).then(() => fetchDashboardDataBg());
 }
 
+function confirmarZarpe(id_op) {
+    if(!confirm("¿Seguro que deseas ZARPAR esta lancha? Pasará a estado En Viaje.")) return;
+    toggleSpinner(true);
+    // Optimistic UI update
+    let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
+    if(opIndex !== -1) {
+        window.operacionesData[opIndex].estado = 'En_Viaje';
+        renderOperaciones(window.operacionesData);
+    }
+    fetchPost('zarpar_operacion', { id_operacion: id_op }).then(res => {
+        if(res.status === 'error') alert(res.message);
+        fetchDashboardData();
+    });
+}
+
 // ==========================
 // VENTA DIRECTA (MUELLE)
 // ==========================
@@ -284,6 +329,14 @@ function abrirModalGestionBote(id_op) {
     document.getElementById('hidden-gestion-op').value = op.id;
     document.getElementById('gestion-pax-total').innerText = op.ocupados;
     document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
+    
+    let boxVenta = document.getElementById('box-formulario-venta');
+    if(op.estado === 'En_Viaje') {
+        boxVenta.classList.add('hidden');
+    } else {
+        boxVenta.classList.remove('hidden');
+    }
+
     resetFormularioVenta();
     abrirModal('modal-gestion-bote');
 }
@@ -437,14 +490,22 @@ function confirmarNuevaReserva() {
     
     if(!fecha || !contacto || !pax || !precio) return alert("❌ Fecha, Cliente, PAX y Total son obligatorios.");
     
-    cerrarModales(); toggleSpinner(true);
-    fetchPost('nueva_reserva', {
+    let resTemp = { 
+        id: 'Creando...', fecha: fecha, hora: hora, cliente: contacto, 
+        contacto: contacto, pax: pax, monto: parseFloat(precio).toFixed(2), 
+        creado_por: myOpName 
+    };
+    window.reservasData.unshift(resTemp);
+    renderReservas(window.reservasData);
+    cerrarModales();
+    
+    fetchPostBg('nueva_reserva', {
         fecha: fecha, hora: hora, tipo: tipo,
         id_contacto: contacto, cliente: contacto, cant_pax: pax, monto: parseFloat(precio).toFixed(2),
         creador: myOpName
     }).then(() => {
         document.getElementById('input-crm-pax').value = ''; document.getElementById('input-crm-precio').value = '';
-        fetchDashboardData();
+        fetchDashboardDataBg();
     });
 }
 
