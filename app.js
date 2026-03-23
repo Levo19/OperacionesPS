@@ -323,16 +323,26 @@ function generarListaHTML(manifiesto) {
         let opacityClass = isSyncing ? 'opacity-50 animate-pulse pointer-events-none' : '';
         let iconoEdicion = isEditado ? `<i class="fas fa-pen text-[9px] text-orange-400 ml-1"></i>` : '';
         let iconoSinc = isSyncing ? `<i class="fas fa-sync-alt fa-spin text-[9px] text-blue-400 ml-1"></i>` : '';
+        
+        let subBtns = m.tipo === 'Pase_Recibido' ? '' : `
+        <div class="flex space-x-1 mt-2">
+            <button class="flex-1 bg-green-100 text-green-700 text-[9px] font-bold py-1.5 rounded-lg border border-green-200 hover:bg-green-200" onclick="abrirModalCaja('Ingreso_Venta', '${m.id}', ${m.monto}); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Pagar</button>
+            <button class="flex-1 bg-purple-100 text-purple-700 text-[9px] font-bold py-1.5 rounded-lg border border-purple-200 hover:bg-purple-200" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-share-square mr-1"></i> Derivar</button>
+        </div>`;
+
         return `
-        <div class="flex justify-between items-center ${bgClass} ${opacityClass} border border-gray-200 p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm" onclick="cargarParaEditar('${m.id}')">
-            <div>
-                <span class="text-xs font-bold text-gray-800 uppercase block">${m.contacto} ${iconoEdicion} ${iconoSinc}</span>
-                <span class="text-[10px] text-gray-500 font-bold">${m.tipo.replace('_',' ')}</span>
+        <div class="flex flex-col ${bgClass} ${opacityClass} border border-gray-200 p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm mb-2" onclick="cargarParaEditar('${m.id}')">
+            <div class="flex justify-between items-center">
+                <div>
+                    <span class="text-xs font-bold text-gray-800 uppercase block">${m.contacto} ${iconoEdicion} ${iconoSinc}</span>
+                    <span class="text-[10px] text-gray-500 font-bold">${m.tipo.replace('_',' ')}</span>
+                </div>
+                <div class="text-right">
+                    <span class="font-black text-blue-600 text-sm">${m.pax} PAX</span>
+                    <span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto).toFixed(2)}</span>
+                </div>
             </div>
-            <div class="text-right">
-                <span class="font-black text-blue-600 text-sm">${m.pax} PAX</span>
-                <span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto).toFixed(2)}</span>
-            </div>
+            ${subBtns}
         </div>`;
     }).join('');
 }
@@ -565,6 +575,51 @@ function registrarCajaRapida(tipo) {
     if(m && !isNaN(m)) { toggleSpinner(true); fetchPost('registrar_caja', { categoria: tipo.replace(' ', '_'), monto: parseFloat(m), metodo_pago: 'Efectivo', operador: myOpName }).then(() => fetchDashboardData()); }
 }
 // Extras CRM
+function abrirModalCaja(tipo, id_ref = '', propMonto = '') {
+    document.getElementById('caja-categoria').value = tipo;
+    document.getElementById('caja-id-referencia').value = id_ref;
+    document.getElementById('caja-monto').value = propMonto;
+    
+    // Forzar deshabilitar categoria si es Ingreso por Venta
+    let catEl = document.getElementById('caja-categoria');
+    if(tipo === 'Ingreso_Venta') { catEl.setAttribute('disabled', 'true'); } else { catEl.removeAttribute('disabled'); }
+
+    abrirModal('modal-caja');
+}
+
+function confirmarCaja() {
+    let cat = document.getElementById('caja-categoria').value;
+    let monto = document.getElementById('caja-monto').value;
+    let metodo = document.getElementById('caja-metodo').value;
+    let ref = document.getElementById('caja-id-referencia').value;
+
+    if(!monto || isNaN(monto) || monto <= 0) return alert('Ingresa un monto válido.');
+    
+    cerrarModales(); toggleSpinner(true);
+    fetchPost('registrar_caja_v2', { categoria: cat, monto: parseFloat(monto), metodo_pago: metodo, referencia: ref, operador: myOpName }).then(() => fetchDashboardData());
+}
+
+function abrirModalDerivar(id_mov, pax) {
+    document.getElementById('hidden-derivar-idmov').value = id_mov;
+    document.getElementById('derivar-pax').innerText = pax;
+    
+    let select = document.getElementById('select-derivar-aliado');
+    if(window.contactosData) {
+        select.innerHTML = '<option value="">- Elige Aliado -</option>' + window.contactosData.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+    }
+    abrirModal('modal-derivar');
+}
+
+function confirmarDerivacion() {
+    let id_mov = document.getElementById('hidden-derivar-idmov').value;
+    let aliado = document.getElementById('select-derivar-aliado').value;
+    let id_op = document.getElementById('hidden-gestion-op').value;
+    if(!aliado) return alert("Selecciona a quién se le emite el Pase.");
+
+    cerrarModales(); toggleSpinner(true);
+    fetchPost('derivar_pase', { id_mov, aliado, id_operacion_origen: id_op, operador: myOpName }).then(() => fetchDashboardData());
+}
+
 function obtenerHoraSugerida() {
     let siguiente = new Date().getHours() + 1;
     if(siguiente < 7) siguiente = 7;
@@ -596,3 +651,4 @@ function fetchPostBg(action, payload) {
     return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).then(d => { pendingPostRequests--; if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400'); return d; }).catch(err => { pendingPostRequests--; if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400'); return { status: 'error', message: 'Error de conexión' }; }); 
 }
 function toggleSpinner(show) { const s = document.getElementById('global-spinner'); const u = document.getElementById('btn-refresh'); if(show) { s.classList.remove('hidden'); u.classList.add('hidden'); } else { s.classList.add('hidden'); u.classList.remove('hidden'); } }
+
