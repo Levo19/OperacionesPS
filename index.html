@@ -115,28 +115,54 @@
     </div>
 
     <!-- Modal Nueva Reserva -->
-    <div id="modal-nueva-reserva" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-40 hidden shadow-2xl">
-        <h3 class="font-extrabold text-xl text-gray-800 mb-1">Crear Reserva CRM</h3>
-        <p class="text-[13px] text-gray-500 mb-4 leading-snug">Ventas para más tarde en el día, van directo a la Sala de Espera.</p>
-        <div class="space-y-4">
-            <div>
-                <label class="text-xs font-bold text-gray-700">Nombre del Pasajero / Familia</label>
-                <input type="text" id="input-reserva-cliente" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 mt-1 uppercase" placeholder="Ej: Familia Torres">
-            </div>
-            <div class="flex space-x-3">
-                <div class="flex-[2]">
-                    <label class="text-xs font-bold text-gray-700">Agencia (Opcional)</label>
-                    <input type="text" id="input-reserva-agencia" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 mt-1 uppercase" placeholder="Ej: CON-01">
+    <div id="modal-nueva-reserva" class="fixed inset-x-0 bottom-0 top-16 md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-[90%] md:max-w-sm bg-white rounded-t-3xl md:rounded-3xl p-5 z-40 hidden shadow-2xl flex flex-col transition-transform">
+        <h3 class="font-extrabold text-xl text-blue-900 mb-1 shrink-0"><i class="fas fa-calendar-plus text-blue-400 mr-2"></i> Crear Reserva CRM</h3>
+        <p class="text-[11px] text-gray-500 mb-4 leading-snug shrink-0">Registra ventas a futuro o turnos posteriores. Aparecerán en Sala de Espera.</p>
+        
+        <div class="space-y-3 overflow-y-auto flex-1 px-1 pb-2">
+            <div class="flex space-x-2">
+                <div class="flex-1">
+                    <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Fecha Tour</label>
+                    <input type="date" id="input-crm-fecha" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5">
                 </div>
                 <div class="flex-1">
-                    <label class="text-xs font-bold text-blue-600">PAX (Cant.)</label>
-                    <input type="number" id="input-reserva-pax" class="w-full bg-blue-50 border border-blue-200 rounded-xl p-3 text-lg font-black text-center focus:outline-blue-600 mt-1" placeholder="2">
+                    <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Hora (Opc.)</label>
+                    <input type="time" id="input-crm-hora" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5">
+                </div>
+            </div>
+
+            <div class="flex space-x-2">
+                <div class="flex-[1.2]">
+                    <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Modalidad</label>
+                    <select id="input-crm-tipo" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-700 shadow-sm mt-0.5 outline-none focus:border-blue-400" onchange="cambiarTipoCRM()">
+                        <option value="Directo">📍 Directo</option>
+                        <option value="Agencia">🏢 Agencia</option>
+                        <option value="Pase_Recibido">🤝 Pase (Aliado)</option>
+                    </select>
+                </div>
+                <div class="flex-[1.5]" id="container-crm-contacto">
+                    <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Familia / Apellido</label>
+                    <input type="text" id="input-crm-contacto-text" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5 uppercase" placeholder="Familia Vasquez">
+                </div>
+            </div>
+
+            <div class="flex space-x-2">
+                <div class="flex-1 relative">
+                    <label class="text-[9px] font-bold text-blue-600 uppercase tracking-widest text-center block mb-0.5">Cant. PAX</label>
+                    <i class="fas fa-user-friends absolute left-3 top-8 text-blue-300"></i>
+                    <input type="number" id="input-crm-pax" class="w-full bg-white border border-blue-200 rounded-xl p-2.5 pl-8 text-xl font-black text-center text-blue-700 focus:outline-blue-600 shadow-inner" placeholder="0" oninput="actualizarPrecioDefectoCRM()">
+                </div>
+                <div class="flex-[1.5] relative">
+                    <label class="text-[9px] font-bold text-green-600 uppercase tracking-widest text-center block mb-0.5">S/ Total</label>
+                    <span class="absolute left-3 top-8 text-green-600 font-black">S/</span>
+                    <input type="number" id="input-crm-precio" class="w-full bg-white border border-green-200 rounded-xl p-2.5 pl-8 text-xl font-black text-center text-green-700 focus:outline-green-500 shadow-inner" placeholder="0.00" onfocus="this.select()">
                 </div>
             </div>
         </div>
-        <div class="flex space-x-3 mt-7">
-            <button class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold" onclick="cerrarModales()">Cancelar</button>
-            <button class="flex-[2] bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md shadow-blue-500/30" onclick="confirmarNuevaReserva()"><i class="fas fa-save mr-1"></i> Guardar Reserva</button>
+
+        <div class="flex space-x-3 mt-4 shrink-0 pt-3 border-t border-gray-100">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold" onclick="cerrarModales()">Cancelar</button>
+            <button class="flex-[2] bg-blue-600 hover:bg-blue-700 active:scale-95 text-white py-3.5 rounded-xl font-bold shadow-md shadow-blue-500/30 transition flex items-center justify-center uppercase tracking-wide text-xs" onclick="confirmarNuevaReserva()"><i class="fas fa-save mr-2 text-base"></i> Guardar</button>
         </div>
     </div>
 
