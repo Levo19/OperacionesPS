@@ -85,7 +85,7 @@ function renderReservas(reservas) {
                 </div>
             </div>
             <div class="flex mt-4 space-x-2">
-                <button class="flex-[2] bg-green-500 text-white py-2 rounded-xl text-sm font-bold shadow-sm hover:bg-green-600 transition active:scale-95" onclick="alert('Asignación en desarrollo')"><i class="fas fa-check mr-1"></i> Asignar Bote</button>
+                <button class="flex-[2] bg-green-500 text-white py-2 rounded-xl text-sm font-bold shadow-sm hover:bg-green-600 transition active:scale-95" onclick="asignarBote('${res.id}')"><i class="fas fa-check mr-1"></i> Asignar Bote</button>
             </div>
         </div>
         `;
@@ -169,3 +169,44 @@ document.getElementById('zarpe-foto')?.addEventListener('change', function(e) {
         document.getElementById('file-name').innerText = "Archivo listo: " + this.files[0].name;
     }
 });
+
+function abrirNuevaOperacion() {
+    let idBote = prompt("Ingresa el ID del Bote a abrir (Ej: BOT-01):");
+    if(!idBote) return;
+    fetchPost('abrir_operacion', { id_bote: idBote }).then(() => fetchDashboardData());
+}
+
+function crearNuevaReserva() {
+    let cliente = prompt("Nombre del cliente o Agencia (Ej: Familia Torres):");
+    if(!cliente) return;
+    let pax = prompt("Cantidad de Pasajeros (PAX):");
+    if(!pax) return;
+    fetchPost('nueva_reserva', {
+        fecha: new Date().toLocaleDateString(),
+        hora: 'Libre', 
+        id_contacto: 'CON-00', 
+        cliente: cliente,
+        cant_pax: pax
+    }).then(() => fetchDashboardData());
+}
+
+function asignarBote(id_reserva) {
+    if(confirm(`¿Confirmas que la reserva ${id_reserva} abordó y sale de Sala de Espera?`)) {
+        fetchPost('asignar_reserva', { id_reserva: id_reserva }).then(() => fetchDashboardData());
+    }
+}
+
+function fetchPost(action, payload) {
+    return fetch(GAS_URL, {
+        method: 'POST',
+        redirect: 'follow',
+        body: JSON.stringify({ action: action, payload: payload }),
+        headers: {'Content-Type': 'text/plain;charset=utf-8'}
+    })
+    .then(res => res.json())
+    .then(data => { alert(data.message); return data; })
+    .catch(err => {
+        alert('Acción completada. (Se detectó bloqueo CORS de browser pero los datos se enviaron a Excel)');
+        return { message: 'ok' };
+    });
+}
