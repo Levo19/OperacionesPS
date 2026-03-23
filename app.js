@@ -91,6 +91,12 @@ function renderOperaciones(operaciones) {
     let hoy = getHoyLocal();
     let opHoy = operaciones.filter(op => op.fecha === hoy || !op.fecha);
 
+    opHoy.sort((a, b) => {
+        if (a.estado === 'Abierta' && b.estado !== 'Abierta') return -1;
+        if (a.estado !== 'Abierta' && b.estado === 'Abierta') return 1;
+        return 0; 
+    });
+
     if(!opHoy || opHoy.length === 0) {
         container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> No hay lanchas programadas<br>para el día de HOY.</div>`;
         return;
@@ -112,7 +118,10 @@ function renderOperaciones(operaciones) {
                 <h3 class="font-extrabold text-lg flex-1 truncate ${titleColor}"><i class="fas fa-ship fa-sm mr-2 ${isViaje ? 'text-orange-400' : 'text-blue-400'} ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
                 <span class="bg-white border text-gray-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ml-2 shrink-0">${op.ocupados} / ${op.capacidad} PAX</span>
             </div>
-            <span class="text-[10px] text-gray-400 font-bold block mb-3 uppercase tracking-wider pl-3 ml-6">CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
+            <div class="flex justify-between text-[10px] text-gray-400 font-bold mb-3 uppercase tracking-wider pl-3 pr-2 ml-6">
+                <span>CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
+                ${op.hora_salida ? `<span class="${isViaje ? 'text-orange-500' : 'text-blue-500'} font-black"><i class="fas fa-clock mr-1"></i>${op.hora_salida}</span>` : ''}
+            </div>
             
             <div class="w-full bg-gray-100 rounded-full h-2 mb-3">
                 <div class="bg-gradient-to-r ${isViaje ? 'from-orange-400 to-orange-500' : 'from-green-400 to-green-500'} h-2 rounded-full" style="width: ${porcentaje}%"></div>
@@ -239,6 +248,13 @@ function abrirModal(id) {
         document.getElementById('input-crm-fecha').value = getHoyLocal();
         cambiarTipoCRM();
         setTimeout(actualizarHoraSugeridaCRM, 50);
+    } else if (id === 'modal-abrir-bote') {
+        let selectHora = document.getElementById('select-bote-hora');
+        if(selectHora) {
+            let suggested = obtenerHoraSugerida();
+            let found = Array.from(selectHora.options).find(opt => opt.value === suggested);
+            if(found) selectHora.value = suggested; else selectHora.selectedIndex = 0;
+        }
     }
 }
 
@@ -264,17 +280,20 @@ function confirmarAbrirBote() {
     let boteNombre = boteNombreRaw.split(' (')[0];
     let cap = parseInt(boteNombreRaw.match(/\((\d+)/)[1]) || 20;
 
+    let selectHora = document.getElementById('select-bote-hora');
+    let hora_salida = selectHora ? selectHora.value : '';
+
     let opTemp = {
         id: 'Creando...', bote: boteNombre, capacidad: cap, ocupados: 0,
         estado: 'Abierta', capitan: selectCap.options[selectCap.selectedIndex].text,
         guia: selectGuia.value ? selectGuia.options[selectGuia.selectedIndex].text : 'Sin Guía',
-        hora_salida: '', manifiesto: []
+        hora_salida: hora_salida, manifiesto: []
     };
     window.operacionesData.unshift(opTemp);
     renderOperaciones(window.operacionesData);
     cerrarModales();
 
-    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, creador: myOpName }).then(() => fetchDashboardDataBg());
+    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, hora_salida, creador: myOpName }).then(() => fetchDashboardDataBg());
 }
 
 function confirmarZarpe(id_op) {
@@ -509,13 +528,31 @@ function confirmarNuevaReserva() {
     });
 }
 
-function prepararAsignacion(id_reserva, cliente, pax, contacto) { document.getElementById('hidden-reserva-id').value = id_reserva; document.getElementById('hidden-reserva-pax').value = pax; document.getElementById('hidden-reserva-agencia').value = contacto; abrirModal('modal-asignar-reserva'); }
+function prepararAsignacion(id_reserva, cliente, pax, contacto) { 
+    document.getElementById('hidden-reserva-id').value = id_reserva; 
+    document.getElementById('hidden-reserva-pax').value = pax; 
+    document.getElementById('hidden-reserva-agencia').value = contacto; 
+    document.getElementById('text-pax').innerText = pax;
+    document.getElementById('text-cliente').innerText = cliente;
+
+    let selectOp = document.getElementById('select-asignar-op');
+    let opsAbiertas = window.operacionesData.filter(op => op.estado === 'Abierta');
+    
+    if(opsAbiertas.length === 0) {
+        selectOp.innerHTML = '<option value="">No hay lanchas abiertas disponibles</option>';
+    } else {
+        selectOp.innerHTML = '<option value="">- Selecciona un lancha viva -</option>' + 
+            opsAbiertas.map(op => `<option value="${op.id}">${op.bote} - ${op.ocupados}/${op.capacidad} PAX</option>`).join('');
+    }
+
+    abrirModal('modal-asignar-bote'); 
+}
 function confirmarAsignacion() {
     let id_reserva = document.getElementById('hidden-reserva-id').value;
     let pax = document.getElementById('hidden-reserva-pax').value;
     let contacto = document.getElementById('hidden-reserva-agencia').value;
-    let id_operacion = document.getElementById('input-asignar-op').value.toUpperCase().trim();
-    if(!id_operacion) return alert("❌ Escribe el código exacto de la Operación.");
+    let id_operacion = document.getElementById('select-asignar-op').value.trim();
+    if(!id_operacion) return alert("❌ Selecciona a qué lancha subirán los pasajeros.");
     cerrarModales(); toggleSpinner(true);
     fetchPost('asignar_reserva', { id_reserva, id_operacion, cant_pax: pax, id_contacto: contacto, creador: myOpName }).then(res => {
         if(res.status==='error') alert(res.message);
@@ -527,8 +564,16 @@ function registrarCajaRapida(tipo) {
     let m = prompt(`💰 Ingrese el MONTO EXACTO de efectivo para:\n▶ ${tipo}`);
     if(m && !isNaN(m)) { toggleSpinner(true); fetchPost('registrar_caja', { categoria: tipo.replace(' ', '_'), monto: parseFloat(m), metodo_pago: 'Efectivo', operador: myOpName }).then(() => fetchDashboardData()); }
 }
-
 // Extras CRM
+function obtenerHoraSugerida() {
+    let siguiente = new Date().getHours() + 1;
+    if(siguiente < 7) siguiente = 7;
+    let ampm = siguiente >= 12 ? 'PM' : 'AM';
+    let h12 = siguiente > 12 ? siguiente - 12 : siguiente;
+    if(h12 === 0) h12 = 12;
+    return h12.toString().padStart(2, '0') + ":00 " + ampm;
+}
+
 function actualizarHoraSugeridaCRM() {
     let fechaInput = document.getElementById('input-crm-fecha').value; 
     let selectHora = document.getElementById('input-crm-hora');
@@ -536,12 +581,7 @@ function actualizarHoraSugeridaCRM() {
     
     let hoy = getHoyLocal();
     if(fechaInput === hoy) {
-        let siguiente = new Date().getHours() + 1;
-        if(siguiente < 7) siguiente = 7;
-        let ampm = siguiente >= 12 ? 'PM' : 'AM';
-        let h12 = siguiente > 12 ? siguiente - 12 : siguiente;
-        if(h12 === 0) h12 = 12;
-        let hStr = h12.toString().padStart(2, '0') + ":00 " + ampm;
+        let hStr = obtenerHoraSugerida();
         let found = Array.from(selectHora.options).find(opt => opt.value === hStr);
         if(found) selectHora.value = hStr; else selectHora.selectedIndex = 0;
     } else {
