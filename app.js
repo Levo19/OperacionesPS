@@ -40,10 +40,14 @@ function fetchDashboardData() {
             window.contactosData = data.catalogos ? data.catalogos.contactos : [];
             window.reservasData = data.sala_de_espera || [];
             
+            // Fix: Store pasesExternosData and cajaData to be used globally
+            window.pasesExternosData = data.pases_externos || [];
+            window.cajaData = data.movimientos_dia || [];
+            
             renderCatalogos(data.catalogos);
             renderOperaciones(window.operacionesData);
             renderReservas(window.reservasData);
-            renderCaja(data.movimientos_dia);
+            renderCaja(window.cajaData);
         })
         .catch(err => {
             toggleSpinner(false);
@@ -67,10 +71,14 @@ function fetchDashboardDataBg() {
             window.contactosData = data.catalogos ? data.catalogos.contactos : [];
             window.reservasData = data.sala_de_espera || [];
             
+            // Fix: Store pasesExternosData and cajaData to be used globally
+            window.pasesExternosData = data.pases_externos || [];
+            window.cajaData = data.movimientos_dia || [];
+            
             renderCatalogos(data.catalogos);
             renderOperaciones(window.operacionesData);
             renderReservas(window.reservasData);
-            renderCaja(data.movimientos_dia);
+            renderCaja(window.cajaData);
             let isModalOpen = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
             let opId = document.getElementById('hidden-gestion-op').value;
             if(isModalOpen && opId) {
@@ -208,13 +216,7 @@ function renderCaja(caja) {
     if(!container) return;
 
     let hoy = getHoyLocal();
-    let txHoy = caja.filter(c => {
-       if(!c.timestamp) return false;
-       let d = new Date(c.timestamp);
-       let tzOffset = d.getTimezoneOffset() * 60000;
-       let localISOTime = new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
-       return localISOTime === hoy;
-    });
+    let txHoy = caja.filter(c => esFechaHoy(c.timestamp));
 
     let ingresos = 0;
     let salidas = 0;
@@ -267,17 +269,7 @@ function renderCaja(caja) {
     if(window.pasesExternosData) {
         window.pasesExternosData.forEach(m => {
             if(m.estado && m.estado.includes('Pase Emitido a ')) {
-                // Verificar si es de hoy 
-                let dStr = m.timestamp; 
-                let esHoy = true;
-                if(dStr) {
-                    let d = new Date(dStr);
-                    let tzOffset = d.getTimezoneOffset() * 60000;
-                    let localISOTime = new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
-                    if(localISOTime !== hoy) esHoy = false;
-                }
-                
-                if(esHoy) {
+                if(esFechaHoy(m.timestamp)) {
                     let aliado = m.estado.replace('Pase Emitido a ', '').trim();
                     if(!resumenPases[aliado]) resumenPases[aliado] = { recibidos: 0, emitidos: 0 };
                     resumenPases[aliado].emitidos += parseInt(m.pax);
@@ -554,8 +546,13 @@ function resetFormularioVenta() {
     document.getElementById('input-vd-precio').value = '';
     document.getElementById('titulo-form-venta').innerHTML = `<i class="fas fa-bolt text-yellow-500 text-sm mr-1"></i> Nuevo Embarque`;
     let btnSubmit = document.getElementById('btn-submit-venta');
-    btnSubmit.innerHTML = `<i class="fas fa-arrow-up mr-2 text-base"></i> Subir al Bote`;
-    btnSubmit.className = "w-full mt-3 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black p-3.5 rounded-xl shadow-lg transition flex items-center justify-center uppercase text-xs tracking-wider border border-blue-700";
+    if(btnSubmit) {
+        btnSubmit.innerHTML = `<i class="fas fa-arrow-up mr-2 text-base"></i> Subir al Bote`;
+        btnSubmit.className = "w-full mt-3 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black p-3.5 rounded-xl shadow-lg transition flex items-center justify-center uppercase text-xs tracking-wider border border-blue-700";
+        btnSubmit.disabled = false;
+    }
+    let btnGuardar = document.getElementById('btn-guardar-venta');
+    if(btnGuardar) btnGuardar.disabled = false;
     document.getElementById('btn-cancelar-edicion').classList.add('hidden');
     document.getElementById('box-formulario-venta').classList.remove('border-orange-300', 'bg-orange-50');
     document.getElementById('box-formulario-venta').classList.add('border-blue-200', 'bg-blue-50');
@@ -790,7 +787,10 @@ function abrirModalDerivar(id_mov, pax) {
     
     let select = document.getElementById('select-derivar-aliado');
     if(window.contactosData) {
-        select.innerHTML = '<option value="">- Elige Aliado -</option>' + window.contactosData.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+        let aliados = window.contactosData.filter(c => c.tipo && c.tipo.toLowerCase().includes('aliado'));
+        if (aliados.length === 0) aliados = window.contactosData; // fallback
+        
+        select.innerHTML = '<option value="">- Elige Aliado -</option>' + aliados.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
     }
     abrirModal('modal-derivar');
 }
@@ -801,7 +801,35 @@ function confirmarDerivacion() {
     let id_op = document.getElementById('hidden-gestion-op').value;
     if(!aliado) return alert("Selecciona a quién se le emite el Pase.");
 
-    cerrarSubModal('modal-derivar'); toggleSpinner(true);
+    cerrarSubModal('modal-derivar'); 
+    
+    let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
+    if(opIndex !== -1) {
+        let op = window.operacionesData[opIndex];
+        let movIndex = op.manifiesto.findIndex(m => m.id === id_mov);
+        if(movIndex !== -1) {
+            let mov = op.manifiesto[movIndex];
+            op.ocupados -= parseInt(mov.pax);
+            
+            if(!window.pasesExternosData) window.pasesExternosData = [];
+            window.pasesExternosData.push({
+                ...mov,
+                estado: 'Pase Emitido a ' + aliado,
+                timestamp: new Date().toISOString()
+            });
+
+            op.manifiesto.splice(movIndex, 1);
+            
+            document.getElementById('gestion-pax-total').innerText = op.ocupados;
+            let aforoEl = document.getElementById('gestion-bote-aforo');
+            if (aforoEl) aforoEl.innerText = `${op.ocupados} / ${op.capacidad} PAX`;
+            document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
+            renderOperaciones(window.operacionesData);
+            renderCaja(window.cajaData || []);
+        }
+    }
+
+    toggleSpinner(true);
     fetchPost('derivar_pase', { id_mov, aliado, id_operacion_origen: id_op, operador: myOpName }).then(() => fetchDashboardData());
 }
 
