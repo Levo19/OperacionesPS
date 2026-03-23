@@ -315,26 +315,29 @@ function confirmarZarpe(id_op) {
 // VENTA DIRECTA (MUELLE)
 // ==========================
 function generarListaHTML(manifiesto) {
-    if(!manifiesto || manifiesto.length === 0) return '<div class="text-center p-6 bg-white ..."><p>Lancha vacía.</p></div>';
+    if(!manifiesto || manifiesto.length === 0) return '<div class="text-center p-6 bg-white border-2 border-dashed border-gray-200 rounded-2xl text-gray-400 font-bold"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> Lancha vacía.<br><span class="text-[10px] font-normal">Agrega pasajeros usando el formulario superior.</span></div>';
+    
     return manifiesto.map(m => {
-        let isEditado = m.estado && m.estado.includes('(Editado)');
+        let isEditadoObj = m.estado && m.estado.includes('(Editado)');
         let isSyncing = m.estado && m.estado.includes('Sincronizando');
-        let bgClass = isEditado ? 'bg-orange-50' : 'bg-white';
-        let opacityClass = isSyncing ? 'opacity-50 animate-pulse pointer-events-none' : '';
-        let iconoEdicion = isEditado ? `<i class="fas fa-pen text-[9px] text-orange-400 ml-1"></i>` : '';
-        let iconoSinc = isSyncing ? `<i class="fas fa-sync-alt fa-spin text-[9px] text-blue-400 ml-1"></i>` : '';
+        let isSelected = window.editandoMovId === m.id;
         
-        let subBtns = m.tipo === 'Pase_Recibido' ? '' : `
-        <div class="flex space-x-1 mt-2">
-            <button class="flex-1 bg-green-100 text-green-700 text-[9px] font-bold py-1.5 rounded-lg border border-green-200 hover:bg-green-200" onclick="abrirModalCaja('Ingreso_Venta', '${m.id}', ${m.monto}); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Pagar</button>
-            <button class="flex-1 bg-purple-100 text-purple-700 text-[9px] font-bold py-1.5 rounded-lg border border-purple-200 hover:bg-purple-200" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-share-square mr-1"></i> Derivar</button>
-        </div>`;
+        let bgClass = isSelected ? 'bg-orange-50 ring-2 ring-orange-400' : (isEditadoObj ? 'bg-orange-50' : 'bg-white');
+        let opacityClass = isSyncing ? 'opacity-60 pointer-events-none' : '';
+        let iconoEdicion = isEditadoObj ? `<i class="fas fa-pen text-[9px] text-orange-400 ml-1"></i>` : '';
+        let iconoSinc = isSyncing ? `<i class="fas fa-sync-alt fa-spin text-[9px] text-blue-400 ml-1"></i> Cargando...` : '';
+        
+        let subBtns = (isSelected && m.tipo !== 'Pase_Recibido' && !isSyncing) ? `
+        <div class="flex space-x-2 mt-3 pt-3 border-t border-orange-200">
+            <button class="flex-1 bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('Ingreso_Venta', '${m.id}', ${m.monto}); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Pagar</button>
+            <button class="flex-1 bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-share-square mr-1"></i> Derivar</button>
+        </div>` : '';
 
         return `
         <div class="flex flex-col ${bgClass} ${opacityClass} border border-gray-200 p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm mb-2" onclick="cargarParaEditar('${m.id}')">
             <div class="flex justify-between items-center">
                 <div>
-                    <span class="text-xs font-bold text-gray-800 uppercase block">${m.contacto} ${iconoEdicion} ${iconoSinc}</span>
+                    <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block">${m.contacto} ${iconoEdicion} ${iconoSinc}</span>
                     <span class="text-[10px] text-gray-500 font-bold">${m.tipo.replace('_',' ')}</span>
                 </div>
                 <div class="text-right">
@@ -407,15 +410,31 @@ function resetFormularioVenta() {
     document.getElementById('btn-cancelar-edicion').classList.add('hidden');
     document.getElementById('box-formulario-venta').classList.remove('border-orange-300', 'bg-orange-50');
     document.getElementById('box-formulario-venta').classList.add('border-blue-200', 'bg-blue-50');
+    
+    // Al cancelar, re-renderizar para quitar estado naranja de los items
+    let currentDetailOpId = document.getElementById('hidden-gestion-op').value;
+    let op = window.operacionesData.find(o => o.id === currentDetailOpId);
+    if(op) {
+        document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
+    }
 }
 
 function cargarParaEditar(id_mov) {
     let movToEdit = null;
+    let opData = null;
     for(let op of window.operacionesData) {
         let m = op.manifiesto.find(x => x.id === id_mov);
-        if(m) { movToEdit = m; break; }
+        if(m) { movToEdit = m; opData = op; break; }
     }
-    if(!movToEdit || movToEdit.id.startsWith('temp-')) return;
+    if(!movToEdit || movToEdit.id.startsWith('temp-') || movToEdit.id === 'Creando...') return;
+    
+    if(window.editandoMovId === id_mov) {
+        // Toggle: Si clickeo el mismo, cancelo edicion
+        resetFormularioVenta();
+        return;
+    }
+
+    window.editandoMovId = id_mov;
     document.getElementById('hidden-vd-idmov').value = movToEdit.id;
     document.getElementById('input-vd-tipo').value = movToEdit.tipo;
     cambiarTipoVentaDirecta(); 
@@ -430,12 +449,23 @@ function cargarParaEditar(id_mov) {
     document.getElementById('input-vd-precio').value = movToEdit.monto;
     
     document.getElementById('titulo-form-venta').innerHTML = `<i class="fas fa-pen text-orange-500 text-sm mr-1"></i> Editando Registro`;
+    // Assuming 'titulo-form-venta' is the correct ID for the title, not 'titulo-formulario'
+    // document.getElementById('titulo-formulario').classList.replace('text-blue-800', 'text-orange-500'); 
+    
+    let btnSubmit = document.getElementById('btn-submit-venta');
+    if(btnSubmit) {
+        btnSubmit.innerHTML = `<i class="fas fa-save mr-2 text-base"></i> Actualizar`;
+        btnSubmit.className = "w-full mt-3 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-black p-3.5 rounded-xl shadow-lg transition border border-orange-600 uppercase text-xs";
+    }
+    
     document.getElementById('btn-cancelar-edicion').classList.remove('hidden');
     let box = document.getElementById('box-formulario-venta');
     box.classList.remove('border-blue-200', 'bg-blue-50'); box.classList.add('border-orange-300', 'bg-orange-50');
-    let btnSubmit = document.getElementById('btn-submit-venta');
-    btnSubmit.innerHTML = `<i class="fas fa-save mr-2 text-base"></i> Actualizar`;
-    btnSubmit.className = "w-full mt-3 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-black p-3.5 rounded-xl shadow-lg transition border border-orange-600 uppercase text-xs";
+
+    // Re-renderizar lista para colorear el item 
+    if(opData) {
+        document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(opData.manifiesto);
+    }
 }
 
 function confirmarVentaDirecta() {
@@ -651,4 +681,3 @@ function fetchPostBg(action, payload) {
     return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).then(d => { pendingPostRequests--; if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400'); return d; }).catch(err => { pendingPostRequests--; if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400'); return { status: 'error', message: 'Error de conexión' }; }); 
 }
 function toggleSpinner(show) { const s = document.getElementById('global-spinner'); const u = document.getElementById('btn-refresh'); if(show) { s.classList.remove('hidden'); u.classList.add('hidden'); } else { s.classList.add('hidden'); u.classList.remove('hidden'); } }
-
