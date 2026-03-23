@@ -244,6 +244,52 @@ function renderCaja(caja) {
 
     let saldo = ingresos - salidas;
     
+    // Calcular Estado de Pases
+    let resumenPases = {};
+    if(window.operacionesData) {
+        window.operacionesData.forEach(op => {
+            if(op.fecha === hoy || !op.fecha) {
+                op.manifiesto.forEach(m => {
+                    if(m.tipo === 'Pase_Recibido') {
+                        if(!resumenPases[m.contacto]) resumenPases[m.contacto] = { recibidos: 0, emitidos: 0 };
+                        resumenPases[m.contacto].recibidos += parseInt(m.pax);
+                    }
+                    if(m.estado && m.estado.includes('Pase Emitido a ')) {
+                        let aliado = m.estado.replace('Pase Emitido a ', '').trim();
+                        if(!resumenPases[aliado]) resumenPases[aliado] = { recibidos: 0, emitidos: 0 };
+                        resumenPases[aliado].emitidos += parseInt(m.pax);
+                    }
+                });
+            }
+        });
+    }
+
+    let pasesHtml = Object.keys(resumenPases).map(aliado => {
+        let r = resumenPases[aliado].recibidos;
+        let e = resumenPases[aliado].emitidos;
+        let saldoPax = r - e; // Si > 0, nos llenaron el bote (le debemos). Si < 0 (favor nuestro).
+        // En tu logica: Recibido = Aliado nos metió PAX (nos debe). Emitido = Nosotros le metimos PAX (les debemos).
+        // Wait: User said "ingresaron por pase 5 pax de aliado A ... me deben 5 pax".
+        // Entonces Recibidos = Favor nuestro (positivo). Emitidos = Favor en contra (negativo).
+        
+        return `
+        <div class="flex items-center justify-between bg-white border border-purple-100 p-3 rounded-xl mb-2">
+            <div>
+                <span class="font-bold text-gray-700 text-xs uppercase">${aliado}</span>
+                <div class="flex space-x-3 mt-1 text-[10px]">
+                    <span class="text-green-600 font-bold"><i class="fas fa-arrow-down mr-1"></i> A nuestro favor: ${r} PAX</span>
+                    <span class="text-red-500 font-bold"><i class="fas fa-arrow-up mr-1"></i> A su favor: ${e} PAX</span>
+                </div>
+            </div>
+            <div class="text-right">
+                <span class="text-[9px] uppercase tracking-widest text-gray-400 font-bold block mb-0.5">Saldo Final</span>
+                <span class="font-black ${saldoPax >= 0 ? 'text-green-600' : 'text-red-500'} text-sm">${saldoPax >= 0 ? '+' : ''}${saldoPax} PAX</span>
+            </div>
+        </div>`;
+    }).join('');
+
+    if(!pasesHtml) pasesHtml = '<div class="text-[11px] text-gray-400 text-center py-4 bg-gray-50 rounded-xl font-bold border border-dashed border-gray-200">No hay pases registrados hoy.</div>';
+    
     let headerHtml = `
     <h2 class="font-bold text-gray-700 mb-4 block"><i class="fas fa-coins text-yellow-500 mr-2"></i> Finanzas de Hoy</h2>
     
@@ -264,7 +310,13 @@ function renderCaja(caja) {
         </div>
     </div>
     
+    <h3 class="font-extrabold text-gray-800 text-xs mb-3 uppercase tracking-wider flex items-center"><i class="fas fa-handshake mr-2 text-purple-500"></i> Balance de Pases (Favores)</h3>
+    <div class="mb-6">
+        ${pasesHtml}
+    </div>
+    
     <div class="grid grid-cols-2 gap-4 mb-6">
+
         <button class="bg-green-50 text-green-700 p-4 rounded-3xl flex flex-col items-center justify-center border border-green-200 shadow-sm transition hover:bg-green-100 active:scale-95" onclick="abrirModalCaja('Caja Chica')">
             <div class="bg-green-100/50 p-3 rounded-full mb-1"><i class="fas fa-plus text-xl"></i></div>
             <span class="font-black text-xs uppercase tracking-wider">Caja Chica</span>
@@ -575,13 +627,19 @@ function confirmarVentaDirecta() {
         document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(currentOp.manifiesto);
         renderOperaciones(window.operacionesData);
     }
-    resetFormularioVenta(); 
+    
+    let btnSubmit = document.getElementById('btn-submit-venta') || document.getElementById('btn-guardar-venta');
+    if(btnSubmit) {
+        btnSubmit.innerHTML = `<i class="fas fa-sync-alt fa-spin mr-2"></i> Cargando...`;
+        btnSubmit.disabled = true;
+    }
 
     let endpoint = id_mov ? 'editar_movimiento_pax' : 'registrar_movimiento_pax';
     let payload = { id_operacion: id_op, tipo: tipo, contacto: contacto, pax: pax, precio_unitario: (parseFloat(precio)/parseFloat(pax)).toFixed(2), monto_total: parseFloat(precio), creador: myOpName };
     if(id_mov) payload.id_mov = id_mov;
     
     fetchPostBg(endpoint, payload).then(res => {
+        resetFormularioVenta(); 
         if(res.status === 'error') alert(res.message);
         fetchDashboardDataBg();
     });
