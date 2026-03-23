@@ -1,8 +1,20 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzi5aD18Xj0ikbQJZkiMSjZPkMg3HVFneL6XTEirRVg2MISZyDN-tTc-0OuUkakGXYWHw/exec';
 
+let myOpName = localStorage.getItem('sot_operador');
+if(!myOpName) {
+    myOpName = prompt("Para empezar, ingresa tu Nombre u Operador (Ej: Operador 1, Luis):") || "Operador X";
+    localStorage.setItem('sot_operador', myOpName);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     fetchDashboardData();
+    setInterval(fetchDashboardDataBg, 15000);
 });
+
+function getHoyLocal() {
+    let tzoffset = (new Date()).getTimezoneOffset() * 60000;
+    return (new Date(Date.now() - tzoffset)).toISOString().split('T')[0];
+}
 
 function switchTab(tabId, title, btnElement) {
     const tabs = document.querySelectorAll('.tab-content');
@@ -32,18 +44,54 @@ function fetchDashboardData() {
         })
         .catch(err => {
             toggleSpinner(false);
-            alert("Hubo un error cargando los datos. Revisa la URL y tus permisos CORS.");
+            console.error("Hubo un error cargando los datos:", err);
+        });
+}
+
+function fetchDashboardDataBg() {
+    let spinner = document.getElementById('global-spinner');
+    if(!spinner.classList.contains('hidden')) return; 
+    
+    let refreshIcon = document.querySelector('#btn-refresh i');
+    if(refreshIcon) refreshIcon.classList.add('fa-spin');
+    
+    fetch(GAS_URL + "?action=getDashboardData")
+        .then(res => res.json())
+        .then(data => {
+            if(refreshIcon) refreshIcon.classList.remove('fa-spin');
+            if(data.status === 'error') return;
+            window.operacionesData = data.operaciones_abiertas || [];
+            window.contactosData = data.catalogos ? data.catalogos.contactos : [];
+            renderCatalogos(data.catalogos);
+            renderOperaciones(data.operaciones_abiertas);
+            renderReservas(data.sala_de_espera);
+            renderCaja(data.movimientos_dia);
+            let isModalOpen = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
+            let opId = document.getElementById('hidden-gestion-op').value;
+            if(isModalOpen && opId) {
+                let op = window.operacionesData.find(o => o.id === opId);
+                if(op) {
+                   document.getElementById('gestion-pax-total').innerText = op.ocupados;
+                   document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
+                }
+            }
+        })
+        .catch(err => {
+            if(refreshIcon) refreshIcon.classList.remove('fa-spin');
         });
 }
 
 function renderOperaciones(operaciones) {
     const container = document.getElementById('operaciones-container');
-    if(!operaciones || operaciones.length === 0) {
-        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> No hay lanchas programadas.</div>`;
+    let hoy = getHoyLocal();
+    let opHoy = operaciones.filter(op => op.fecha === hoy || !op.fecha);
+
+    if(!opHoy || opHoy.length === 0) {
+        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> No hay lanchas programadas<br>para el día de HOY.</div>`;
         return;
     }
     
-    container.innerHTML = operaciones.map(op => {
+    container.innerHTML = opHoy.map(op => {
         let porcentaje = op.capacidad > 0 ? (op.ocupados / op.capacidad) * 100 : 0;
         return `
         <div class="bg-white rounded-2xl shadow-sm p-4 mb-4 border border-gray-100 relative overflow-hidden">
@@ -71,26 +119,43 @@ function renderOperaciones(operaciones) {
 
 function renderReservas(reservas) {
     const container = document.getElementById('reservas-container');
-    if(!reservas || reservas.length === 0) {
-        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-clipboard-list text-4xl mb-3 opacity-20 block"></i> No hay pasajeros pendientes en sala.</div>`;
+    let hoy = getHoyLocal();
+    
+    let resAMostrar = reservas.filter(r => {
+        let isHoy = String(r.fecha).trim() === hoy || !r.fecha;
+        let isMine = String(r.creado_por).trim() === String(myOpName).trim();
+        return isHoy || isMine;
+    });
+
+    if(!resAMostrar || resAMostrar.length === 0) {
+        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-clipboard-list text-4xl mb-3 opacity-20 block"></i> No hay pasajeros pendientes hoy.</div>`;
         return;
     }
 
-    container.innerHTML = reservas.map(res => {
+    container.innerHTML = resAMostrar.map(res => {
+        let isHoy = String(res.fecha).trim() === hoy || !res.fecha;
+        let isFutureForMe = !isHoy; // Si pasa el filtro y no es de hoy, es porque es MIA y del Futuro.
+        
+        let cardClasses = isFutureForMe ? "opacity-60 grayscale bg-gray-50" : "bg-white border-l-yellow-400";
+        let btnClasses = isFutureForMe ? "pointer-events-none opacity-50 bg-gray-300 border-gray-300 text-gray-500" : "bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600";
+        let btnIcon = isFutureForMe ? "fa-lock" : "fa-clipboard-check";
+        let btnText = isFutureForMe ? "No disponible hoy" : "Abordar Lancha";
+        let tagFecha = isHoy ? `<span class="bg-yellow-100 text-yellow-800 text-[9px] px-2 rounded font-bold mr-1">HOY</span>` : `<span class="bg-gray-200 text-gray-700 text-[9px] px-2 rounded font-bold mr-1">${res.fecha}</span>`;
+
         return `
-        <div class="bg-white rounded-2xl shadow-sm p-4 border border-l-4 border-l-yellow-400 mb-3 block">
+        <div class="${cardClasses} rounded-2xl shadow-sm p-4 border block mb-3 transition-all">
             <div class="flex justify-between items-start">
                 <div>
                     <h3 class="font-bold text-gray-800 text-lg">${res.cliente}</h3>
-                    <p class="text-xs text-gray-500 mt-0.5"><i class="fas fa-building mr-1"></i>Agn: ${res.contacto} | Res: ${res.id}</p>
+                    <p class="text-[10px] text-gray-500 mt-1 uppercase font-bold tracking-wider">${tagFecha} <i class="fas fa-building text-xs mr-0.5"></i> ${res.contacto.replace('_',' ')}</p>
                 </div>
                 <div class="text-right">
-                    <span class="font-black text-xl text-blue-600">${res.pax} <span class="text-xs font-semibold text-gray-400 uppercase">PAX</span></span>
-                    <p class="text-[10px] text-gray-400 mt-1 font-bold uppercase">${res.hora}</p>
+                    <span class="font-black text-xl text-blue-600">${res.pax} <span class="text-[10px] font-semibold text-gray-400 uppercase">PAX</span></span>
+                    <p class="text-[10px] text-gray-400 mt-1 font-bold uppercase">${res.hora || 'Libre'}</p>
                 </div>
             </div>
             <div class="flex mt-4 space-x-2">
-                <button class="flex-[2] bg-green-500 text-white py-2.5 rounded-xl text-sm font-bold shadow-md shadow-green-500/20 hover:bg-green-600 transition active:scale-95 border border-green-600" onclick="prepararAsignacion('${res.id}', '${res.cliente}', '${res.pax}', '${res.contacto}')"><i class="fas fa-clipboard-check mr-1"></i> Abordar Lancha</button>
+                <button class="flex-[2] py-2.5 rounded-xl text-sm font-bold transition active:scale-95 border ${btnClasses}" onclick="prepararAsignacion('${res.id}', '${res.cliente}', '${res.pax}', '${res.contacto}')"><i class="fas ${btnIcon} mr-1"></i> ${btnText}</button>
             </div>
         </div>
         `;
@@ -128,10 +193,8 @@ function renderCatalogos(cats) {
     
     selBote.innerHTML = '<option value="">- Lancha -</option>' + 
         (cats.botes.length ? cats.botes.map(b => `<option value="${b.id}">${b.nombre} (${b.cap} px)</option>`).join('') : '<option value="" disabled>Todos Ocupados</option>');
-    
     selCap.innerHTML = '<option value="">- Capitán -</option>' + 
         (cats.capitanes.length ? cats.capitanes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('') : '<option value="" disabled>Ninguno disp.</option>');
-    
     selGuia.innerHTML = '<option value="">- Guía -</option>' + 
         (cats.guias.length ? cats.guias.map(g => `<option value="${g.id}">${g.nombre}</option>`).join('') : '<option value="" disabled>Libres</option>');
 }
@@ -139,6 +202,11 @@ function renderCatalogos(cats) {
 function abrirModal(id) {
     document.getElementById('modal-backdrop').classList.remove('hidden');
     document.getElementById(id).classList.remove('hidden');
+    
+    if(id === 'modal-nueva-reserva') {
+        document.getElementById('input-crm-fecha').value = getHoyLocal();
+        cambiarTipoCRM();
+    }
 }
 
 function cerrarModales() {
@@ -155,85 +223,25 @@ function confirmarAbrirBote() {
     if(!id_capitan) return alert("❌ Selecciona el Capitán.");
     
     cerrarModales(); toggleSpinner(true);
-    fetchPost('abrir_operacion', { id_bote, id_capitan, id_guia }).then(() => fetchDashboardData());
-}
-
-function confirmarNuevaReserva() {
-    let cliente = document.getElementById('input-reserva-cliente').value.trim();
-    let agencia = document.getElementById('input-reserva-agencia').value.toUpperCase().trim() || 'DIRECTO';
-    let pax = document.getElementById('input-reserva-pax').value.trim();
-    
-    if(!cliente || !pax) return alert("❌ Cliente y PAX son obligatorios.");
-    
-    cerrarModales(); toggleSpinner(true);
-    fetchPost('nueva_reserva', {
-        fecha: new Date().toLocaleDateString(),
-        hora: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), 
-        id_contacto: agencia, 
-        cliente, cant_pax: pax
-    }).then(() => {
-        document.getElementById('input-reserva-cliente').value = '';
-        document.getElementById('input-reserva-agencia').value = '';
-        document.getElementById('input-reserva-pax').value = '';
-        fetchDashboardData();
-    });
-}
-
-function prepararAsignacion(id_reserva, cliente, pax, contacto) {
-    document.getElementById('hidden-reserva-id').value = id_reserva;
-    document.getElementById('hidden-reserva-pax').value = pax;
-    document.getElementById('hidden-reserva-agencia').value = contacto;
-    document.getElementById('text-cliente').innerText = cliente;
-    document.getElementById('text-pax').innerText = pax;
-    
-    abrirModal('modal-asignar-bote');
-}
-
-function confirmarAsignacion() {
-    let id_reserva = document.getElementById('hidden-reserva-id').value;
-    let pax = document.getElementById('hidden-reserva-pax').value;
-    let contacto = document.getElementById('hidden-reserva-agencia').value;
-    let id_operacion = document.getElementById('input-asignar-op').value.toUpperCase().trim();
-    
-    if(!id_operacion || !id_operacion.startsWith('OP-')) return alert("❌ Escribe el código exacto de la Operación (Ej: OP-12345).");
-    
-    cerrarModales(); toggleSpinner(true);
-    fetchPost('asignar_reserva', { id_reserva, id_operacion, cant_pax: pax, id_contacto: contacto })
-    .then(() => fetchDashboardData());
-}
-
-function registrarCajaRapida(tipo) {
-    let m = prompt(`💰 Ingrese el MONTO EXACTO de efectivo para:\n▶ ${tipo}`);
-    if(m && !isNaN(m)) {
-        toggleSpinner(true);
-        fetchPost('registrar_caja', {
-            categoria: tipo.replace(' ', '_'),
-            monto: parseFloat(m),
-            metodo_pago: 'Efectivo',
-            operador: 'Op_Turno'
-        }).then(() => fetchDashboardData());
-    }
+    fetchPost('abrir_operacion', { id_bote, id_capitan, id_guia, creador: myOpName }).then(() => fetchDashboardData());
 }
 
 // ==========================
-// VENTA DIRECTA (GESTION BOTE)
+// VENTA DIRECTA (MUELLE)
 // ==========================
-function abrirModalGestionBote(id_op) {
-    let op = window.operacionesData.find(o => o.id === id_op);
-    if(!op) return;
-    
-    document.getElementById('gestion-bote-nombre').innerText = op.bote;
-    document.getElementById('hidden-gestion-op').value = op.id;
-    document.getElementById('gestion-pax-total').innerText = op.ocupados;
-    
-    let listaHTML = op.manifiesto.map(m => {
+function generarListaHTML(manifiesto) {
+    if(!manifiesto || manifiesto.length === 0) return '<div class="text-center p-6 bg-white ..."><p>Lancha vacía.</p></div>';
+    return manifiesto.map(m => {
         let isEditado = m.estado && m.estado.includes('(Editado)');
+        let isSyncing = m.estado && m.estado.includes('Sincronizando');
         let bgClass = isEditado ? 'bg-orange-50' : 'bg-white';
-        let iconoEdicion = isEditado ? `<i class="fas fa-pen text-[9px] text-orange-400 ml-1" title="Editado"></i>` : '';
+        let opacityClass = isSyncing ? 'opacity-50 animate-pulse pointer-events-none' : '';
+        let iconoEdicion = isEditado ? `<i class="fas fa-pen text-[9px] text-orange-400 ml-1"></i>` : '';
+        let iconoSinc = isSyncing ? `<i class="fas fa-sync-alt fa-spin text-[9px] text-blue-400 ml-1"></i>` : '';
         return `
-        <div class="flex justify-between items-center ${bgClass} border border-gray-200 p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm" onclick="cargarParaEditar('${m.id}')">
+        <div class="flex justify-between items-center ${bgClass} ${opacityClass} border border-gray-200 p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm" onclick="cargarParaEditar('${m.id}')">
             <div>
-                <span class="text-xs font-bold text-gray-800 uppercase block">${m.contacto} ${iconoEdicion}</span>
+                <span class="text-xs font-bold text-gray-800 uppercase block">${m.contacto} ${iconoEdicion} ${iconoSinc}</span>
                 <span class="text-[10px] text-gray-500 font-bold">${m.tipo.replace('_',' ')}</span>
             </div>
             <div class="text-right">
@@ -242,11 +250,15 @@ function abrirModalGestionBote(id_op) {
             </div>
         </div>`;
     }).join('');
-    
-    if(!listaHTML) listaHTML = '<div class="text-center p-6 bg-white rounded-xl border border-dashed border-gray-300"><i class="fas fa-ship text-gray-300 text-3xl mb-2"></i><p class="text-xs text-gray-400">Lancha vacía.<br>Registra ventas abajo.</p></div>';
-    
-    document.getElementById('gestion-manifiesto-lista').innerHTML = listaHTML;
-    
+}
+
+function abrirModalGestionBote(id_op) {
+    let op = window.operacionesData.find(o => o.id === id_op);
+    if(!op) return;
+    document.getElementById('gestion-bote-nombre').innerText = op.bote;
+    document.getElementById('hidden-gestion-op').value = op.id;
+    document.getElementById('gestion-pax-total').innerText = op.ocupados;
+    document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
     resetFormularioVenta();
     abrirModal('modal-gestion-bote');
 }
@@ -254,38 +266,23 @@ function abrirModalGestionBote(id_op) {
 function cambiarTipoVentaDirecta() {
     let tipo = document.getElementById('input-vd-tipo').value;
     let container = document.getElementById('container-contacto-input');
-    
     if(tipo === 'Agencia' || tipo === 'Pase_Recibido') {
         let options = window.contactosData.map(c => `<option value="${c.nombre}">${c.nombre} (S/ ${c.precio})</option>`).join('');
-        container.innerHTML = `
-            <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Elegir Aliado / Agencia</label>
-            <select id="input-vd-contacto-select" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm mt-0.5 outline-none" onchange="actualizarPrecioDefecto()">
-                <option value="">Seleccionar...</option>
-                ${options}
-            </select>`;
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado/Agencia</label><select id="input-vd-contacto-select" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm mt-0.5 outline-none" onchange="actualizarPrecioDefecto()"><option value="">Seleccionar...</option>${options}</select>`;
     } else {
-        container.innerHTML = `
-            <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Familia / Apellido</label>
-            <input type="text" id="input-vd-contacto-text" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5 uppercase" placeholder="Ej: Familia Vasquez">`;
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Familia/Apellido</label><input type="text" id="input-vd-contacto-text" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5 uppercase" placeholder="Ej: Familia Vasquez">`;
     }
     actualizarPrecioDefecto();
 }
 
 function actualizarPrecioDefecto() {
     let tipo = document.getElementById('input-vd-tipo').value;
-    let inputPax = document.getElementById('input-vd-pax');
-    let inputPrecio = document.getElementById('input-vd-precio');
-    let pax = parseInt(inputPax.value) || 0;
-    
-    if(tipo === 'Agencia' || tipo === 'Pase_Recibido') {
-        let selectContacto = document.getElementById('input-vd-contacto-select');
-        if(selectContacto && selectContacto.value) {
-            let info = window.contactosData.find(c => c.nombre === selectContacto.value);
-            if(info && pax > 0) {
-                inputPrecio.value = (info.precio * pax).toFixed(2);
-            } else if(info) {
-                inputPrecio.value = "0.00";
-            }
+    let pax = parseInt(document.getElementById('input-vd-pax').value) || 0;
+    if((tipo === 'Agencia' || tipo === 'Pase_Recibido') && pax > 0) {
+        let select = document.getElementById('input-vd-contacto-select');
+        if(select && select.value) {
+            let info = window.contactosData.find(c => c.nombre === select.value);
+            if(info) document.getElementById('input-vd-precio').value = (info.precio * pax).toFixed(2);
         }
     }
 }
@@ -296,7 +293,6 @@ function resetFormularioVenta() {
     cambiarTipoVentaDirecta(); 
     document.getElementById('input-vd-pax').value = '';
     document.getElementById('input-vd-precio').value = '';
-    
     document.getElementById('titulo-form-venta').innerHTML = `<i class="fas fa-bolt text-yellow-500 text-sm mr-1"></i> Nuevo Embarque`;
     let btnSubmit = document.getElementById('btn-submit-venta');
     btnSubmit.innerHTML = `<i class="fas fa-arrow-up mr-2 text-base"></i> Subir al Bote`;
@@ -312,12 +308,10 @@ function cargarParaEditar(id_mov) {
         let m = op.manifiesto.find(x => x.id === id_mov);
         if(m) { movToEdit = m; break; }
     }
-    if(!movToEdit) return;
-    
+    if(!movToEdit || movToEdit.id.startsWith('temp-')) return;
     document.getElementById('hidden-vd-idmov').value = movToEdit.id;
     document.getElementById('input-vd-tipo').value = movToEdit.tipo;
     cambiarTipoVentaDirecta(); 
-    
     if(movToEdit.tipo === 'Agencia' || movToEdit.tipo === 'Pase_Recibido') {
         let s = document.getElementById('input-vd-contacto-select');
         if(s) s.value = movToEdit.contacto;
@@ -325,20 +319,16 @@ function cargarParaEditar(id_mov) {
         let t = document.getElementById('input-vd-contacto-text');
         if(t) t.value = movToEdit.contacto;
     }
-    
     document.getElementById('input-vd-pax').value = movToEdit.pax;
     document.getElementById('input-vd-precio').value = movToEdit.monto;
     
     document.getElementById('titulo-form-venta').innerHTML = `<i class="fas fa-pen text-orange-500 text-sm mr-1"></i> Editando Registro`;
     document.getElementById('btn-cancelar-edicion').classList.remove('hidden');
-    
     let box = document.getElementById('box-formulario-venta');
-    box.classList.remove('border-blue-200', 'bg-blue-50');
-    box.classList.add('border-orange-300', 'bg-orange-50');
-    
+    box.classList.remove('border-blue-200', 'bg-blue-50'); box.classList.add('border-orange-300', 'bg-orange-50');
     let btnSubmit = document.getElementById('btn-submit-venta');
     btnSubmit.innerHTML = `<i class="fas fa-save mr-2 text-base"></i> Actualizar`;
-    btnSubmit.className = "w-full mt-3 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-black p-3.5 rounded-xl shadow-lg transition flex items-center justify-center uppercase text-xs tracking-wider border border-orange-600";
+    btnSubmit.className = "w-full mt-3 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-black p-3.5 rounded-xl shadow-lg transition border border-orange-600 uppercase text-xs";
 }
 
 function confirmarVentaDirecta() {
@@ -347,53 +337,110 @@ function confirmarVentaDirecta() {
     let tipo = document.getElementById('input-vd-tipo').value;
     let pax = document.getElementById('input-vd-pax').value.trim();
     let precio = document.getElementById('input-vd-precio').value.trim();
-    
-    let contacto = "";
-    if(tipo === 'Agencia' || tipo === 'Pase_Recibido') {
-        let selectEl = document.getElementById('input-vd-contacto-select');
-        if(selectEl) contacto = selectEl.value;
-    } else {
-        let textEl = document.getElementById('input-vd-contacto-text');
-        if(textEl) contacto = textEl.value.trim().toUpperCase();
-    }
+    let contacto = tipo === 'Directo' ? document.getElementById('input-vd-contacto-text')?.value.trim().toUpperCase() : document.getElementById('input-vd-contacto-select')?.value;
     
     if(!contacto || !pax || !precio) return alert("❌ Cliente/Agencia, Pax y Precio total son obligatorios.");
     if(parseFloat(pax) <= 0) return alert("❌ Cantidad de pasajeros errónea.");
     
+    let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
+    if(opIndex !== -1) {
+        let currentOp = window.operacionesData[opIndex];
+        let requestedDelta = id_mov ? (parseInt(pax) - parseInt(currentOp.manifiesto.find(m => m.id === id_mov).pax)) : parseInt(pax);
+        if(currentOp.ocupados + requestedDelta > currentOp.capacidad) return alert(`❌ ¡El bote no tiene capacidad suficiente!`);
+
+        if(id_mov) {
+            let movIndex = currentOp.manifiesto.findIndex(m => m.id === id_mov);
+            if(movIndex !== -1) {
+                currentOp.ocupados += requestedDelta;
+                currentOp.manifiesto[movIndex] = { id: id_mov, tipo, contacto, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado (Editado) (Sincronizando)' };
+            }
+        } else {
+            currentOp.ocupados += requestedDelta;
+            currentOp.manifiesto.unshift({ id: 'temp-' + Date.now(), tipo, contacto, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado (Sincronizando)' });
+        }
+        document.getElementById('gestion-pax-total').innerText = currentOp.ocupados;
+        document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(currentOp.manifiesto);
+        renderOperaciones(window.operacionesData);
+    }
+    resetFormularioVenta(); 
+
     let endpoint = id_mov ? 'editar_movimiento_pax' : 'registrar_movimiento_pax';
-    let payload = {
-        id_operacion: id_op,
-        tipo: tipo,
-        contacto: contacto,
-        pax: pax,
-        precio_unitario: (parseFloat(precio)/parseFloat(pax)).toFixed(2),
-        monto_total: parseFloat(precio)
-    };
+    let payload = { id_operacion: id_op, tipo: tipo, contacto: contacto, pax: pax, precio_unitario: (parseFloat(precio)/parseFloat(pax)).toFixed(2), monto_total: parseFloat(precio), creador: myOpName };
     if(id_mov) payload.id_mov = id_mov;
     
+    fetchPostBg(endpoint, payload).then(res => {
+        if(res.status === 'error') alert(res.message);
+        fetchDashboardDataBg();
+    });
+}
+
+// ==========================
+// FORMULARIO CRM RESERVAS
+// ==========================
+function cambiarTipoCRM() {
+    let tipo = document.getElementById('input-crm-tipo').value;
+    let container = document.getElementById('container-crm-contacto');
+    if(tipo === 'Agencia' || tipo === 'Pase_Recibido') {
+        let options = window.contactosData.map(c => `<option value="${c.nombre}">${c.nombre} (S/ ${c.precio})</option>`).join('');
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado / Agencia</label><select id="input-crm-contacto-select" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm mt-0.5 outline-none" onchange="actualizarPrecioDefectoCRM()"><option value="">Seleccionar...</option>${options}</select>`;
+    } else {
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Familia / Apellido</label><input type="text" id="input-crm-contacto-text" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5 uppercase" placeholder="Ej: Familia Vasquez">`;
+    }
+    actualizarPrecioDefectoCRM();
+}
+
+function actualizarPrecioDefectoCRM() {
+    let tipo = document.getElementById('input-crm-tipo').value;
+    let pax = parseInt(document.getElementById('input-crm-pax').value) || 0;
+    if((tipo === 'Agencia' || tipo === 'Pase_Recibido') && pax > 0) {
+        let select = document.getElementById('input-crm-contacto-select');
+        if(select && select.value) {
+            let info = window.contactosData.find(c => c.nombre === select.value);
+            if(info) document.getElementById('input-crm-precio').value = (info.precio * pax).toFixed(2);
+        }
+    }
+}
+
+function confirmarNuevaReserva() {
+    let fecha = document.getElementById('input-crm-fecha').value;
+    let hora = document.getElementById('input-crm-hora').value || "Libre";
+    let tipo = document.getElementById('input-crm-tipo').value;
+    let pax = document.getElementById('input-crm-pax').value.trim();
+    let precio = document.getElementById('input-crm-precio').value.trim();
+    let contacto = tipo === 'Directo' ? document.getElementById('input-crm-contacto-text')?.value.trim().toUpperCase() : document.getElementById('input-crm-contacto-select')?.value;
+    
+    if(!fecha || !contacto || !pax || !precio) return alert("❌ Fecha, Cliente, PAX y Total son obligatorios.");
+    
     cerrarModales(); toggleSpinner(true);
-    fetchPost(endpoint, payload).then(() => {
-        resetFormularioVenta();
+    fetchPost('nueva_reserva', {
+        fecha: fecha, hora: hora, tipo: tipo,
+        id_contacto: contacto, cliente: contacto, cant_pax: pax, monto: parseFloat(precio).toFixed(2),
+        creador: myOpName
+    }).then(() => {
+        document.getElementById('input-crm-pax').value = ''; document.getElementById('input-crm-precio').value = '';
         fetchDashboardData();
     });
 }
 
-function fetchPost(action, payload) {
-    return fetch(GAS_URL, {
-        method: 'POST', redirect: 'follow',
-        body: JSON.stringify({ action: action, payload: payload }),
-        headers: {'Content-Type': 'text/plain;charset=utf-8'}
-    })
-    .then(res => res.json())
-    .then(data => { alert(data.message); return data; })
-    .catch(err => {
-        return { message: 'ok' }; 
+function prepararAsignacion(id_reserva, cliente, pax, contacto) { document.getElementById('hidden-reserva-id').value = id_reserva; document.getElementById('hidden-reserva-pax').value = pax; document.getElementById('hidden-reserva-agencia').value = contacto; abrirModal('modal-asignar-reserva'); }
+function confirmarAsignacion() {
+    let id_reserva = document.getElementById('hidden-reserva-id').value;
+    let pax = document.getElementById('hidden-reserva-pax').value;
+    let contacto = document.getElementById('hidden-reserva-agencia').value;
+    let id_operacion = document.getElementById('input-asignar-op').value.toUpperCase().trim();
+    if(!id_operacion) return alert("❌ Escribe el código exacto de la Operación.");
+    cerrarModales(); toggleSpinner(true);
+    fetchPost('asignar_reserva', { id_reserva, id_operacion, cant_pax: pax, id_contacto: contacto, creador: myOpName }).then(res => {
+        if(res.status==='error') alert(res.message);
+        fetchDashboardData();
     });
 }
 
-function toggleSpinner(show) {
-    const s = document.getElementById('global-spinner');
-    const u = document.getElementById('btn-refresh');
-    if(show) { s.classList.remove('hidden'); u.classList.add('hidden'); }
-    else { s.classList.add('hidden'); u.classList.remove('hidden'); }
+function registrarCajaRapida(tipo) {
+    let m = prompt(`💰 Ingrese el MONTO EXACTO de efectivo para:\n▶ ${tipo}`);
+    if(m && !isNaN(m)) { toggleSpinner(true); fetchPost('registrar_caja', { categoria: tipo.replace(' ', '_'), monto: parseFloat(m), metodo_pago: 'Efectivo', operador: myOpName }).then(() => fetchDashboardData()); }
 }
+
+function fetchPost(action, payload) { return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).then(data => { if(data.message) alert(data.message); return data; }).catch(err => { return { status: 'error', message: 'Fallo red' }; }); }
+function fetchPostBg(action, payload) { return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).catch(err => { return { status: 'error', message: 'Error de conexión' }; }); }
+function toggleSpinner(show) { const s = document.getElementById('global-spinner'); const u = document.getElementById('btn-refresh'); if(show) { s.classList.remove('hidden'); u.classList.add('hidden'); } else { s.classList.add('hidden'); u.classList.remove('hidden'); } }
