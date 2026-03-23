@@ -253,7 +253,7 @@
         </div>
 
         <div class="flex space-x-3 mt-4 shrink-0 pt-3 border-t border-gray-100">
-            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold" onclick="cerrarModales()">Cancelar</button>
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold" onclick="cerrarSubModal('modal-caja')">Cancelar</button>
             <button class="flex-[2] bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3.5 rounded-xl font-bold shadow-md shadow-green-500/30 transition flex items-center justify-center uppercase tracking-wide text-xs" onclick="confirmarCaja()"><i class="fas fa-check mr-2 text-base"></i> Registrar</button>
         </div>
     </div>
@@ -274,9 +274,44 @@
         </div>
 
         <div class="flex space-x-3">
-            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold" onclick="cerrarModales()">Cancelar</button>
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold" onclick="cerrarSubModal('modal-derivar')">Cancelar</button>
             <button class="flex-[2] bg-purple-600 text-white py-3.5 rounded-xl font-bold shadow-md shadow-purple-500/30 uppercase tracking-wide text-[11px]" onclick="confirmarDerivacion()"><i class="fas fa-rocket mr-1"></i> Confirmar Pase</button>
         </div>
+    </div>
+
+    <!-- Modal Detalle Transaccion -->
+    <div id="modal-detalle-caja" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[85%] max-w-sm bg-white rounded-3xl p-6 z-50 hidden shadow-2xl border border-gray-100">
+        <div class="text-center mb-5">
+            <div id="detalle-caja-icono" class="w-16 h-16 rounded-full bg-green-100 text-green-500 flex items-center justify-center mx-auto mb-3 text-2xl shadow-inner">
+                <i class="fas fa-check"></i>
+            </div>
+            <h2 id="detalle-caja-monto" class="text-3xl font-black text-gray-800">-</h2>
+            <p id="detalle-caja-fecha" class="text-[11px] text-gray-400 font-bold mt-1 uppercase"></p>
+        </div>
+        
+        <div class="bg-gray-50 rounded-2xl p-4 space-y-3 mb-6 border border-gray-100 relative overflow-hidden">
+            <!-- decoration -->
+            <div class="absolute -right-4 -top-4 w-16 h-16 bg-blue-100 rounded-full opacity-50 blur-xl pointer-events-none"></div>
+            
+            <div class="flex justify-between items-center border-b border-gray-200 pb-2">
+                <span class="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Transacción</span>
+                <span id="detalle-caja-id" class="text-[11px] font-black text-gray-700"></span>
+            </div>
+            <div class="flex justify-between items-center border-b border-gray-200 pb-2">
+                <span class="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Categoría</span>
+                <span id="detalle-caja-cat" class="text-[11px] font-bold text-gray-800"></span>
+            </div>
+            <div class="flex justify-between items-center border-b border-gray-200 pb-2">
+                <span class="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Método</span>
+                <span id="detalle-caja-metodo" class="text-[11px] font-bold text-gray-800"></span>
+            </div>
+            <div class="flex justify-between items-center">
+                <span class="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Operador</span>
+                <span id="detalle-caja-op" class="text-[11px] font-bold text-gray-800"></span>
+            </div>
+        </div>
+
+        <button class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-md hover:bg-blue-700 transition active:scale-95 text-xs uppercase tracking-wider" onclick="cerrarSubModal('modal-detalle-caja')">Aceptar</button>
     </div>
 
     <!-- MAIN APP STRUCTURE -->
