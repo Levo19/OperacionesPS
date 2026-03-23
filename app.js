@@ -203,27 +203,91 @@ function renderReservas(reservas) {
     }).join('');
 }
 
-function renderCaja(movimientos) {
-    const container = document.getElementById('caja-historial-container');
-    if(!movimientos || movimientos.length === 0) {
-        container.innerHTML = `<div class="px-4 py-5 text-center text-sm text-gray-500">Sin movimientos.</div>`;
-        return;
-    }
-    container.innerHTML = movimientos.map(mov => {
-        let isIngreso = parseFloat(mov.monto) > 0 || mov.tipo === 'Caja_Chica';
-        let clsTxt = isIngreso ? 'text-green-600' : 'text-red-500';
-        let clsBg = isIngreso ? 'bg-green-50' : 'bg-red-50';
-        let signo = isIngreso ? '+' : '-';
+function renderCaja(caja) {
+    let container = document.getElementById('tab-caja');
+    if(!container) return;
+
+    let hoy = getHoyLocal();
+    let txHoy = caja.filter(c => {
+       if(!c.timestamp) return false;
+       let d = new Date(c.timestamp);
+       let tzOffset = d.getTimezoneOffset() * 60000;
+       let localISOTime = new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
+       return localISOTime === hoy;
+    });
+
+    let ingresos = 0;
+    let salidas = 0;
+
+    let html = txHoy.map(c => {
+        let monto = parseFloat(c.monto) || 0;
+        let esIngreso = ['Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'].includes(c.categoria);
+        let isPase = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
+        
+        let colorText = isPase ? 'text-purple-600' : (esIngreso ? 'text-green-600' : 'text-red-600');
+        let signo = isPase ? '🤝' : (esIngreso ? '+' : '-');
+        
+        if(!isPase) {
+            if(esIngreso) ingresos += monto;
+            else salidas += monto;
+        }
+
         return `
-        <div class="px-5 py-3.5 flex justify-between items-center border-b border-gray-100 bg-white">
+        <div class="flex justify-between items-center bg-white p-4 rounded-2xl mb-3 shadow-sm border border-gray-100 cursor-pointer hover:bg-gray-50 transition active:scale-95" onclick="abrirDetalleCaja('${c.id}')">
             <div>
-                <p class="font-bold text-gray-800 text-sm">${mov.tipo.replace('_', ' ')}</p>
-                <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mt-0.5">${mov.hora}</p>
+                <span class="text-sm font-extrabold text-gray-800 tracking-tight block flex items-center"><i class="fas fa-circle text-[8px] ${esIngreso ? 'text-green-400' : 'text-red-400'} mr-2"></i> ${c.categoria.replace('_',' ')}</span>
+                <span class="text-[10px] text-gray-500 block font-bold mt-1">${new Date(c.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • ${c.metodo_pago || 'Efectivo'}</span>
             </div>
-            <span class="${clsTxt} font-black ${clsBg} px-2.5 py-1 rounded-xl shadow-sm text-sm border border-gray-100">${signo} S/ ${Math.abs(mov.monto).toFixed(2)}</span>
-        </div>
-        `;
+            <span class="font-black ${colorText}">${signo} S/ ${monto.toFixed(2)}</span>
+        </div>`;
     }).join('');
+
+    let saldo = ingresos - salidas;
+    
+    let headerHtml = `
+    <h2 class="font-bold text-gray-700 mb-4 block"><i class="fas fa-coins text-yellow-500 mr-2"></i> Finanzas de Hoy</h2>
+    
+    <div class="bg-gradient-to-br from-blue-600 to-indigo-800 rounded-3xl p-6 mb-6 shadow-xl relative overflow-hidden">
+        <i class="fas fa-wallet absolute -right-6 -bottom-6 text-8xl text-white opacity-10"></i>
+        <p class="text-blue-100 text-[10px] font-bold uppercase tracking-widest mb-1">Balance Efectivo/Digital</p>
+        <h3 class="text-4xl font-black text-white mb-4 shadow-sm">S/ ${saldo.toFixed(2)}</h3>
+        <div class="flex space-x-3 bg-white/10 rounded-2xl p-3 backdrop-blur-sm border border-white/20">
+            <div class="flex-1">
+                <p class="text-green-300 text-[9px] font-bold uppercase tracking-wider mb-0.5"><i class="fas fa-arrow-down mr-1"></i> Entradas</p>
+                <p class="text-white font-bold text-xs truncate">+ S/ ${ingresos.toFixed(2)}</p>
+            </div>
+            <div class="w-px bg-white/20"></div>
+            <div class="flex-1 text-right">
+                <p class="text-red-300 text-[9px] font-bold uppercase tracking-wider mb-0.5"><i class="fas fa-arrow-up mr-1"></i> Salidas</p>
+                <p class="text-white font-bold text-xs truncate">- S/ ${salidas.toFixed(2)}</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="grid grid-cols-2 gap-4 mb-6">
+        <button class="bg-green-50 text-green-700 p-4 rounded-3xl flex flex-col items-center justify-center border border-green-200 shadow-sm transition hover:bg-green-100 active:scale-95" onclick="abrirModalCaja('Caja Chica')">
+            <div class="bg-green-100/50 p-3 rounded-full mb-1"><i class="fas fa-plus text-xl"></i></div>
+            <span class="font-black text-xs uppercase tracking-wider">Caja Chica</span>
+        </button>
+        <button class="bg-red-50 text-red-700 p-4 rounded-3xl flex flex-col items-center justify-center border border-red-200 shadow-sm transition hover:bg-red-100 active:scale-95" onclick="abrirModalCaja('Retiro Jefatura')">
+            <div class="bg-red-100/50 p-3 rounded-full mb-1"><i class="fas fa-minus text-xl"></i></div>
+            <span class="font-black text-xs uppercase tracking-wider">Retiro</span>
+        </button>
+    </div>
+    
+    <h3 class="font-extrabold text-gray-800 text-xs mb-3 uppercase tracking-wider flex items-center"><i class="fas fa-list-ul mr-2 text-blue-500"></i> Historial Turno</h3>
+    <div id="lista-historial-caja" class="pb-10">
+        ${html || '<div class="text-center p-6 bg-gray-50 rounded-2xl text-gray-400 font-bold border-2 border-dashed border-gray-200"><i class="fas fa-receipt text-3xl mb-2 opacity-30 block"></i> No hay movimientos hoy.</div>'}
+    </div>
+    `;
+
+    container.innerHTML = headerHtml;
+}
+
+// Placeholder for abrirDetalleCaja, as it's called in renderCaja but not provided in the instruction.
+function abrirDetalleCaja(id) {
+    console.log("Abrir detalle de caja para ID:", id);
+    // Implementación futura para mostrar detalles de una transacción de caja
 }
 
 function renderCatalogos(cats) {
@@ -259,8 +323,19 @@ function abrirModal(id) {
 }
 
 function cerrarModales() {
+    document.querySelectorAll('.fixed').forEach(el => {
+        if(el.id !== 'modal-backdrop' && el.id !== 'global-spinner' && el.id.startsWith('modal-')) {
+            el.classList.add('hidden');
+        }
+    });
     document.getElementById('modal-backdrop').classList.add('hidden');
-    document.querySelectorAll('[id^="modal-"]').forEach(m => m.classList.add('hidden'));
+    cancelarEdicion();
+}
+
+function cerrarSubModal(id) {
+    document.getElementById(id).classList.add('hidden');
+    let act = Array.from(document.querySelectorAll('.fixed')).filter(el => el.id !== 'modal-backdrop' && el.id !== 'global-spinner' && el.id.startsWith('modal-') && !el.classList.contains('hidden'));
+    if(act.length === 0) document.getElementById('modal-backdrop').classList.add('hidden');
 }
 
 function confirmarAbrirBote() {
@@ -625,7 +700,7 @@ function confirmarCaja() {
 
     if(!monto || isNaN(monto) || monto <= 0) return alert('Ingresa un monto válido.');
     
-    cerrarModales(); toggleSpinner(true);
+    cerrarSubModal('modal-caja'); toggleSpinner(true);
     fetchPost('registrar_caja_v2', { categoria: cat, monto: parseFloat(monto), metodo_pago: metodo, referencia: ref, operador: myOpName }).then(() => fetchDashboardData());
 }
 
@@ -646,8 +721,41 @@ function confirmarDerivacion() {
     let id_op = document.getElementById('hidden-gestion-op').value;
     if(!aliado) return alert("Selecciona a quién se le emite el Pase.");
 
-    cerrarModales(); toggleSpinner(true);
+    cerrarSubModal('modal-derivar'); toggleSpinner(true);
     fetchPost('derivar_pase', { id_mov, aliado, id_operacion_origen: id_op, operador: myOpName }).then(() => fetchDashboardData());
+}
+
+function abrirDetalleCaja(id_tx) {
+    let tx = window.cajaData.find(c => c.id === id_tx);
+    if(!tx) return;
+    
+    let esIngreso = ['Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'].includes(tx.categoria);
+    let isPase = tx.metodo_pago === 'Pase_Canje' || tx.metodo_pago === 'Pase / Canje';
+    
+    let icono = document.getElementById('detalle-caja-icono');
+    let boxCat = document.getElementById('detalle-caja-cat');
+    let signo = isPase ? '🤝' : (esIngreso ? '+' : '-');
+    
+    if(isPase) {
+        icono.className = 'w-16 h-16 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center mx-auto mb-3 text-2xl shadow-inner';
+        icono.innerHTML = '<i class="fas fa-handshake"></i>';
+    } else if (esIngreso) {
+        icono.className = 'w-16 h-16 rounded-full bg-green-100 text-green-500 flex items-center justify-center mx-auto mb-3 text-2xl shadow-inner';
+        icono.innerHTML = '<i class="fas fa-arrow-down"></i>';
+    } else {
+        icono.className = 'w-16 h-16 rounded-full bg-red-100 text-red-500 flex items-center justify-center mx-auto mb-3 text-2xl shadow-inner';
+        icono.innerHTML = '<i class="fas fa-arrow-up"></i>';
+    }
+
+    document.getElementById('detalle-caja-monto').innerText = signo + ' S/ ' + parseFloat(tx.monto).toFixed(2);
+    document.getElementById('detalle-caja-fecha').innerText = new Date(tx.timestamp).toLocaleString();
+    
+    document.getElementById('detalle-caja-id').innerText = tx.id;
+    boxCat.innerText = tx.categoria.replace('_', ' ');
+    document.getElementById('detalle-caja-metodo').innerText = tx.metodo_pago || 'Efectivo';
+    document.getElementById('detalle-caja-op').innerText = tx.operador || 'Sistema';
+    
+    abrirModal('modal-detalle-caja');
 }
 
 function obtenerHoraSugerida() {
