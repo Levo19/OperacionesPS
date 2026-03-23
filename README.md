@@ -1,53 +1,65 @@
 # Sistema de Gestión de Operaciones Turísticas (SOT MVP) 🚤
 
-Este es el Producto Mínimo Viable (MVP) para el **Sistema de Gestión de Operaciones Turísticas (SOT)**. Está diseñado como una *Single Page Application (SPA)* enfocada en la movilidad (Mobile-First) para control de zarpes, pasajeros y caja de operadores portuarios, con un backend serverless soportado por Google Apps Script y Google Sheets.
+Este es el Producto Mínimo Viable (MVP) para el **Sistema de Gestión de Operaciones Turísticas (SOT)**. Está diseñado como una *Single Page Application (SPA)* enfocada en la movilidad (Mobile-First) para el control dinámico de zarpes, manifiestos de pasajeros y caja de operadores portuarios. Funciona con un backend serverless soportado por Google Apps Script y Google Sheets como base de datos.
 
-## Características Principales 🌟
+## 🌟 Funcionalidades Principales
 
-1. **Gestión de Operaciones (El Muelle):** Control de embarcaciones abiertas en el día, capacidad en tiempo real (barra de progreso visual) y asignación de pasajeros.
-2. **Sala de Espera (Reservas CRM):** Recepción de pasajeros desde agencias u origen directo, con opciones para asignar rápidamente a botes o registrar cobros de último minuto.
-3. **Control de Caja Estricto:** Registro aislado de movimientos extraordinarios (Caja Chica, Retiros de Jefatura y cobros de turno), manteniendo las finanzas separadas de la logística de muelle.
-4. **Cierre de Turno:** Consolidación guiada que exige la subida de una foto del Zarpe físico y cálcula automáticamente la liquidación del turno del operador (`Total a Entregar = Cobros Efectivo + Caja Chica - Retiro Jefatura`).
+### 1. 🚢 El Muelle (Gestión de Operaciones)
+El núcleo de la logística portuaria. Permite al operador gestionar embarcaciones en tiempo real:
+- **Abrir Nueva Lancha:** Asignación inmediata de una Embarcación, un Capitán y un Guía (filtrado automáticamente para mostrar solo recursos *disponibles*). 
+- **Gestión de Manifiesto (Gestión de PAX):** Capacidad de ingresar pasajeros directamente a la lancha antes de zarpar. Permite:
+  - Venta directa a "Familia/Apellido".
+  - Venta o Pase de "Agencias/Aliados" con cálculo automático de tarifas predeterminadas.
+  - Interfaz de abordaje (Modal de gestión) que muestra la capacidad restante y un progreso visual de llenado de la lancha.
+- **Acción "Zarpar" y Múltiples Viajes:** 
+  - Una lancha cargada puede ser marcada como **Zarpada**. Al hacerlo, el estado de la operación cambia a **"En Viaje"** (destacado en la interfaz con etiquetas y bordes naranjas).
+  - **Liberación de Recursos:** Zarpar una lancha de forma inmediata libera la Embarcación, al Capitán y al Guía en la base de datos. Esto es vital para puertos dinámicos donde un capitán que zarpó hace 1 hora ya está retornando, y el operador en el muelle puede ir *abriendo y armando el siguiente viaje* con esa misma lancha (y capitán) asignada mientras el turno anterior sigue marcado "En Viaje".
+  - **Manifiesto de Viaje:** Las lanchas "En Viaje" desactivan su botón de cargar pasajeros reemplazándolo por un modo "Ver Manifiesto", el cual está protegido ocultando de forma nativa los formularios de venta rápida.
 
-## Arquitectura del Proyecto 🏗️
+### 2. 🛋️ Sala de Espera (Reservas / CRM)
+Sistema ágil de check-in y agenda para pasajeros que compraron pasajes pero aún no abordan.
+- **CRM Fácil:** Registro de reservas rápidas indicando fecha, hora, tipo de venta, origen (Agencia o Directo), cantidad de PAX y Total en Soles.
+- **Vista Inteligente:** Las reservas programadas para el propio día aparecen listas, de colores vivos y operativas. Las reservas a futuro se apagan en tonos grises para no sobrecargar visualmente al operador.
+- **Abordaje a Lancha:** El botón verde "Abordar Lancha" permite trasladar los PAX en sala de espera directamente hacia una Operación (viaje) Abierta, bastando con teclear el código identificador único de la lancha (`OP-XXXX`).
 
-- **Frontend:** HTML5, CSS3, Vainilla JavaScript (SPA robusta sin frameworks pesados) + **TailwindCSS** (vía CDN) y FontAwesome para íconos. Interfaz UI orientada 100% a dispositivos móviles/tablets con *Bottom Navigation Bar* estilo app nativa.
-- **Backend (API):** Google Apps Script (`Codigo.gs`) exponiendo endpoints GET/POST (JSON).
-- **Base de Datos:** Google Sheets. (Las tablas estrictas requeridas: *Embarcaciones, Personal, Contactos, Reservas_CRM, Operaciones, Movimientos, Caja_Operador*).
-- **Almacenamiento de Archivos e Impresión:** Google Drive (Fotos de Zarpes físicos) y Google Docs (Templates para generar el PDF A4 de la liquidación).
+### 3. 💸 Movimientos y Caja (Caja Ext.)
+Registro del flujo extra en el área del puerto en el turno actual.
+- **Caja Chica:** Cuando el operador recibe fondos en efectivo.
+- **Retiro Jefatura:** Cuando ocurre un descargo o corte de entrega de efectivo.
+- **Historial en Vivo:** Listado continuo que registra cada entrada/salida de dinero con sus signos (+/-) y estampas de tiempo reales.
 
-## Estructura de Archivos 📁
+### 4. 🏁 Liquidación y Cierre de Turno
+Proceso diseñado para culminar las operaciones del día y auditar:
+- Panel interactivo para adjuntar o tomar foto in-situ del manifiesto/papel de Zarpe Oficial.
+- Función "LIQUIDAR Y CERRAR" que engloba ventas, pax y caja para la generación del PDF o comprobante del operador (En consolidación de APIS).
+
+## 🏗️ Arquitectura y Tecnologías
+
+- **Frontend UI/UX:** 
+  - 100% *Vanilla JavaScript* + HTML5.
+  - El diseño visual se soporta en **Tailwind CSS** vía CDN, otorgándole estilo de App nativa Mobile-first (modales fluidos tipo bottom-sheet, transiciones pulidas, barras de progreso y diseño "glassmorphism" en overlays).
+  - **Optimistic UI:** El frontend inyecta operaciones, sumatorias de PAX y registros artificialmente con la estampa visual `(Sincronizando...)`, dejando interactuar al operador libremente y sin bloqueos de red mientras el backend registra en Google Sheets en segundo plano.
+
+- **Backend / API (Serverless):** 
+  - Desarrollado en **Google Apps Script (`Codigo.gs`)** operando como un motor y controlador REST sobre rutinas POST/GET nativas de GAS.
+  - Contiene las validaciones matemáticas (cruces de aforo límite) para no permitir la sobreventa o doble embarque accidental de pasajeros simultáneos en bases concurrentes.
+
+- **Storage / Base de Datos:** 
+  - Servido puramente en ecosistema Workspace con Google Sheets.
+  - Tablas transaccionales: *Embarcaciones, Personal, Contactos, Reservas_CRM, Operaciones, Movimientos, Caja_Operador*.
+
+## 📁 Estructura del Proyecto
 
 ```text
 /
-├── index.html        # Estructura principal, vistas (4 pestañas) y diseño Tailwind.
-├── app.js            # Lógica del frontend (navegación, simulación Fetch, modales).
-├── Codigo.gs         # Lógica del backend para Google Apps Script.
-└── README.md         # Documentación y guía de despliegue.
+├── index.html        # SPA Layout, Bottom Navigation Bar y Modales Tailwind
+├── app.js            # Lógica cliente, fetch async, renderizadores de estado
+├── Codigo.gs         # Controlador de Base de Datos y APIs en Google Apps Script
+└── README.md         # Documentación integral del MVP SOT
 ```
 
-## Guía de Despliegue 🚀
+## 🚀 Despliegue Configurado
+Las URLs están embebidas en el repositorio. Para cualquier clonación, referenciar a la implementación real compilada del GAS en la constante `GAS_URL` de `app.js` y hacer _Deploy as Web App_ en el IDE de script de Google.
 
-### 1. Configurar el Backend (Google Apps Script)
-1. Crea un nuevo **Google Sheets** y nombra las pestañas (`Operaciones`, `Reservas_CRM`, `Caja_Operador`, `Movimientos`, etc).
-2. Ve a **Extensiones > Apps Script**.
-3. Copia el contenido de `Codigo.gs` y pégalo allí.
-4. **Súper Importante:** Reemplaza la constante `SPREADSHEET_ID` en `Codigo.gs` por el ID real de tu hoja de cálculo (lo encuentras en la URL de tu Google Sheet).
-5. Dale clic al botón azul arriba a la derecha: **Implementar > Nueva implementación**.
-    - Selecciona el tipo de engranaje **Aplicación Web**.
-    - Ejecutar como: *Tú*.
-    - En *Quién tiene acceso*, elige **Cualquier persona**.
-    - Autoriza los permisos de Drive/Sheets si Google te lo pide.
-6. Copia la **URL de la aplicación web** generada (termina en `/exec`).
-
-### 2. Configurar el Frontend (GitHub Pages)
-1. Abre el archivo `app.js` en tu editor de código.
-2. Reemplaza el valor de la constante `GAS_URL` (Línea 2) por la **URL de la aplicación web** que acabas de copiar.
-3. Sube los archivos (`index.html`, `app.js`, `README.md`) a tu repositorio de GitHub.
-4. En GitHub, ve a la pestaña **Settings** (Configuración) de tu repositorio.
-5. Selecciona en la barra lateral: **Pages**.
-6. En *Branch*, selecciona tu rama principal (`main` o `master`) y dale a *Save*.
-7. ¡Listo! En uno o dos minutos, GitHub te dará el enlace público para usar tu SOT MVP compartiendo un enlace universal que tus operadores pueden guardar en la pantalla de inicio de su celular.
-
-## Licencia y Uso
-MVP construido para logística y operaciones portuarias privadas. Prohibido su uso comercial para terceros sin autorización.
+---
+*MVP consolidado para proveer agilidad extrema frente a operaciones en muelle con alta presión temporal y de atención al turista.*
