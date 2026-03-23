@@ -264,6 +264,28 @@ function renderCaja(caja) {
         });
     }
 
+    if(window.pasesExternosData) {
+        window.pasesExternosData.forEach(m => {
+            if(m.estado && m.estado.includes('Pase Emitido a ')) {
+                // Verificar si es de hoy 
+                let dStr = m.timestamp; 
+                let esHoy = true;
+                if(dStr) {
+                    let d = new Date(dStr);
+                    let tzOffset = d.getTimezoneOffset() * 60000;
+                    let localISOTime = new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
+                    if(localISOTime !== hoy) esHoy = false;
+                }
+                
+                if(esHoy) {
+                    let aliado = m.estado.replace('Pase Emitido a ', '').trim();
+                    if(!resumenPases[aliado]) resumenPases[aliado] = { recibidos: 0, emitidos: 0 };
+                    resumenPases[aliado].emitidos += parseInt(m.pax);
+                }
+            }
+        });
+    }
+
     let pasesHtml = Object.keys(resumenPases).map(aliado => {
         let r = resumenPases[aliado].recibidos;
         let e = resumenPases[aliado].emitidos;
@@ -381,7 +403,7 @@ function cerrarModales() {
         }
     });
     document.getElementById('modal-backdrop').classList.add('hidden');
-    cancelarEdicion();
+    resetFormularioVenta();
 }
 
 function cerrarSubModal(id) {
