@@ -1,65 +1,65 @@
 # Sistema de Gestión de Operaciones Turísticas (SOT MVP) 🚤
 
-Este es el Producto Mínimo Viable (MVP) para el **Sistema de Gestión de Operaciones Turísticas (SOT)**. Está diseñado como una *Single Page Application (SPA)* enfocada en la movilidad (Mobile-First) para el control dinámico de zarpes, manifiestos de pasajeros y caja de operadores portuarios. Funciona con un backend serverless soportado por Google Apps Script y Google Sheets como base de datos.
+Este es el Producto Mínimo Viable (MVP) para el **Sistema de Gestión de Operaciones Turísticas (SOT)**. Está diseñado como una *Single Page Application (SPA)* enfocada en la movilidad (Mobile-First) para el control dinámico de zarpes, manifiestos de pasajeros y finanzas de operadores portuarios. Funciona con un backend serverless soportado por Google Apps Script y Google Sheets como base de datos.
 
 ## 🌟 Funcionalidades Principales
 
 ### 1. 🚢 El Muelle (Gestión de Operaciones)
 El núcleo de la logística portuaria. Permite al operador gestionar embarcaciones en tiempo real:
-- **Abrir Nueva Lancha:** Asignación inmediata de una Embarcación, un Capitán y un Guía (filtrado automáticamente para mostrar solo recursos *disponibles*). 
+- **Abrir Nueva Lancha:** Asignación inmediata de una Embarcación, un Capitán y un Guía (filtrados automáticamente para mostrar solo recursos *disponibles* o desocupados). 
 - **Gestión de Manifiesto (Gestión de PAX):** Capacidad de ingresar pasajeros directamente a la lancha antes de zarpar. Permite:
   - Venta directa a "Familia/Apellido".
   - Venta o Pase de "Agencias/Aliados" con cálculo automático de tarifas predeterminadas.
-  - Interfaz de abordaje (Modal de gestión) que muestra la capacidad restante y un progreso visual de llenado de la lancha.
+  - Interfaz de abordaje interactiva: las tarjetas de cada movimiento ahora revelan (al hacer click) acciones rápidas para **Pagar** un saldo pendiente o **Derivar** a un aliado.
 - **Acción "Zarpar" y Múltiples Viajes:** 
-  - Una lancha cargada puede ser marcada como **Zarpada**. Al hacerlo, el estado de la operación cambia a **"En Viaje"** (destacado en la interfaz con etiquetas y bordes naranjas).
-  - **Liberación de Recursos:** Zarpar una lancha de forma inmediata libera la Embarcación, al Capitán y al Guía en la base de datos. Esto es vital para puertos dinámicos donde un capitán que zarpó hace 1 hora ya está retornando, y el operador en el muelle puede ir *abriendo y armando el siguiente viaje* con esa misma lancha (y capitán) asignada mientras el turno anterior sigue marcado "En Viaje".
-  - **Manifiesto de Viaje:** Las lanchas "En Viaje" desactivan su botón de cargar pasajeros reemplazándolo por un modo "Ver Manifiesto", el cual está protegido ocultando de forma nativa los formularios de venta rápida.
+  - Una lancha cargada puede ser marcada como **Zarpada**. Al hacerlo, el estado de la operación cambia a **"En Viaje"** (destacado visualmente en el panel).
+  - **Liberación Inmediata de Recursos:** Zarpar una lancha libera la Embarcación, al Capitán y al Guía en la base de datos permitiendo armar las siguientes salidas de inmediato.
+- **Derivación (Pases Emitidos):** Sistema revolucionario que permite ceder (derivar) pasajeros ya embarcados a una empresa Aliada. Esto crea un registro de "Pase Emitido a X", libera el aforo de la lancha actual, y computa a nivel contable (como un "Favor") para futuras reconciliaciones.
 
 ### 2. 🛋️ Sala de Espera (Reservas / CRM)
 Sistema ágil de check-in y agenda para pasajeros que compraron pasajes pero aún no abordan.
 - **CRM Fácil:** Registro de reservas rápidas indicando fecha, hora, tipo de venta, origen (Agencia o Directo), cantidad de PAX y Total en Soles.
-- **Vista Inteligente:** Las reservas programadas para el propio día aparecen listas, de colores vivos y operativas. Las reservas a futuro se apagan en tonos grises para no sobrecargar visualmente al operador.
-- **Abordaje a Lancha:** El botón verde "Abordar Lancha" permite trasladar los PAX en sala de espera directamente hacia una Operación (viaje) Abierta, bastando con teclear el código identificador único de la lancha (`OP-XXXX`).
+- **Vista Inteligente:** Reservas programadas para hoy aparecen destacadas; las futuras se apagan visualmente.
+- **Abordaje a Lancha:** El botón verde "Abordar Lancha" permite subir los pasajeros de la sala de espera directamente a un ID de Operación abierto.
 
-### 3. 💸 Movimientos y Caja (Caja Ext.)
-Registro del flujo extra en el área del puerto en el turno actual.
-- **Caja Chica:** Cuando el operador recibe fondos en efectivo.
-- **Retiro Jefatura:** Cuando ocurre un descargo o corte de entrega de efectivo.
-- **Historial en Vivo:** Listado continuo que registra cada entrada/salida de dinero con sus signos (+/-) y estampas de tiempo reales.
+### 3. 💸 Movimientos y Caja (Caja 2.0)
+Registro central del flujo financiero y corporativo del puerto en el turno actual con un diseño *banking-like*.
+- **Panel de Finanzas de Hoy:** Muestra de forma gigante el **Balance Efectivo/Digital** (Ingresos totales menos Salidas) junto al desglose respectivo.
+- **Panel de Pases (Favores):** Computación en tiempo real de deudas intangibles. Unifica los "Pases Recibidos" (Aliado nos debe) menos "Pases Emitidos" (Nosotros derivamos y les debemos) para arrojar un **Saldo Final** por cada Agencia del muelle.
+- **Modal de Transacciones:** Visualización moderna (estilo Yape/App Bancaria) del recibo (voucher) que detalla método de pago, fecha exacta y operador, accesible con un solo toque sobre cualquier movimiento.
+- **Botones Inteligentes de Caja:** "Caja Chica" (+) y "Retiro" (-) mediante modales configurables para aceptar Transferencia, Efectivo, Yape o Plin.
 
 ### 4. 🏁 Liquidación y Cierre de Turno
 Proceso diseñado para culminar las operaciones del día y auditar:
-- Panel interactivo para adjuntar o tomar foto in-situ del manifiesto/papel de Zarpe Oficial.
-- Función "LIQUIDAR Y CERRAR" que engloba ventas, pax y caja para la generación del PDF o comprobante del operador (En consolidación de APIS).
+- Contiene el formulario y flujos destinados a la impresión de reportes y cruce final del operador antes de salir de turno.
 
 ## 🏗️ Arquitectura y Tecnologías
 
 - **Frontend UI/UX:** 
   - 100% *Vanilla JavaScript* + HTML5.
-  - El diseño visual se soporta en **Tailwind CSS** vía CDN, otorgándole estilo de App nativa Mobile-first (modales fluidos tipo bottom-sheet, transiciones pulidas, barras de progreso y diseño "glassmorphism" en overlays).
-  - **Optimistic UI:** El frontend inyecta operaciones, sumatorias de PAX y registros artificialmente con la estampa visual `(Sincronizando...)`, dejando interactuar al operador libremente y sin bloqueos de red mientras el backend registra en Google Sheets en segundo plano.
+  - Diseño con **Tailwind CSS** vía CDN, otorgándole estilo de App nativa Mobile-first (modales fluidos tipo bottom-sheet, transiciones pulidas, doble validación en click para acciones críticas, y diseño "glassmorphism" en overlays de balances).
+  - **Optimistic UI Refinada:** El frontend inyecta operaciones (Nuevos registros o Derivaciones) instantáneamente con labels de `(Cargando...)` o `(Sincronizando...)`, bloqueando el formulario lo justo e impidiendo doble sumisión, pero manteniendo la lectura intacta mientras el backend trabaja en segundo plano.
 
 - **Backend / API (Serverless):** 
-  - Desarrollado en **Google Apps Script (`Codigo.gs`)** operando como un motor y controlador REST sobre rutinas POST/GET nativas de GAS.
-  - Contiene las validaciones matemáticas (cruces de aforo límite) para no permitir la sobreventa o doble embarque accidental de pasajeros simultáneos en bases concurrentes.
+  - Desarrollado en **Google Apps Script (`Codigo.gs`)** operando como un controlador REST sobre doPost/doGet nativos de GAS.
+  - Control de Pases en "Background": Mapea las derivaciones al estado lógico `EXTERNO` dentro de la Hoja de `Movimientos` para no ensucia el manifiesto de la lancha original.
 
-- **Storage / Base de Datos:** 
-  - Servido puramente en ecosistema Workspace con Google Sheets.
-  - Tablas transaccionales: *Embarcaciones, Personal, Contactos, Reservas_CRM, Operaciones, Movimientos, Caja_Operador*.
+- **Storage / Base de Datos Sheets:** 
+  - Servido puramente en Google Sheets con las tablas transaccionales: *Embarcaciones, Personal, Contactos, Reservas_CRM, Operaciones, Movimientos, Caja_Operador*.
+  - Las uniones complejas (JOINs) entre los balances de Caja\_Operador, Pases Recibidos y Emitidos se calculan a nivel Frontend iterando la recolección global optimizada en una sola llamada `fetchDashboardData`.
 
 ## 📁 Estructura del Proyecto
 
 ```text
 /
-├── index.html        # SPA Layout, Bottom Navigation Bar y Modales Tailwind
-├── app.js            # Lógica cliente, fetch async, renderizadores de estado
-├── Codigo.gs         # Controlador de Base de Datos y APIs en Google Apps Script
+├── index.html        # SPA Layout, Bottom Navigation Bar, y docenas de Modales Tailwind
+├── app.js            # Lógica PWA/SPA, state management local, optimismo y calculadoras
+├── Codigo.gs         # Endpoints Google Apps Script, validaciones lógicas de aforo
 └── README.md         # Documentación integral del MVP SOT
 ```
 
 ## 🚀 Despliegue Configurado
-Las URLs están embebidas en el repositorio. Para cualquier clonación, referenciar a la implementación real compilada del GAS en la constante `GAS_URL` de `app.js` y hacer _Deploy as Web App_ en el IDE de script de Google.
+Las llamadas están puenteadas en la constante `GAS_URL` alojada en `app.js`. Asegurarse de realizar _Deploy as Web App_ en el entorno GAS y asignar permisos públicos para ejecución de Scripts antes de correr en producción.
 
 ---
-*MVP consolidado para proveer agilidad extrema frente a operaciones en muelle con alta presión temporal y de atención al turista.*
+*MVP consolidado para proveer agilidad extrema frente a operaciones en muelle con alta presión temporal y manejo en efectivo.*
