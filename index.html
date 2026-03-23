@@ -10,7 +10,7 @@
         ::-webkit-scrollbar { display: none; }
         body { -ms-overflow-style: none; scrollbar-width: none; background-color: #f3f4f6; }
         .tab-content { display: none; padding-bottom: 90px; }
-        .tab-content.active { display: block; animation: fadeIn 0.25s ease-out; }
+        .tab-content.active { display: block; animation: fadeIn 0.2s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         .nav-item.active { color: #2563eb; }
         .nav-item.active .icon { transform: scale(1.15); }
@@ -18,22 +18,96 @@
     </style>
 </head>
 <body class="font-sans antialiased text-gray-800">
+
+    <!-- OVERLAYS O MODALES ELEGANTES TAILWIND -->
+    <div id="modal-backdrop" class="fixed inset-0 bg-black/60 z-30 hidden backdrop-blur-sm transition-opacity" onclick="cerrarModales()"></div>
+
+    <!-- Modal Abrir Bote -->
+    <div id="modal-abrir-bote" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-40 hidden shadow-2xl">
+        <h3 class="font-extrabold text-xl text-blue-900 mb-1">Abrir Operación</h3>
+        <p class="text-[13px] text-gray-500 mb-5 leading-snug">El sistema generará el "Código de Operación" automáticamente. Solo necesitas la nave y capitán.</p>
+        <div class="space-y-4">
+            <div>
+                <label class="text-xs font-bold text-gray-700 uppercase tracking-widest"><i class="fas fa-ship mr-1"></i> ID Lancha</label>
+                <input type="text" id="input-bote-id" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 shadow-inner mt-1 uppercase" placeholder="Ej: BOT-01">
+            </div>
+            <div>
+                <label class="text-xs font-bold text-gray-700 uppercase tracking-widest"><i class="fas fa-user-tie mr-1"></i> ID Capitán</label>
+                <input type="text" id="input-capitan-id" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 shadow-inner mt-1 uppercase" placeholder="Ej: EMP-01">
+            </div>
+        </div>
+        <div class="flex space-x-3 mt-7">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold" onclick="cerrarModales()">Cancelar</button>
+            <button class="flex-[2] bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md shadow-blue-500/30" onclick="confirmarAbrirBote()"><i class="fas fa-check mr-1"></i> Confirmar Turno</button>
+        </div>
+    </div>
+
+    <!-- Modal Nueva Reserva -->
+    <div id="modal-nueva-reserva" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-40 hidden shadow-2xl">
+        <h3 class="font-extrabold text-xl text-gray-800 mb-1">Crear Reserva CRM</h3>
+        <p class="text-[13px] text-gray-500 mb-4 leading-snug">Agregar grupo de pasajeros a la Sala de Espera de hoy.</p>
+        <div class="space-y-4">
+            <div>
+                <label class="text-xs font-bold text-gray-700">Nombre del Pasajero / Familia</label>
+                <input type="text" id="input-reserva-cliente" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 mt-1" placeholder="Ej: Familia Torres">
+            </div>
+            <div class="flex space-x-3">
+                <div class="flex-[2]">
+                    <label class="text-xs font-bold text-gray-700">Agencia (Opcional)</label>
+                    <input type="text" id="input-reserva-agencia" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 mt-1 uppercase" placeholder="Ej: CON-01">
+                </div>
+                <div class="flex-1">
+                    <label class="text-xs font-bold text-blue-600">PAX (Cant.)</label>
+                    <input type="number" id="input-reserva-pax" class="w-full bg-blue-50 border border-blue-200 rounded-xl p-3 text-lg font-black text-center focus:outline-blue-600 mt-1" placeholder="2">
+                </div>
+            </div>
+        </div>
+        <div class="flex space-x-3 mt-7">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold" onclick="cerrarModales()">Cancelar</button>
+            <button class="flex-[2] bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md shadow-blue-500/30" onclick="confirmarNuevaReserva()"><i class="fas fa-save mr-1"></i> Guardar Reserva</button>
+        </div>
+    </div>
+
+    <!-- Modal Asignar Bote -->
+    <div id="modal-asignar-bote" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-40 hidden shadow-2xl">
+        <h3 class="font-extrabold text-xl text-gray-800 mb-1">Abordar Reserva</h3>
+        <p class="text-[13px] text-gray-500 mb-4 leading-snug">Mover los <span id="text-pax" class="font-bold text-blue-600"></span> PAX de <span id="text-cliente" class="font-bold text-blue-600"></span> hacia la embarcación designada.</p>
+        
+        <input type="hidden" id="hidden-reserva-id">
+        <input type="hidden" id="hidden-reserva-pax">
+        <input type="hidden" id="hidden-reserva-agencia">
+        
+        <div class="bg-blue-50 p-4 rounded-2xl border border-blue-100 mb-5">
+            <label class="text-xs font-bold text-blue-800 uppercase tracking-widest block mb-2"><i class="fas fa-ship mr-1"></i> ¿A qué turno / operación suben?</label>
+            <input type="text" id="input-asignar-op" class="w-full bg-white border border-blue-200 rounded-xl p-3 text-sm focus:outline-blue-600 font-bold uppercase placeholder:font-normal" placeholder="Código Operación (OP-XXXX)">
+            <p class="text-[10px] text-blue-500 mt-2 font-semibold">* Mira el código OP- encima del nombre del bote.</p>
+        </div>
+
+        <div class="flex space-x-3">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold" onclick="cerrarModales()">Cancelar</button>
+            <button class="flex-[2] bg-green-500 text-white py-3.5 rounded-xl font-bold shadow-md shadow-green-500/30 uppercase tracking-wide text-sm" onclick="confirmarAsignacion()"><i class="fas fa-check-double mr-1"></i> Confirmar</button>
+        </div>
+    </div>
+
+    <!-- MAIN APP STRUCTURE -->
     <header class="bg-blue-600 text-white shadow-md sticky top-0 z-10 w-full">
         <div class="px-5 py-3.5 flex justify-between items-center max-w-md mx-auto">
             <h1 class="text-xl font-bold tracking-tight" id="app-title">Operaciones</h1>
-            <div class="flex space-x-4 text-xl"><i class="fas fa-search"></i><i class="fas fa-sync-alt cursor-pointer" onclick="fetchDashboardData()"></i></div>
+            <!-- Loading Indicator para API Calls -->
+            <div id="global-spinner" class="hidden"><i class="fas fa-sync-alt fa-spin text-xl"></i></div>
+            <div id="btn-refresh" class="flex space-x-4 text-xl" onclick="fetchDashboardData()"><i class="fas fa-sync-alt cursor-pointer"></i></div>
         </div>
     </header>
-    <main class="w-full max-w-md mx-auto p-4">
+
+    <main class="w-full max-w-md mx-auto p-4 relative">
         <!-- PESTAÑA 1 -->
         <section id="tab-operaciones" class="tab-content active">
             <div class="flex justify-between items-center mb-4">
                 <h2 class="font-bold text-gray-700">Lanchas Abiertas Hoy</h2>
-                <button class="text-blue-600 font-bold text-sm bg-blue-50 px-3 py-1 rounded-full" onclick="abrirNuevaOperacion()"><i class="fas fa-plus"></i> Abrir Bote</button>
+                <button class="text-blue-600 font-bold text-sm bg-blue-50 px-3 py-1 rounded-full shadow-sm hover:bg-blue-100" onclick="abrirModal('modal-abrir-bote')"><i class="fas fa-plus"></i> Abrir Bote</button>
             </div>
-            <!-- Contenedor Dinamico -->
             <div id="operaciones-container">
-                <div class="text-center py-10"><i class="fas fa-spinner fa-spin text-3xl text-blue-500"></i><p class="mt-2 text-gray-500 text-sm">Cargando datos en vivo...</p></div>
+                <div class="text-center py-10"><i class="fas fa-spinner fa-spin text-3xl text-blue-500"></i><p class="mt-2 text-gray-500 text-sm">Cargando...</p></div>
             </div>
         </section>
         
@@ -41,11 +115,10 @@
         <section id="tab-reservas" class="tab-content">
             <div class="flex justify-between items-center mb-5">
                 <h2 class="font-bold text-gray-700">Sala de Espera (CRM)</h2>
-                <button class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md hover:bg-blue-700 transition active:scale-95" onclick="crearNuevaReserva()"><i class="fas fa-plus mr-1"></i> Nueva</button>
+                <button class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-blue-500/30 hover:bg-blue-700 active:scale-95" onclick="abrirModal('modal-nueva-reserva')"><i class="fas fa-plus mr-1"></i> Nueva</button>
             </div>
-            <!-- Contenedor Dinamico -->
             <div id="reservas-container" class="space-y-3">
-                <div class="text-center py-10"><i class="fas fa-spinner fa-spin text-3xl text-blue-500"></i><p class="mt-2 text-gray-500 text-sm">Sincronizando con CRM...</p></div>
+                <div class="text-center py-10"><i class="fas fa-spinner fa-spin text-3xl text-blue-500"></i></div>
             </div>
         </section>
 
@@ -53,20 +126,18 @@
         <section id="tab-caja" class="tab-content">
             <h2 class="font-bold text-gray-700 mb-4">Movimientos Extraordinarios</h2>
             <div class="grid grid-cols-2 gap-4 mb-6">
-                <button class="bg-green-50 text-green-700 p-5 rounded-2xl flex flex-col items-center justify-center border-2 border-green-200 shadow-sm transition active:scale-95" onclick="abrirModalCaja('Caja Chica')">
+                <button class="bg-green-50 text-green-700 p-5 rounded-2xl flex flex-col items-center justify-center border-2 border-green-200 shadow-sm transition active:scale-95" onclick="registrarCajaRapida('Caja Chica')">
                     <div class="bg-green-100 p-3 rounded-full mb-2"><i class="fas fa-arrow-down text-2xl"></i></div>
                     <span class="font-bold">Caja Chica</span>
                     <span class="text-xs font-medium text-green-600 mt-1">(Ingresa Efectivo)</span>
                 </button>
-                <button class="bg-red-50 text-red-700 p-5 rounded-2xl flex flex-col items-center justify-center border-2 border-red-200 shadow-sm transition active:scale-95" onclick="abrirModalCaja('Retiro Jefatura')">
+                <button class="bg-red-50 text-red-700 p-5 rounded-2xl flex flex-col items-center justify-center border-2 border-red-200 shadow-sm transition active:scale-95" onclick="registrarCajaRapida('Retiro Jefatura')">
                     <div class="bg-red-100 p-3 rounded-full mb-2"><i class="fas fa-arrow-up text-2xl"></i></div>
                     <span class="font-bold">Retiro Jefatura</span>
                     <span class="text-xs font-medium text-red-600 mt-1">(Retira Efectivo)</span>
                 </button>
             </div>
             <h3 class="font-bold text-gray-500 mb-3 text-sm uppercase tracking-wider px-1">Historial Hoy (Turno)</h3>
-            
-            <!-- Contenedor Dinamico -->
             <div id="caja-historial-container" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y">
                 <div class="text-center py-6"><i class="fas fa-spinner fa-spin text-xl text-blue-500"></i></div>
             </div>
@@ -78,12 +149,8 @@
                 <div class="text-center mb-5">
                     <div class="bg-red-50 text-red-500 inline-block p-3 rounded-full mb-2"><i class="fas fa-lock text-3xl"></i></div>
                     <h2 class="font-extrabold text-xl text-gray-800">Cierre de Operación</h2>
-                    <p class="text-sm text-gray-500 mt-1 leading-tight">Consolida tu turno, sube el Zarpe físico y genera la liquidación en PDF.</p>
                 </div>
-                <!-- ... resto de UI de cierre simulado ... -->
-                <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 mb-5 text-sm">
-                    <div class="flex justify-between items-center"><span class="font-black text-blue-900 text-lg">Efectivo a Entregar:</span> <span class="font-black text-2xl text-blue-700">S/ 515.00</span></div>
-                </div>
+                <!-- ... -->
                 <div class="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center shadow-inner cursor-pointer" onclick="document.getElementById('zarpe-foto').click()">
                     <i class="fas fa-camera text-4xl text-gray-300 mb-3 block"></i>
                     <p class="text-sm font-bold text-gray-700">Subir foto de Zarpe firmado</p>
@@ -91,11 +158,6 @@
                     <span id="file-name" class="mt-2 block text-xs text-green-600 font-bold"></span>
                 </div>
                 <button class="mt-5 w-full bg-red-600 text-white font-black py-4 rounded-xl shadow-lg transition active:scale-95 text-lg flex items-center justify-center" onclick="cerrarOperacion()"><i class="fas fa-file-pdf mr-2"></i> LIQUIDAR Y CERRAR</button>
-            </div>
-            <div id="pdf-result" class="hidden mt-4 bg-green-50 border border-green-200 p-5 rounded-2xl text-center shadow-sm">
-                <i class="fas fa-check-circle text-4xl text-green-500 mb-3 block drop-shadow-sm"></i>
-                <h3 class="font-extrabold text-green-800 text-lg mb-1">¡Turno Cerrado!</h3>
-                <a href="#" class="inline-flex w-full items-center justify-center bg-white text-green-700 font-bold py-3 px-4 border border-green-300 rounded-xl mt-3"><i class="fas fa-download mr-2 text-xl"></i> Descargar PDF</a>
             </div>
         </section>
     </main>
