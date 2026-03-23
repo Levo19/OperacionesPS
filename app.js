@@ -6,6 +6,8 @@ if(!myOpName) {
     localStorage.setItem('sot_operador', myOpName);
 }
 
+let pendingPostRequests = 0;
+
 document.addEventListener('DOMContentLoaded', () => {
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 15000);
@@ -50,7 +52,7 @@ function fetchDashboardData() {
 
 function fetchDashboardDataBg() {
     let spinner = document.getElementById('global-spinner');
-    if(!spinner.classList.contains('hidden')) return; 
+    if(pendingPostRequests > 0 || !spinner.classList.contains('hidden')) return; 
     
     let refreshIcon = document.querySelector('#btn-refresh i');
     if(refreshIcon) refreshIcon.classList.add('fa-spin');
@@ -97,10 +99,10 @@ function renderOperaciones(operaciones) {
         <div class="bg-white rounded-2xl shadow-sm p-4 mb-4 border border-gray-100 relative overflow-hidden">
             <div class="absolute top-0 right-0 w-2 h-full bg-green-500"></div>
             <div class="flex justify-between items-center mb-1">
-                <h3 class="font-extrabold text-lg text-blue-900"><i class="fas fa-ship fa-sm mr-2 text-blue-400"></i>${op.bote}</h3>
+                <h3 class="font-extrabold text-lg text-blue-900"><i class="fas fa-ship fa-sm mr-2 text-blue-400 ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
                 <span class="bg-green-100 text-green-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">${op.ocupados} / ${op.capacidad} PAX</span>
             </div>
-            <span class="text-[10px] text-gray-400 font-bold block mb-3 uppercase tracking-wider ml-6">CÓDIGO: <span class="text-gray-700">${op.id}</span></span>
+            <span class="text-[10px] text-gray-400 font-bold block mb-3 uppercase tracking-wider ml-6">CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
             
             <div class="w-full bg-gray-100 rounded-full h-2 mb-3">
                 <div class="bg-gradient-to-r from-green-400 to-green-500 h-2 rounded-full" style="width: ${porcentaje}%"></div>
@@ -206,6 +208,7 @@ function abrirModal(id) {
     if(id === 'modal-nueva-reserva') {
         document.getElementById('input-crm-fecha').value = getHoyLocal();
         cambiarTipoCRM();
+        setTimeout(actualizarHoraSugeridaCRM, 50);
     }
 }
 
@@ -215,15 +218,33 @@ function cerrarModales() {
 }
 
 function confirmarAbrirBote() {
-    let id_bote = document.getElementById('select-bote-id').value;
-    let id_capitan = document.getElementById('select-capitan-id').value;
-    let id_guia = document.getElementById('select-guia-id').value;
+    let selectBote = document.getElementById('select-bote-id');
+    let selectCap = document.getElementById('select-capitan-id');
+    let selectGuia = document.getElementById('select-guia-id');
+
+    let id_bote = selectBote.value;
+    let id_capitan = selectCap.value;
+    let id_guia = selectGuia.value;
     
     if(!id_bote) return alert("❌ Selecciona la lancha a operar.");
     if(!id_capitan) return alert("❌ Selecciona el Capitán.");
     
-    cerrarModales(); toggleSpinner(true);
-    fetchPost('abrir_operacion', { id_bote, id_capitan, id_guia, creador: myOpName }).then(() => fetchDashboardData());
+    // Optimistic UI para Lanchas
+    let boteNombreRaw = selectBote.options[selectBote.selectedIndex].text;
+    let boteNombre = boteNombreRaw.split(' (')[0];
+    let cap = parseInt(boteNombreRaw.match(/\((\d+)/)[1]) || 20;
+
+    let opTemp = {
+        id: 'Creando...', bote: boteNombre, capacidad: cap, ocupados: 0,
+        estado: 'Abierta', capitan: selectCap.options[selectCap.selectedIndex].text,
+        guia: selectGuia.value ? selectGuia.options[selectGuia.selectedIndex].text : 'Sin Guía',
+        hora_salida: '', manifiesto: []
+    };
+    window.operacionesData.unshift(opTemp);
+    renderOperaciones(window.operacionesData);
+    cerrarModales();
+
+    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, creador: myOpName }).then(() => fetchDashboardDataBg());
 }
 
 // ==========================
@@ -254,8 +275,12 @@ function generarListaHTML(manifiesto) {
 
 function abrirModalGestionBote(id_op) {
     let op = window.operacionesData.find(o => o.id === id_op);
-    if(!op) return;
-    document.getElementById('gestion-bote-nombre').innerText = op.bote;
+    if(!op || op.id === 'Creando...') return;
+    
+    let nodeH3 = document.getElementById('gestion-bote-nombre');
+    if(nodeH3.childNodes[0].nodeType === 3) nodeH3.childNodes[0].nodeValue = op.bote + " ";
+    document.getElementById('gestion-bote-aforo').innerText = `${op.ocupados} / ${op.capacidad} PAX`;
+    
     document.getElementById('hidden-gestion-op').value = op.id;
     document.getElementById('gestion-pax-total').innerText = op.ocupados;
     document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
@@ -359,6 +384,7 @@ function confirmarVentaDirecta() {
             currentOp.manifiesto.unshift({ id: 'temp-' + Date.now(), tipo, contacto, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado (Sincronizando)' });
         }
         document.getElementById('gestion-pax-total').innerText = currentOp.ocupados;
+        document.getElementById('gestion-bote-aforo').innerText = `${currentOp.ocupados} / ${currentOp.capacidad} PAX`;
         document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(currentOp.manifiesto);
         renderOperaciones(window.operacionesData);
     }
@@ -441,6 +467,31 @@ function registrarCajaRapida(tipo) {
     if(m && !isNaN(m)) { toggleSpinner(true); fetchPost('registrar_caja', { categoria: tipo.replace(' ', '_'), monto: parseFloat(m), metodo_pago: 'Efectivo', operador: myOpName }).then(() => fetchDashboardData()); }
 }
 
+// Extras CRM
+function actualizarHoraSugeridaCRM() {
+    let fechaInput = document.getElementById('input-crm-fecha').value; 
+    let selectHora = document.getElementById('input-crm-hora');
+    if(!selectHora) return;
+    
+    let hoy = getHoyLocal();
+    if(fechaInput === hoy) {
+        let siguiente = new Date().getHours() + 1;
+        if(siguiente < 7) siguiente = 7;
+        let ampm = siguiente >= 12 ? 'PM' : 'AM';
+        let h12 = siguiente > 12 ? siguiente - 12 : siguiente;
+        if(h12 === 0) h12 = 12;
+        let hStr = h12.toString().padStart(2, '0') + ":00 " + ampm;
+        let found = Array.from(selectHora.options).find(opt => opt.value === hStr);
+        if(found) selectHora.value = hStr; else selectHora.selectedIndex = 0;
+    } else {
+        selectHora.selectedIndex = 0;
+    }
+}
+
 function fetchPost(action, payload) { return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).then(data => { if(data.message) alert(data.message); return data; }).catch(err => { return { status: 'error', message: 'Fallo red' }; }); }
-function fetchPostBg(action, payload) { return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).catch(err => { return { status: 'error', message: 'Error de conexión' }; }); }
+function fetchPostBg(action, payload) { 
+    pendingPostRequests++;
+    let refreshIcon = document.querySelector('#btn-refresh i'); if(refreshIcon) refreshIcon.classList.add('fa-spin', 'text-yellow-400');
+    return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).then(d => { pendingPostRequests--; if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400'); return d; }).catch(err => { pendingPostRequests--; if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400'); return { status: 'error', message: 'Error de conexión' }; }); 
+}
 function toggleSpinner(show) { const s = document.getElementById('global-spinner'); const u = document.getElementById('btn-refresh'); if(show) { s.classList.remove('hidden'); u.classList.add('hidden'); } else { s.classList.add('hidden'); u.classList.remove('hidden'); } }
