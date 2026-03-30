@@ -6,9 +6,22 @@ if(!myOpName) {
     localStorage.setItem('sot_operador', myOpName);
 }
 
+function cambiarOperador() {
+    let nuevo = prompt(`Operador actual: "${myOpName}"\n\nIngresa el nuevo nombre:`)?.trim();
+    if(nuevo) {
+        myOpName = nuevo;
+        localStorage.setItem('sot_operador', myOpName);
+        let el = document.getElementById('label-operador-actual');
+        if(el) el.innerText = myOpName;
+        mostrarToast('✅ Operador actualizado: ' + myOpName);
+    }
+}
+
 let pendingPostRequests = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
+    let el = document.getElementById('label-operador-actual');
+    if(el) el.innerText = myOpName;
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 15000);
 });
@@ -18,6 +31,12 @@ function getHoyLocal() {
     return (new Date(Date.now() - tzoffset)).toISOString().split('T')[0];
 }
 
+function esFechaHoy(ts) {
+    if(!ts) return false;
+    // Soporta "YYYY-MM-DD" y "YYYY-MM-DDTHH:mm:ss..." tomando solo la parte de fecha
+    return String(ts).split('T')[0] === getHoyLocal();
+}
+
 function switchTab(tabId, title, btnElement) {
     const tabs = document.querySelectorAll('.tab-content');
     tabs.forEach(tab => tab.classList.remove('active'));
@@ -25,8 +44,48 @@ function switchTab(tabId, title, btnElement) {
     const navItems = document.querySelectorAll('.nav-item');
     navItems.forEach(item => item.classList.remove('active', 'red-tab'));
     btnElement.classList.add('active');
-    if(tabId === 'tab-cierre') btnElement.classList.add('red-tab');
+    if(tabId === 'tab-cierre') {
+        btnElement.classList.add('red-tab');
+        poblarSelectorCierre();
+    }
     document.getElementById('app-title').innerText = title;
+}
+
+function poblarSelectorCierre() {
+    let sel = document.getElementById('select-cierre-op');
+    if(!sel) return;
+    let ops = (window.operacionesData || []).filter(op => op.estado === 'Abierta' || op.estado === 'En_Viaje');
+    if(ops.length === 0) {
+        sel.innerHTML = '<option value="">— No hay operaciones activas —</option>';
+    } else {
+        sel.innerHTML = '<option value="">— Selecciona —</option>' +
+            ops.map(op => `<option value="${op.id}">${op.bote} · ${op.hora_salida || 'S/H'} · ${op.ocupados}/${op.capacidad} PAX · ${op.estado}</option>`).join('');
+    }
+}
+
+function cerrarOperacion() {
+    let id_operacion = document.getElementById('select-cierre-op')?.value;
+    if(!id_operacion) return alert('❌ Selecciona primero la operación a cerrar.');
+    if(!confirm('¿Confirmas el CIERRE y LIQUIDACIÓN de esta operación? Esta acción no se puede deshacer.')) return;
+
+    toggleSpinner(true);
+    fetchPost('cerrar_operacion', { id_operacion, creador: myOpName })
+        .then(res => {
+            toggleSpinner(false);
+            if(res.status === 'error') return;
+            // Mostrar resultado de liquidación
+            let total = res.liquidacion ? res.liquidacion.total_a_entregar : 0;
+            let result = document.getElementById('pdf-result');
+            if(result) {
+                result.classList.remove('hidden');
+                result.innerHTML = `
+                <i class="fas fa-check-circle text-4xl text-green-500 mb-3 block drop-shadow-sm"></i>
+                <h3 class="font-extrabold text-green-800 text-lg mb-1">¡Turno Cerrado!</h3>
+                <p class="text-sm text-gray-600 mb-3">Total a entregar: <span class="font-black text-green-700 text-xl">S/ ${parseFloat(total).toFixed(2)}</span></p>`;
+            }
+            // Actualizar datos
+            fetchDashboardData();
+        });
 }
 
 function fetchDashboardData() {
@@ -350,11 +409,6 @@ function renderCaja(caja) {
     container.innerHTML = headerHtml;
 }
 
-// Placeholder for abrirDetalleCaja, as it's called in renderCaja but not provided in the instruction.
-function abrirDetalleCaja(id) {
-    console.log("Abrir detalle de caja para ID:", id);
-    // Implementación futura para mostrar detalles de una transacción de caja
-}
 
 function renderCatalogos(cats) {
     if(!cats) return;
@@ -423,6 +477,8 @@ function confirmarAbrirBote() {
 
     let selectHora = document.getElementById('select-bote-hora');
     let hora_salida = selectHora ? selectHora.value : '';
+    let selectDestino = document.getElementById('select-bote-destino');
+    let destino = selectDestino ? selectDestino.value : '';
 
     let opTemp = {
         id: 'Creando...', bote: boteNombre, capacidad: cap, ocupados: 0,
@@ -434,7 +490,7 @@ function confirmarAbrirBote() {
     renderOperaciones(window.operacionesData);
     cerrarModales();
 
-    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, hora_salida, creador: myOpName }).then(() => fetchDashboardDataBg());
+    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, hora_salida, destino, creador: myOpName }).then(() => fetchDashboardDataBg());
 }
 
 function confirmarZarpe(id_op) {
@@ -752,10 +808,6 @@ function confirmarAsignacion() {
     });
 }
 
-function registrarCajaRapida(tipo) {
-    let m = prompt(`💰 Ingrese el MONTO EXACTO de efectivo para:\n▶ ${tipo}`);
-    if(m && !isNaN(m)) { toggleSpinner(true); fetchPost('registrar_caja', { categoria: tipo.replace(' ', '_'), monto: parseFloat(m), metodo_pago: 'Efectivo', operador: myOpName }).then(() => fetchDashboardData()); }
-}
 // Extras CRM
 function abrirModalCaja(tipo, id_ref = '', propMonto = '') {
     document.getElementById('caja-categoria').value = tipo;
@@ -891,9 +943,38 @@ function actualizarHoraSugeridaCRM() {
 }
 
 function fetchPost(action, payload) { return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).then(data => { if(data.message) alert(data.message); return data; }).catch(err => { return { status: 'error', message: 'Fallo red' }; }); }
-function fetchPostBg(action, payload) { 
+function fetchPostBg(action, payload) {
     pendingPostRequests++;
     let refreshIcon = document.querySelector('#btn-refresh i'); if(refreshIcon) refreshIcon.classList.add('fa-spin', 'text-yellow-400');
-    return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).then(d => { pendingPostRequests--; if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400'); return d; }).catch(err => { pendingPostRequests--; if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400'); return { status: 'error', message: 'Error de conexión' }; }); 
+    return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} })
+        .then(res => res.json())
+        .then(d => {
+            pendingPostRequests--;
+            if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400');
+            return d;
+        })
+        .catch(err => {
+            pendingPostRequests--;
+            if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400');
+            mostrarToast('⚠️ Sin conexión. El dato puede no haberse guardado. Recarga para verificar.', 'error');
+            return { status: 'error', message: 'Error de conexión' };
+        });
+}
+
+function mostrarToast(msg, tipo = 'info') {
+    let toast = document.getElementById('app-toast');
+    if(!toast) {
+        toast = document.createElement('div');
+        toast.id = 'app-toast';
+        toast.style.cssText = 'position:fixed;bottom:90px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 18px;border-radius:12px;font-size:12px;font-weight:700;max-width:90vw;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.15);transition:opacity 0.3s;';
+        document.body.appendChild(toast);
+    }
+    toast.style.background = tipo === 'error' ? '#fee2e2' : '#dbeafe';
+    toast.style.color = tipo === 'error' ? '#991b1b' : '#1e40af';
+    toast.style.border = tipo === 'error' ? '1px solid #fca5a5' : '1px solid #93c5fd';
+    toast.style.opacity = '1';
+    toast.innerText = msg;
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 4000);
 }
 function toggleSpinner(show) { const s = document.getElementById('global-spinner'); const u = document.getElementById('btn-refresh'); if(show) { s.classList.remove('hidden'); u.classList.add('hidden'); } else { s.classList.add('hidden'); u.classList.remove('hidden'); } }

@@ -123,6 +123,13 @@
                     </select>
                 </div>
             </div>
+            <div>
+                <label class="text-[10px] font-bold text-indigo-700 uppercase tracking-widest block mb-1"><i class="fas fa-map-marker-alt mr-1"></i> Destino</label>
+                <select id="select-bote-destino" class="w-full bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-sm font-bold text-indigo-900 focus:outline-indigo-500 shadow-inner">
+                    <option value="Islas Ballestas">Islas Ballestas</option>
+                    <option value="Islas Blancas">Islas Blancas</option>
+                </select>
+            </div>
         </div>
         <div class="flex space-x-3 mt-7">
             <button class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold" onclick="cerrarModales()">Cancelar</button>
@@ -369,18 +376,32 @@
 
         <!-- PESTAÑA 4 -->
         <section id="tab-cierre" class="tab-content">
+            <!-- Panel Operador -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-4 flex items-center justify-between">
+                <div>
+                    <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Operador activo</p>
+                    <p class="font-extrabold text-gray-800 text-sm" id="label-operador-actual"></p>
+                </div>
+                <button class="bg-blue-50 text-blue-600 px-3 py-2 rounded-xl text-xs font-bold border border-blue-100 hover:bg-blue-100 active:scale-95 transition" onclick="cambiarOperador()"><i class="fas fa-user-edit mr-1"></i> Cambiar</button>
+            </div>
             <div class="bg-white rounded-2xl shadow p-5 mb-5">
                 <div class="text-center mb-5">
                     <div class="bg-red-50 text-red-500 inline-block p-3 rounded-full mb-2"><i class="fas fa-lock text-3xl"></i></div>
                     <h2 class="font-extrabold text-xl text-gray-800">Cierre de Operación</h2>
                 </div>
+                <div class="mb-4">
+                    <label class="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-1"><i class="fas fa-ship text-blue-400 mr-1"></i> Selecciona la operación a cerrar</label>
+                    <select id="select-cierre-op" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm font-bold text-gray-800 focus:outline-red-400 shadow-inner">
+                        <option value="">- Cargando operaciones activas... -</option>
+                    </select>
+                </div>
                 <div class="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center shadow-inner cursor-pointer" onclick="document.getElementById('zarpe-foto').click()">
                     <i class="fas fa-camera text-4xl text-gray-300 mb-3 block"></i>
                     <p class="text-sm font-bold text-gray-700">Subir foto de Zarpe firmado</p>
-                    <input type="file" id="zarpe-foto" accept="image/*" class="hidden">
+                    <input type="file" id="zarpe-foto" accept="image/*" class="hidden" onchange="document.getElementById('file-name').innerText = this.files[0]?.name || ''">
                     <span id="file-name" class="mt-2 block text-xs text-green-600 font-bold"></span>
                 </div>
-                <button class="mt-5 w-full bg-red-600 text-white font-black py-4 rounded-xl shadow-lg transition active:scale-95 text-lg flex items-center justify-center" onclick="cerrarOperacion()"><i class="fas fa-file-pdf mr-2"></i> LIQUIDAR Y CERRAR</button>
+                <button class="mt-5 w-full bg-red-600 text-white font-black py-4 rounded-xl shadow-lg transition active:scale-95 text-lg flex items-center justify-center" onclick="cerrarOperacion()"><i class="fas fa-flag-checkered mr-2"></i> LIQUIDAR Y CERRAR</button>
             </div>
             <div id="pdf-result" class="hidden mt-4 bg-green-50 border border-green-200 p-5 rounded-2xl text-center shadow-sm">
                 <i class="fas fa-check-circle text-4xl text-green-500 mb-3 block drop-shadow-sm"></i>
