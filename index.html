@@ -19,17 +19,42 @@
 </head>
 <body class="font-sans antialiased text-gray-800">
 
+    <!-- MODAL LOGIN OPERADOR -->
+    <div id="modal-login" class="fixed inset-0 bg-gradient-to-br from-blue-950 to-blue-800 z-[100] flex flex-col items-center justify-center p-6 hidden">
+        <button id="login-close-btn" onclick="document.getElementById('modal-login').classList.add('hidden')" class="hidden absolute top-5 right-5 text-blue-300 hover:text-white text-2xl w-9 h-9 flex items-center justify-center rounded-full hover:bg-blue-700 transition"><i class="fas fa-times"></i></button>
+        <div class="w-full max-w-xs">
+            <div class="text-center mb-10">
+                <i class="fas fa-ship text-white text-5xl mb-4 block opacity-80 drop-shadow-lg"></i>
+                <h1 class="text-white font-black text-2xl tracking-tight">SOT Operaciones</h1>
+                <p class="text-blue-300 text-sm mt-1">Ingresa parte de tu nombre para continuar</p>
+            </div>
+            <div class="flex space-x-2">
+                <input id="login-input" type="text" autocomplete="off" class="flex-1 bg-blue-900/80 border-2 border-blue-600 text-white placeholder-blue-400 rounded-xl p-3.5 text-base font-bold outline-none focus:border-white transition" placeholder="Ej: gomez, luis..." onkeydown="if(event.key==='Enter')confirmarLoginManual()">
+                <button onclick="confirmarLoginManual()" class="bg-white text-blue-900 font-black px-5 rounded-xl hover:bg-blue-100 transition active:scale-95 shadow-lg text-sm">OK</button>
+            </div>
+            <p id="login-error" class="text-red-300 text-xs mt-3 hidden text-center font-bold"></p>
+            <!-- Zona de desambiguación si hay más de 1 match -->
+            <div id="login-matches" class="mt-4 space-y-2 hidden"></div>
+        </div>
+    </div>
+
     <!-- OVERLAYS O MODALES ELEGANTES TAILWIND -->
     <div id="modal-backdrop" class="fixed inset-0 bg-black/60 z-30 hidden backdrop-blur-sm transition-opacity" onclick="cerrarModales()"></div>
 
     <!-- Modal Gestionar Bote (Direct Sales / Manifest) -->
     <div id="modal-gestion-bote" class="fixed inset-x-0 bottom-0 top-16 md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-[95%] md:max-w-md bg-white rounded-t-3xl md:rounded-3xl p-4 z-40 hidden shadow-2xl flex flex-col transition-transform">
         <div class="flex justify-between items-start mb-2 shrink-0">
-            <h3 class="font-extrabold text-2xl text-blue-900 flex items-center" id="gestion-bote-nombre">Bote <span id="gestion-bote-aforo" class="ml-2 bg-gray-100 text-gray-500 text-[10px] px-2 py-1 rounded-full border border-gray-200 tracking-wider font-bold">-- / -- PAX</span></h3>
+            <div>
+                <h3 class="font-extrabold text-2xl text-blue-900 flex items-center" id="gestion-bote-nombre">Bote <span id="gestion-bote-aforo" class="ml-2 bg-gray-100 text-gray-500 text-[10px] px-2 py-1 rounded-full border border-gray-200 tracking-wider font-bold">-- / -- PAX</span></h3>
+                <span id="label-cupos" class="text-[10px] font-bold text-green-600 mt-0.5 block"></span>
+            </div>
             <button class="bg-gray-100 text-gray-500 hover:bg-gray-200 w-8 h-8 rounded-full flex items-center justify-center transition" onclick="cerrarModales()"><i class="fas fa-times"></i></button>
         </div>
-        
-        <h4 class="text-[10px] font-bold text-gray-500 uppercase mt-1 mb-2 tracking-widest shrink-0"><i class="fas fa-users text-blue-400 mr-1"></i> Lista de Abordaje (<span id="gestion-pax-total" class="text-blue-600 font-black text-sm">0</span> PAX)</h4>
+        <!-- Barra de capacidad -->
+        <div class="w-full h-2 bg-gray-100 rounded-full mb-2 shrink-0 overflow-hidden">
+            <div id="barra-capacidad" class="h-full rounded-full bg-green-500 transition-all duration-500" style="width:0%"></div>
+        </div>
+        <h4 class="text-[10px] font-bold text-gray-500 uppercase mb-2 tracking-widest shrink-0"><i class="fas fa-users text-blue-400 mr-1"></i> Lista de Abordaje (<span id="gestion-pax-total" class="text-blue-600 font-black text-sm">0</span> PAX)</h4>
         
         <!-- Lista Flex-1 para que tome todo el espacio posible y haga scroll -->
         <div id="gestion-manifiesto-lista" class="flex-1 overflow-y-auto mb-3 p-1 space-y-2 bg-gray-50/50 rounded-xl border border-gray-100 min-h-[150px]">
@@ -69,7 +94,7 @@
                     <div class="flex-[1.5] relative" id="container-precio-venta">
                         <label id="label-precio-venta" class="text-[9px] font-bold text-green-600 uppercase tracking-widest text-center block mb-0.5">S/ Total Cobrado</label>
                         <span class="absolute left-3 top-8 text-green-600 font-black">S/</span>
-                        <input type="number" id="input-vd-precio" class="w-full bg-white border border-green-200 rounded-xl p-2.5 pl-8 text-xl font-black text-center text-green-700 focus:outline-green-500 shadow-inner" placeholder="0.00" onfocus="this.select()">
+                        <input type="number" id="input-vd-precio" class="w-full bg-white border border-green-200 rounded-xl p-2.5 pl-8 text-xl font-black text-center text-green-700 focus:outline-green-500 shadow-inner" placeholder="0.00" onfocus="this.select()" oninput="actualizarPrecioDefecto()">
                     </div>
                 </div>
 
@@ -279,24 +304,42 @@
         </div>
     </div>
 
-    <!-- Modal Derivar Pase -->
-    <div id="modal-derivar" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-40 hidden shadow-2xl">
-        <h3 class="font-extrabold text-xl text-purple-800 mb-1"><i class="fas fa-share-square mr-2"></i> Derivar a Aliado</h3>
-        <p class="text-[12px] text-gray-500 mb-4 leading-snug">Saca a estos <span id="derivar-pax" class="font-bold text-purple-600">X</span> pasajeros de tu lancha y transfiérelos como <b>Pase Emitido</b> a otra empresa. Tu cupo se liberará automáticamente.</p>
-        
+    <!-- Modal Pasar a Aliado -->
+    <div id="modal-derivar" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-50 hidden shadow-2xl">
+        <h3 class="font-extrabold text-xl text-purple-800 mb-1"><i class="fas fa-people-carry mr-2"></i> Pasar a Aliado</h3>
+        <p class="text-[12px] text-gray-500 mb-4 leading-snug"><span id="derivar-pax" class="font-bold text-purple-600">X</span> pasajeros serán transferidos al aliado. Se registra como <b>Pase Externo</b> — ellos quedan debiendo esos cupos.</p>
         <input type="hidden" id="hidden-derivar-idmov">
         <input type="hidden" id="hidden-derivar-idop">
-        
         <div class="bg-purple-50 p-4 rounded-2xl border border-purple-100 mb-5">
-            <label class="text-[10px] font-bold text-purple-800 uppercase tracking-widest block mb-2">¿A quién le emitimos el pase?</label>
+            <label class="text-[10px] font-bold text-purple-800 uppercase tracking-widest block mb-2">¿A qué aliado se los pasamos?</label>
             <select id="select-derivar-aliado" class="w-full bg-white border border-purple-200 rounded-xl p-3 text-[11px] focus:outline-purple-600 font-bold shadow-sm">
                 <option value="">Cargando Aliados...</option>
             </select>
         </div>
-
         <div class="flex space-x-3">
-            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold" onclick="cerrarSubModal('modal-derivar')">Cancelar</button>
-            <button class="flex-[2] bg-purple-600 text-white py-3.5 rounded-xl font-bold shadow-md shadow-purple-500/30 uppercase tracking-wide text-[11px]" onclick="confirmarDerivacion()"><i class="fas fa-rocket mr-1"></i> Confirmar Pase</button>
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-derivar')">Cancelar</button>
+            <button class="flex-[2] bg-purple-600 text-white py-3.5 rounded-xl font-bold shadow-md shadow-purple-500/30 uppercase tracking-wide text-[11px]" onclick="confirmarDerivacion()"><i class="fas fa-share-square mr-1"></i> Confirmar Pase</button>
+        </div>
+    </div>
+
+    <!-- Modal Impuestos Agencia -->
+    <div id="modal-impuestos" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[92%] max-w-sm bg-white rounded-3xl p-5 z-50 hidden shadow-2xl">
+        <div class="flex justify-between items-center mb-4">
+            <div>
+                <h3 class="font-extrabold text-lg text-blue-900"><i class="fas fa-file-invoice-dollar mr-2 text-blue-500"></i>Adicionales</h3>
+                <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-0.5">Agencia: <span id="impuestos-contacto" class="text-blue-700"></span></p>
+            </div>
+            <button onclick="cerrarSubModal('modal-impuestos')" class="bg-gray-100 text-gray-400 hover:bg-gray-200 w-8 h-8 rounded-full flex items-center justify-center text-sm transition"><i class="fas fa-times"></i></button>
+        </div>
+        <input type="hidden" id="hidden-impuestos-idmov">
+        <div id="impuestos-lista" class="space-y-3 mb-4 max-h-56 overflow-y-auto"></div>
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 flex justify-between items-center">
+            <span class="text-[11px] font-black text-blue-800 uppercase tracking-widest">Total Adicionales</span>
+            <span id="impuestos-total" class="text-xl font-black text-blue-700">S/ 0.00</span>
+        </div>
+        <div class="flex space-x-3">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-impuestos')">Cancelar</button>
+            <button class="flex-[2] bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md text-sm uppercase tracking-wide" onclick="confirmarImpuestos()"><i class="fas fa-check mr-1"></i> Registrar Adicionales</button>
         </div>
     </div>
 
@@ -333,6 +376,55 @@
         </div>
 
         <button class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-md hover:bg-blue-700 transition active:scale-95 text-xs uppercase tracking-wider" onclick="cerrarSubModal('modal-detalle-caja')">Aceptar</button>
+    </div>
+
+    <!-- Modal Editar Operación (capitán / guía) -->
+    <div id="modal-editar-op" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-50 hidden shadow-2xl">
+        <h3 class="font-extrabold text-xl text-blue-900 mb-1"><i class="fas fa-pen text-blue-500 mr-2"></i>Editar Operación</h3>
+        <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-4">Código: <span id="editar-op-id" class="text-blue-700"></span></p>
+        <input type="hidden" id="hidden-editar-op-id">
+        <div class="space-y-3 mb-5">
+            <div>
+                <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1 block mb-1">Capitán</label>
+                <select id="editar-op-capitan" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm outline-none">
+                    <option value="">Cargando...</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1 block mb-1">Guía</label>
+                <select id="editar-op-guia" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm outline-none">
+                    <option value="">Sin guía</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1 block mb-1">Hora salida</label>
+                <input type="text" id="editar-op-hora" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm outline-none" placeholder="Ej: 09:00 AM">
+            </div>
+        </div>
+        <div class="flex space-x-3">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-editar-op')">Cancelar</button>
+            <button class="flex-[2] bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md text-sm uppercase tracking-wide" onclick="confirmarEditarOp()"><i class="fas fa-save mr-1"></i> Guardar</button>
+        </div>
+    </div>
+
+    <!-- Modal Pase Directo desde Reserva -->
+    <div id="modal-pase-reserva" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-50 hidden shadow-2xl">
+        <h3 class="font-extrabold text-xl text-purple-800 mb-1"><i class="fas fa-share-square text-purple-500 mr-2"></i>Pase Directo</h3>
+        <p class="text-[11px] text-gray-500 mb-1">Reserva: <b id="pase-res-cliente" class="text-gray-800"></b></p>
+        <p class="text-[11px] text-gray-500 mb-4"><b id="pase-res-pax" class="text-purple-700 text-base font-black"></b> pax serán enviados como pase a un aliado. El contacto original queda registrado.</p>
+        <input type="hidden" id="hidden-pase-res-id">
+        <input type="hidden" id="hidden-pase-res-pax">
+        <input type="hidden" id="hidden-pase-res-contacto">
+        <div class="bg-purple-50 p-4 rounded-2xl border border-purple-100 mb-5">
+            <label class="text-[10px] font-bold text-purple-800 uppercase tracking-widest block mb-2">¿A qué aliado enviamos los pax?</label>
+            <select id="select-pase-res-aliado" class="w-full bg-white border border-purple-200 rounded-xl p-3 text-[11px] font-bold focus:outline-purple-600 shadow-sm">
+                <option value="">Cargando Aliados...</option>
+            </select>
+        </div>
+        <div class="flex space-x-3">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-pase-reserva')">Cancelar</button>
+            <button class="flex-[2] bg-purple-600 text-white py-3.5 rounded-xl font-bold shadow-md uppercase tracking-wide text-[11px]" onclick="confirmarPaseDesdeReserva()"><i class="fas fa-share-square mr-1"></i> Confirmar Pase</button>
+        </div>
     </div>
 
     <!-- MAIN APP STRUCTURE -->

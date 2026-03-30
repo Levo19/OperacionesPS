@@ -1,30 +1,91 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzi5aD18Xj0ikbQJZkiMSjZPkMg3HVFneL6XTEirRVg2MISZyDN-tTc-0OuUkakGXYWHw/exec';
 
-let myOpName = localStorage.getItem('sot_operador');
-if(!myOpName) {
-    myOpName = prompt("Para empezar, ingresa tu Nombre u Operador (Ej: Operador 1, Luis):") || "Operador X";
-    localStorage.setItem('sot_operador', myOpName);
-}
+let myOpName = localStorage.getItem('sot_operador') || null;
 
 function cambiarOperador() {
-    let nuevo = prompt(`Operador actual: "${myOpName}"\n\nIngresa el nuevo nombre:`)?.trim();
-    if(nuevo) {
-        myOpName = nuevo;
-        localStorage.setItem('sot_operador', myOpName);
-        let el = document.getElementById('label-operador-actual');
-        if(el) el.innerText = myOpName;
-        mostrarToast('✅ Operador actualizado: ' + myOpName);
-    }
+    mostrarModalLogin(true); // closeable = true (ya hay un operador activo)
 }
 
 let pendingPostRequests = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
-    let el = document.getElementById('label-operador-actual');
-    if(el) el.innerText = myOpName;
+    if(!myOpName) {
+        mostrarModalLogin(false);
+    } else {
+        let el = document.getElementById('label-operador-actual');
+        if(el) el.innerText = myOpName;
+    }
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 15000);
 });
+
+// =============================
+// LOGIN / IDENTIFICACIÓN OPERADOR
+// =============================
+function normStr(s) {
+    return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,'');
+}
+
+function mostrarModalLogin(closeable) {
+    let modal = document.getElementById('modal-login');
+    modal.classList.remove('hidden');
+    document.getElementById('login-close-btn').classList.toggle('hidden', !closeable);
+    document.getElementById('login-error').classList.add('hidden');
+    document.getElementById('login-matches').classList.add('hidden');
+    document.getElementById('login-input').value = '';
+    setTimeout(() => document.getElementById('login-input').focus(), 100);
+}
+
+function confirmarLoginManual() {
+    let input = document.getElementById('login-input').value.trim();
+    if(!input) return;
+
+    let errEl     = document.getElementById('login-error');
+    let matchesEl = document.getElementById('login-matches');
+    errEl.classList.add('hidden');
+    matchesEl.classList.add('hidden');
+
+    let ops = (window.catalogosData && window.catalogosData.operadores) || [];
+
+    if(!ops.length) {
+        // Lista aún no cargada — rechazar y pedir esperar
+        errEl.textContent = '⏳ Aún cargando datos. Espera un momento e inténtalo de nuevo.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+
+    // Buscar: el fragmento ingresado debe estar contenido en alguna palabra del nombre
+    let q = normStr(input);
+    let matches = ops.filter(op => normStr(op.nombre).includes(q));
+
+    if(matches.length === 0) {
+        errEl.textContent = '❌ Usuario no existe. Verifica tu nombre con el administrador.';
+        errEl.classList.remove('hidden');
+
+    } else if(matches.length === 1) {
+        seleccionarOperador(matches[0].nombre);
+
+    } else {
+        // Más de un resultado — pedir que elijan
+        errEl.textContent = `Se encontraron ${matches.length} coincidencias. Selecciona la tuya:`;
+        errEl.classList.remove('hidden');
+        errEl.className = errEl.className.replace('text-red-300','text-yellow-300');
+        matchesEl.innerHTML = matches.map(op =>
+            `<button onclick="seleccionarOperador('${op.nombre.replace(/'/g,"\\'")}' )" class="bg-white/10 border border-white/20 text-white font-bold text-sm px-4 py-3 rounded-xl hover:bg-white/20 active:scale-95 transition w-full text-left">` +
+            `<i class="fas fa-user-check text-blue-300 mr-2"></i>${op.nombre}</button>`
+        ).join('');
+        matchesEl.classList.remove('hidden');
+    }
+}
+
+function seleccionarOperador(nombre) {
+    myOpName = nombre;
+    localStorage.setItem('sot_operador', myOpName);
+    document.getElementById('modal-login').classList.add('hidden');
+    let el = document.getElementById('label-operador-actual');
+    if(el) el.innerText = myOpName;
+    mostrarToast('✅ Bienvenido, ' + myOpName);
+}
 
 function getHoyLocal() {
     let tzoffset = (new Date()).getTimezoneOffset() * 60000;
@@ -95,22 +156,96 @@ function fetchDashboardData() {
         .then(data => {
             toggleSpinner(false);
             if(data.status === 'error') return console.error("Error backend:", data.error);
-            window.operacionesData = data.operaciones_abiertas || [];
-            window.contactosData = data.catalogos ? data.catalogos.contactos : [];
-            window.catalogosData  = data.catalogos || {};   // guardar globalmente
-            window.reservasData   = data.sala_de_espera || [];
+            window.operacionesData   = data.operaciones_abiertas || [];
+            window.contactosData     = data.catalogos ? data.catalogos.contactos : [];
+            window.catalogosData     = data.catalogos || {};
+            window.reservasData      = data.sala_de_espera || [];
             window.pasesExternosData = data.pases_externos || [];
-            window.cajaData = data.movimientos_dia || [];
+            window.cajaData          = data.movimientos_dia || [];
 
             renderCatalogos(data.catalogos);
             renderOperaciones(window.operacionesData);
             renderReservas(window.reservasData);
             renderCaja(window.cajaData);
+            actualizarModalSiAbierto();
         })
         .catch(err => {
             toggleSpinner(false);
             console.error("Hubo un error cargando los datos:", err);
         });
+}
+
+// Sincroniza el modal silenciosamente después de un POST de embarque
+function syncManifestBg() {
+    let opId = document.getElementById('hidden-gestion-op')?.value;
+    if(!opId || document.getElementById('modal-gestion-bote').classList.contains('hidden')) return;
+    // Si hay POSTs en vuelo todavía, esperar
+    if(pendingPostRequests > 0) {
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(syncManifestBg, 1500);
+        return;
+    }
+
+    // Guardar los temps locales ANTES de sobrescribir — para re-inyectar los no confirmados
+    let localOp     = window.operacionesData?.find(o => o.id === opId);
+    let localTemps  = (localOp?.manifiesto || []).filter(m => m._syncing || (m.id && m.id.startsWith('temp-')));
+
+    fetch(GAS_URL + "?action=getDashboardData")
+        .then(r => r.json())
+        .then(data => {
+            if(data.status === 'error') return;
+            window.operacionesData   = data.operaciones_abiertas || [];
+            window.contactosData     = data.catalogos?.contactos || window.contactosData;
+            window.catalogosData     = data.catalogos || window.catalogosData;
+            window.reservasData      = data.sala_de_espera || [];
+            window.cajaData          = data.movimientos_dia || [];
+
+            // Re-inyectar temps que el servidor aún no confirmó (sin duplicar)
+            if(localTemps.length > 0) {
+                let newOp = window.operacionesData.find(o => o.id === opId);
+                if(newOp) {
+                    let stillPending = localTemps.filter(t =>
+                        !newOp.manifiesto.some(s =>
+                            s.contacto === t.contacto &&
+                            String(s.pax) === String(t.pax) &&
+                            s.tipo === t.tipo
+                        )
+                    );
+                    if(stillPending.length > 0) {
+                        newOp.manifiesto  = [...stillPending, ...newOp.manifiesto];
+                        newOp.ocupados   += stillPending.reduce((sum, m) => sum + (parseInt(m.pax) || 0), 0);
+                        // Reprogramar otro sync para cuando GAS confirme los que faltan
+                        clearTimeout(window._syncTimer);
+                        window._syncTimer = setTimeout(syncManifestBg, 3000);
+                    }
+                }
+            }
+
+            renderOperaciones(window.operacionesData);
+            renderReservas(window.reservasData);
+            actualizarModalSiAbierto();
+        })
+        .catch(() => {});
+}
+
+// Actualiza el modal de gestión bote con los datos actuales de window.operacionesData
+function actualizarModalSiAbierto() {
+    let isOpen = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
+    let opId   = document.getElementById('hidden-gestion-op')?.value;
+    if(!isOpen || !opId) return;
+    let op = window.operacionesData.find(o => o.id === opId);
+    if(!op) return;
+    let libres = op.capacidad - op.ocupados;
+    document.getElementById('gestion-pax-total').innerText = op.ocupados;
+    document.getElementById('gestion-bote-aforo').innerText = `${op.ocupados} / ${op.capacidad} PAX`;
+    // Barra de capacidad
+    let pct = op.capacidad > 0 ? Math.round((op.ocupados / op.capacidad) * 100) : 0;
+    let barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-orange-400' : 'bg-green-500';
+    let barEl = document.getElementById('barra-capacidad');
+    let labelEl = document.getElementById('label-cupos');
+    if(barEl) { barEl.style.width = pct + '%'; barEl.className = `h-full rounded-full transition-all duration-500 ${barColor}`; }
+    if(labelEl) labelEl.innerText = libres > 0 ? `${libres} cupo${libres !== 1 ? 's' : ''} libre${libres !== 1 ? 's' : ''}` : '¡LLENO!';
+    document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
 }
 
 function fetchDashboardDataBg() {
@@ -128,33 +263,21 @@ function fetchDashboardDataBg() {
 
             window.operacionesData   = data.operaciones_abiertas || [];
             window.contactosData     = data.catalogos ? data.catalogos.contactos : [];
-            window.catalogosData     = data.catalogos || {};   // guardar globalmente
+            window.catalogosData     = data.catalogos || {};
             window.reservasData      = data.sala_de_espera || [];
             window.pasesExternosData = data.pases_externos || [];
             window.cajaData          = data.movimientos_dia || [];
 
-            // FIX "se borra al rato": si el modal Abrir Bote está abierto,
-            // guardar selecciones actuales, repoblar con datos frescos y restaurar.
+            // Modal Abrir Bote: preservar selecciones del usuario
             let modalAbrirOpen = !document.getElementById('modal-abrir-bote').classList.contains('hidden');
             if(modalAbrirOpen) {
-                let selBote  = document.getElementById('select-bote-id');
-                let selCap   = document.getElementById('select-capitan-id');
-                let selGuia  = document.getElementById('select-guia-id');
-                let savedBote = selBote?.value;
-                let savedCap  = selCap?.value;
-                let savedGuia = selGuia?.value;
-
-                renderCatalogos(data.catalogos);   // repuebla con datos frescos
-
-                // Restaurar solo si la opción sigue existiendo (recurso aún disponible)
-                if(savedBote && selBote) selBote.value = savedBote;
-                if(savedCap  && selCap)  selCap.value  = savedCap;
-                if(savedGuia && selGuia) selGuia.value = savedGuia;
-
-                // Avisar si algún recurso ya no está disponible
-                if((savedBote && !selBote.value) || (savedCap && !selCap.value)) {
-                    mostrarToast('⚠️ Un recurso seleccionado ya no está disponible. Vuelve a elegir.', 'error');
-                }
+                let savedBote = document.getElementById('select-bote-id')?.value;
+                let savedCap  = document.getElementById('select-capitan-id')?.value;
+                let savedGuia = document.getElementById('select-guia-id')?.value;
+                renderCatalogos(data.catalogos);
+                if(savedBote) document.getElementById('select-bote-id').value = savedBote;
+                if(savedCap)  document.getElementById('select-capitan-id').value = savedCap;
+                if(savedGuia) document.getElementById('select-guia-id').value = savedGuia;
             } else {
                 renderCatalogos(data.catalogos);
             }
@@ -162,17 +285,7 @@ function fetchDashboardDataBg() {
             renderOperaciones(window.operacionesData);
             renderReservas(window.reservasData);
             renderCaja(window.cajaData);
-
-            // Actualizar modal Gestión Bote si está abierto
-            let isGestionOpen = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
-            let opId = document.getElementById('hidden-gestion-op').value;
-            if(isGestionOpen && opId) {
-                let op = window.operacionesData.find(o => o.id === opId);
-                if(op) {
-                    document.getElementById('gestion-pax-total').innerText = op.ocupados;
-                    document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
-                }
-            }
+            // El modal de gestión bote NO se toca en BG refresh para no interrumpir al operador
         })
         .catch(err => {
             if(refreshIcon) refreshIcon.classList.remove('fa-spin');
@@ -195,6 +308,42 @@ function renderOperaciones(operaciones) {
         return;
     }
     
+    // Tabla de pases del día (al final)
+    let pasesDiaHTML = '';
+    let pases = window.pasesExternosData || [];
+    if(pases.length > 0) {
+        let totalPaxPases = pases.reduce((s, p) => s + (parseInt(p.pax)||0), 0);
+        let filas = pases.map((p, idx) => {
+            let destino = p.aliadoDestino || p.contacto || '';
+            let nombre  = p.nombreContacto || p.contacto || '';
+            let ts      = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
+            return `
+            <tr class="border-t border-gray-100 cursor-pointer hover:bg-purple-50 transition" onclick="verDetallePase(${idx})">
+                <td class="py-2 px-2">
+                    <span class="text-[10px] font-bold text-gray-800 block uppercase">${nombre}</span>
+                    <span class="text-[9px] text-purple-500 font-bold">→ ${destino}</span>
+                </td>
+                <td class="py-2 px-2 text-center text-sm font-black text-blue-600">${p.pax}</td>
+                <td class="py-2 px-2 text-[9px] text-gray-400 text-right">${ts}</td>
+            </tr>`;
+        }).join('');
+        pasesDiaHTML = `
+        <div class="mt-4 bg-purple-50 border border-purple-200 rounded-2xl shadow-sm overflow-hidden">
+            <div class="px-4 py-2.5 bg-purple-100 border-b border-purple-200 flex items-center justify-between">
+                <span class="text-[11px] font-black text-purple-800 uppercase tracking-wider"><i class="fas fa-people-carry mr-1.5"></i>Pases del día</span>
+                <span class="text-[10px] bg-purple-200 text-purple-800 font-black px-2 py-0.5 rounded-full">${totalPaxPases} pax · ${pases.length} pases</span>
+            </div>
+            <table class="w-full">
+                <thead><tr class="text-[9px] text-purple-500 uppercase tracking-wider bg-purple-50">
+                    <th class="py-1.5 px-2 text-left font-bold">Contacto → Aliado</th>
+                    <th class="py-1.5 px-2 text-center font-bold">PAX</th>
+                    <th class="py-1.5 px-2 text-right font-bold">Hora</th>
+                </tr></thead>
+                <tbody class="bg-white">${filas}</tbody>
+            </table>
+        </div>`;
+    }
+
     container.innerHTML = opHoy.map(op => {
         let porcentaje = op.capacidad > 0 ? (op.ocupados / op.capacidad) * 100 : 0;
         let isViaje = op.estado === 'En_Viaje';
@@ -209,7 +358,10 @@ function renderOperaciones(operaciones) {
             <div class="absolute top-0 left-0 w-2 h-full ${barColor}"></div>
             <div class="flex justify-between items-center mb-1 pl-3">
                 <h3 class="font-extrabold text-lg flex-1 truncate ${titleColor}"><i class="fas fa-ship fa-sm mr-2 ${isViaje ? 'text-orange-400' : 'text-blue-400'} ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
-                <span class="bg-white border text-gray-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ml-2 shrink-0">${op.ocupados} / ${op.capacidad} PAX</span>
+                <div class="flex items-center gap-1.5 shrink-0 ml-2">
+                    ${op.id !== 'Creando...' ? `<button class="w-7 h-7 bg-white border border-gray-200 rounded-full text-gray-400 hover:text-blue-600 hover:border-blue-300 transition text-xs flex items-center justify-center shadow-sm" onclick="abrirModalEditarOp('${op.id}'); event.stopPropagation()"><i class="fas fa-pen"></i></button>` : ''}
+                    <span class="bg-white border text-gray-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">${op.ocupados} / ${op.capacidad} PAX</span>
+                </div>
             </div>
             <div class="flex justify-between text-[10px] text-gray-400 font-bold mb-3 uppercase tracking-wider pl-3 pr-2 ml-6">
                 <span>CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
@@ -241,7 +393,7 @@ function renderOperaciones(operaciones) {
             `}
         </div>
         `;
-    }).join('');
+    }).join('') + pasesDiaHTML;
 }
 
 function renderReservas(reservas) {
@@ -264,15 +416,19 @@ function renderReservas(reservas) {
     }
 
     container.innerHTML = resAMostrar.map(res => {
-        let isSyncing = res.id === 'Creando...';
+        let isSyncing   = res.id === 'Creando...';
+        let isAsignando = !!res._asignando;
         let f = String(res.fecha).trim();
         let isHoy = f === hoy || f === formatLocal || !res.fecha;
-        let isFutureForMe = !isHoy && !isSyncing;
-        
-        let cardClasses = isSyncing ? "bg-yellow-50 border-yellow-300 border-l-[4px] opacity-90 animate-pulse border-y border-r" : (isFutureForMe ? "opacity-60 grayscale bg-gray-50 border-gray-200 border" : "bg-white border-blue-500 border-l-[4px] border-y border-r border-y-gray-100 border-r-gray-100");
-        let btnClasses = isSyncing ? "pointer-events-none bg-yellow-400 text-white font-bold" : (isFutureForMe ? "pointer-events-none opacity-50 bg-gray-300 border-gray-300 text-gray-500" : "bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600");
-        let btnIcon = isSyncing ? "fa-sync-alt fa-spin" : (isFutureForMe ? "fa-lock" : "fa-clipboard-check");
-        let btnText = isSyncing ? "Registrando..." : (isFutureForMe ? "No disponible hoy" : "Abordar Lancha");
+        let isFutureForMe = !isHoy && !isSyncing && !isAsignando;
+
+        let cardClasses = isAsignando ? "bg-green-50 border-green-400 border-l-[4px] opacity-80 animate-pulse border-y border-r"
+            : isSyncing ? "bg-yellow-50 border-yellow-300 border-l-[4px] opacity-90 animate-pulse border-y border-r"
+            : (isFutureForMe ? "opacity-60 grayscale bg-gray-50 border-gray-200 border" : "bg-white border-blue-500 border-l-[4px] border-y border-r border-y-gray-100 border-r-gray-100");
+        let btnClasses = (isSyncing || isAsignando) ? "pointer-events-none bg-green-400 text-white font-bold"
+            : (isFutureForMe ? "pointer-events-none opacity-50 bg-gray-300 border-gray-300 text-gray-500" : "bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600");
+        let btnIcon = isAsignando ? "fa-ship fa-pulse" : (isSyncing ? "fa-sync-alt fa-spin" : (isFutureForMe ? "fa-lock" : "fa-clipboard-check"));
+        let btnText = isAsignando ? "¡Abordando!" : (isSyncing ? "Registrando..." : (isFutureForMe ? "No disponible hoy" : "Abordar Lancha"));
         let tagFecha = isHoy ? `<span class="bg-green-100 text-green-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-green-200">HOY</span>` : `<span class="bg-yellow-100 text-yellow-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-yellow-200">${res.fecha}</span>`;
 
         return `
@@ -290,6 +446,7 @@ function renderReservas(reservas) {
             </div>
             <div class="flex mt-4 space-x-2 relative z-10">
                 <button class="flex-[2] py-2.5 rounded-xl text-sm font-bold transition active:scale-95 border ${btnClasses}" onclick="prepararAsignacion('${res.id}', '${res.cliente}', '${res.pax}', '${res.contacto}')"><i class="fas ${btnIcon} mr-1"></i> ${btnText}</button>
+                ${!isSyncing && !isAsignando ? `<button class="px-3 py-2.5 rounded-xl text-[11px] font-bold bg-purple-100 text-purple-700 border border-purple-200 hover:bg-purple-200 transition active:scale-95" onclick="abrirPaseDesdeReserva('${res.id}', '${res.cliente}', '${res.pax}', '${res.contacto}')"><i class="fas fa-share-square mr-1"></i>Pasar</button>` : ''}
             </div>
         </div>
         `;
@@ -567,16 +724,16 @@ function confirmarAbrirBote() {
 
 function confirmarZarpe(id_op) {
     if(!confirm("¿Seguro que deseas ZARPAR esta lancha? Pasará a estado En Viaje.")) return;
-    toggleSpinner(true);
-    // Optimistic UI update
+    // Optimistic: actualizar estado local inmediatamente
     let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
     if(opIndex !== -1) {
         window.operacionesData[opIndex].estado = 'En_Viaje';
         renderOperaciones(window.operacionesData);
     }
-    fetchPost('zarpar_operacion', { id_operacion: id_op }).then(res => {
-        if(res.status === 'error') alert(res.message);
-        fetchDashboardData();
+    fetchPostBg('zarpar_operacion', { id_operacion: id_op }).then(res => {
+        if(res.status === 'error') { alert(res.message); return; }
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
     });
 }
 
@@ -587,23 +744,23 @@ function generarListaHTML(manifiesto) {
     if(!manifiesto || manifiesto.length === 0) return '<div class="text-center p-6 bg-white border-2 border-dashed border-gray-200 rounded-2xl text-gray-400 font-bold"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> Lancha vacía.<br><span class="text-[10px] font-normal">Agrega pasajeros usando el formulario superior.</span></div>';
     
     return manifiesto.map(m => {
-        let isEditadoObj = m.estado && m.estado.includes('(Editado)');
-        let isSyncing = m.estado && m.estado.includes('Sincronizando');
-        let isSelected = window.editandoMovId === m.id;
+        let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
+        let isSelected = !isSyncing && window.editandoMovId === m.id;
+
+        let bgClass    = isSelected ? 'bg-orange-50 ring-2 ring-orange-400' : 'bg-white';
+        let iconoSinc  = isSyncing ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1 align-middle"></span>` : '';
         
-        let bgClass = isSelected ? 'bg-orange-50 ring-2 ring-orange-400' : (isEditadoObj ? 'bg-orange-50' : 'bg-white');
-        let opacityClass = isSyncing ? 'opacity-60 pointer-events-none' : '';
-        let iconoEdicion = isEditadoObj ? `<i class="fas fa-pen text-[9px] text-orange-400 ml-1"></i>` : '';
-        let iconoSinc = isSyncing ? `<i class="fas fa-sync-alt fa-spin text-[9px] text-blue-400 ml-1"></i> Cargando...` : '';
-        
-        let isAliado       = m.tipo === 'Aliado' || m.tipo === 'Pase_Recibido';
+        let isAliado       = m.tipo === 'Aliado' || m.tipo === 'Aliado(PaseIn)' || m.tipo === 'Aliado(PaseOut)' || m.tipo === 'Pase_Recibido';
         let isComisionado  = m.tipo === 'Comisionado';
 
-        // Aliado: puede derivar pero no cobrar. Comisionado/Libre/Agencia: cobrar y derivar.
+        let isAgencia = m.tipo === 'Agencia';
+        // Botones: Cobrar (no aliado), Adicionales (solo agencia), Pasar (no pase out), X (todos)
         let subBtns = (isSelected && !isSyncing) ? `
-        <div class="flex space-x-2 mt-3 pt-3 border-t border-orange-200">
-            ${!isAliado ? `<button class="flex-1 bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('Ingreso_Venta', '${m.id}', ${m.monto}); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Pagar</button>` : ''}
-            <button class="flex-1 bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-share-square mr-1"></i> Derivar</button>
+        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
+            ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('Ingreso_Venta', '${m.id}', ${m.monto}); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar</button>` : ''}
+            ${isAgencia ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
+            ${m.tipo !== 'Aliado(PaseOut)' ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
+            <button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>
         </div>` : '';
 
         // Monto display según tipo
@@ -612,13 +769,16 @@ function generarListaHTML(manifiesto) {
             : `<span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto||0).toFixed(2)}</span>`;
 
         // Etiqueta tipo legible
-        let tipoLabel = { Libre:'Libre', Agencia:'Agencia', Aliado:'Aliado·Pase', Comisionado:'Comisionado', Pase_Recibido:'Pase', Abordaje_CRM:'CRM', Directo:'Libre' }[m.tipo] || m.tipo.replace('_',' ');
+        let tipoLabel = { Libre:'Libre', Agencia:'Agencia', Aliado:'Aliado·Pase', 'Aliado(PaseIn)':'Pase·Entrada', 'Aliado(PaseOut)':'Pase·Salida', Comisionado:'Comisionado', Pase_Recibido:'Pase', Abordaje_CRM:'CRM', Directo:'Libre' }[m.tipo] || m.tipo.replace(/_/g,' ');
+
+        // Nombre a mostrar: preferir nombreContacto si está disponible
+        let nombreMostrar = m.nombreContacto || m.contacto || '';
 
         return `
-        <div class="flex flex-col ${bgClass} ${opacityClass} border border-gray-200 p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm mb-2" onclick="cargarParaEditar('${m.id}')">
+        <div class="flex flex-col ${bgClass} border ${isSyncing ? 'border-blue-200' : 'border-gray-200'} p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm mb-2" onclick="cargarParaEditar('${m.id}')">
             <div class="flex justify-between items-center">
                 <div>
-                    <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block">${m.contacto} ${iconoEdicion} ${iconoSinc}</span>
+                    <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block">${nombreMostrar} ${iconoSinc}</span>
                     <span class="text-[10px] ${isAliado?'text-purple-500':isComisionado?'text-orange-500':'text-gray-500'} font-bold">${tipoLabel}</span>
                 </div>
                 <div class="text-right">
@@ -634,28 +794,29 @@ function generarListaHTML(manifiesto) {
 function abrirModalGestionBote(id_op) {
     let op = window.operacionesData.find(o => o.id === id_op);
     if(!op || op.id === 'Creando...') return;
-    
+
+    // Nombre del bote en el H3 (preserva el span hijo)
     let nodeH3 = document.getElementById('gestion-bote-nombre');
     if(nodeH3.childNodes[0].nodeType === 3) nodeH3.childNodes[0].nodeValue = op.bote + " ";
-    document.getElementById('gestion-bote-aforo').innerText = `${op.ocupados} / ${op.capacidad} PAX`;
-    
+
     document.getElementById('hidden-gestion-op').value = op.id;
-    document.getElementById('gestion-pax-total').innerText = op.ocupados;
-    document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
-    
-    let boxVenta = document.getElementById('box-formulario-venta');
-    if(op.estado === 'En_Viaje') {
-        boxVenta.classList.add('hidden');
-    } else {
-        boxVenta.classList.remove('hidden');
-    }
+    document.getElementById('box-formulario-venta').classList.toggle('hidden', op.estado === 'En_Viaje');
 
     resetFormularioVenta();
     abrirModal('modal-gestion-bote');
+    actualizarModalSiAbierto(); // Renderiza lista + barra de capacidad
 }
 
 // Helper: normaliza strings para comparar tipos sin acento/mayúsculas
 function normTipo(s) { return (s||'').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
+
+// Helper: obtiene {id, nombre} del select de contacto activo
+function getContactoSeleccionado(selectId) {
+    let sel = document.getElementById(selectId);
+    if(!sel) return { id: '', nombre: '' };
+    let opt = sel.options[sel.selectedIndex];
+    return { id: opt?.dataset?.id || sel.value, nombre: sel.value };
+}
 
 function _selectInputClass() {
     return 'w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm mt-0.5 outline-none';
@@ -686,7 +847,7 @@ function cambiarTipoVentaDirecta() {
     } else if(tipo === 'Agencia') {
         precioLabel.textContent = 'S/ Total (precio especial)';
         let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('agencia'));
-        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre} (S/${c.precio}/pax)</option>`).join('');
+        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre} (S/${c.precio}/pax)</option>`).join('');
         container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Agencia</label>
             <select id="input-vd-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefecto()">
                 <option value="">Seleccionar...</option>${opts}</select>`;
@@ -694,7 +855,7 @@ function cambiarTipoVentaDirecta() {
     } else if(tipo === 'Aliado') {
         precioLabel.textContent = 'Pase (sin cobro)';
         let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('aliado'));
-        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre}</option>`).join('');
         container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado</label>
             <select id="input-vd-contacto-select" class="${_selectInputClass()}">
                 <option value="">Seleccionar...</option>${opts}</select>`;
@@ -706,7 +867,7 @@ function cambiarTipoVentaDirecta() {
     } else if(tipo === 'Comisionado') {
         precioLabel.textContent = 'S/ Precio cobrado al PAX';
         let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('comision'));
-        let opts = filtered.map(c => `<option value="${c.nombre}" data-comision="${c.precio}">${c.nombre}</option>`).join('');
+        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}" data-comision="${c.precio}">${c.nombre}</option>`).join('');
         container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Comisionado</label>
             <select id="input-vd-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefecto()">
                 <option value="">Seleccionar...</option>${opts}</select>`;
@@ -724,7 +885,7 @@ function actualizarPrecioDefecto() {
     if(tipo === 'Libre') {
         if(pax > 0) precioInput.value = (30 * pax).toFixed(2);
 
-    } else if(tipo === 'Agencia' && pax > 0) {
+    } else if(tipo === 'Agencia') {
         let sel = document.getElementById('input-vd-contacto-select');
         if(sel && sel.value) {
             let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
@@ -740,9 +901,11 @@ function actualizarPrecioDefecto() {
         if(sel && sel.value && pax > 0) {
             let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
             if(info) {
-                let totalComision = (info.precio * pax).toFixed(2);
-                document.getElementById('text-comision-monto').textContent = 'S/ ' + totalComision;
-                document.getElementById('text-comision-detalle').textContent = `S/ ${info.precio} × ${pax} PAX`;
+                let montoCobrado = parseFloat(precioInput.value) || 0;
+                let tarifaBase   = info.precio * pax;
+                let comision     = Math.max(0, montoCobrado - tarifaBase).toFixed(2);
+                document.getElementById('text-comision-monto').textContent = 'S/ ' + comision;
+                document.getElementById('text-comision-detalle').textContent = `S/${montoCobrado.toFixed(2)} cobrado − S/${tarifaBase.toFixed(2)} tarifa (S/${info.precio}×${pax})`;
                 comisionBox.classList.remove('hidden');
             }
         } else {
@@ -752,6 +915,7 @@ function actualizarPrecioDefecto() {
 }
 
 function resetFormularioVenta() {
+    window.editandoMovId = null;
     document.getElementById('hidden-vd-idmov').value = '';
     document.getElementById('input-vd-tipo').value = 'Libre';
     cambiarTipoVentaDirecta(); 
@@ -796,10 +960,13 @@ function cargarParaEditar(id_mov) {
     window.editandoMovId = id_mov;
     document.getElementById('hidden-vd-idmov').value = movToEdit.id;
 
-    // Compatibilidad con tipos viejos almacenados en la sheet
+    // Compatibilidad con tipos viejos y nuevos almacenados en la sheet
     let tipoMapeado = movToEdit.tipo;
-    if(tipoMapeado === 'Directo')      tipoMapeado = 'Libre';
-    if(tipoMapeado === 'Pase_Recibido') tipoMapeado = 'Aliado';
+    if(tipoMapeado === 'Directo')           tipoMapeado = 'Libre';
+    if(tipoMapeado === 'Pase_Recibido')     tipoMapeado = 'Aliado';
+    if(tipoMapeado === 'Aliado(PaseIn)')    tipoMapeado = 'Aliado';
+    if(tipoMapeado === 'Aliado(PaseOut)')   tipoMapeado = 'Aliado';
+    if(tipoMapeado === 'Pase_Externo')      tipoMapeado = 'Aliado';
 
     document.getElementById('input-vd-tipo').value = tipoMapeado;
     cambiarTipoVentaDirecta();
@@ -844,9 +1011,17 @@ function confirmarVentaDirecta() {
     let precio = document.getElementById('input-vd-precio').value.trim();
 
     // Contacto: texto libre para Libre, select para el resto
-    let contacto = tipo === 'Libre'
-        ? (document.getElementById('input-vd-contacto-text')?.value.trim().toUpperCase() || '')
-        : (document.getElementById('input-vd-contacto-select')?.value || '');
+    let contacto, id_contacto_payload, nombre_contacto_payload;
+    if(tipo === 'Libre') {
+        contacto = (document.getElementById('input-vd-contacto-text')?.value.trim().toUpperCase() || '');
+        id_contacto_payload = contacto;
+        nombre_contacto_payload = contacto;
+    } else {
+        let sel = getContactoSeleccionado('input-vd-contacto-select');
+        contacto = sel.nombre;
+        id_contacto_payload = sel.id || sel.nombre;
+        nombre_contacto_payload = sel.nombre;
+    }
 
     if(!contacto) return alert("❌ Ingresa el nombre o selecciona el contacto.");
     if(!pax || parseFloat(pax) <= 0) return alert("❌ Cantidad de pasajeros inválida.");
@@ -860,7 +1035,12 @@ function confirmarVentaDirecta() {
     let adicionales = '';
     if(tipo === 'Comisionado') {
         let info = (window.contactosData||[]).find(c => c.nombre === contacto);
-        if(info) adicionales = `Comision:S/${(info.precio * parseFloat(pax)).toFixed(2)}`;
+        if(info) {
+            let paxNum2    = parseFloat(pax) || 0;
+            let precioNum2 = parseFloat(precio) || 0;
+            let comision   = Math.max(0, precioNum2 - (info.precio * paxNum2)).toFixed(2);
+            adicionales    = `Comision:S/${comision}`;
+        }
     }
 
     let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
@@ -869,44 +1049,48 @@ function confirmarVentaDirecta() {
         let requestedDelta = id_mov ? (parseInt(pax) - parseInt(currentOp.manifiesto.find(m => m.id === id_mov).pax)) : parseInt(pax);
         if(currentOp.ocupados + requestedDelta > currentOp.capacidad) return alert(`❌ ¡El bote no tiene capacidad suficiente!`);
 
+        // IMPORTANTE: usar tipoGAS para que el dedup en syncManifestBg coincida con lo que devuelve GAS
+        let tipoOptimista = tipo === 'Aliado' ? 'Aliado(PaseIn)' : tipo;
         if(id_mov) {
             let movIndex = currentOp.manifiesto.findIndex(m => m.id === id_mov);
             if(movIndex !== -1) {
                 currentOp.ocupados += requestedDelta;
-                currentOp.manifiesto[movIndex] = { id: id_mov, tipo, contacto, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado (Editado) (Sincronizando)' };
+                currentOp.manifiesto[movIndex] = { id: id_mov, tipo: tipoOptimista, contacto, nombreContacto: nombre_contacto_payload, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado', _syncing: true };
             }
         } else {
             currentOp.ocupados += requestedDelta;
-            currentOp.manifiesto.unshift({ id: 'temp-' + Date.now(), tipo, contacto, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado (Sincronizando)' });
+            currentOp.manifiesto.unshift({ id: 'temp-' + Date.now(), tipo: tipoOptimista, contacto, nombreContacto: nombre_contacto_payload, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado', _syncing: true });
         }
-        document.getElementById('gestion-pax-total').innerText = currentOp.ocupados;
-        document.getElementById('gestion-bote-aforo').innerText = `${currentOp.ocupados} / ${currentOp.capacidad} PAX`;
-        document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(currentOp.manifiesto);
+        actualizarModalSiAbierto();
         renderOperaciones(window.operacionesData);
     }
     
-    let btnSubmit = document.getElementById('btn-submit-venta') || document.getElementById('btn-guardar-venta');
-    if(btnSubmit) {
-        btnSubmit.innerHTML = `<i class="fas fa-sync-alt fa-spin mr-2"></i> Cargando...`;
-        btnSubmit.disabled = true;
-    }
+    // Limpiar el formulario YA — no esperar al POST
+    resetFormularioVenta();
 
     let endpoint = id_mov ? 'editar_movimiento_pax' : 'registrar_movimiento_pax';
     let paxNum = parseFloat(pax);
     let precioNum = parseFloat(precio);
+    // Mapear tipo UI → tipo GAS (Aliado en UI = PaseIn recibido por nosotros)
+    let tipoGAS = tipo === 'Aliado' ? 'Aliado(PaseIn)' : tipo;
     let payload = {
-        id_operacion: id_op, tipo, contacto, pax,
+        id_operacion: id_op, tipo: tipoGAS, contacto,
+        id_contacto: id_contacto_payload,
+        nombre_contacto: nombre_contacto_payload,
+        pax,
         precio_unitario: paxNum > 0 ? (precioNum / paxNum).toFixed(2) : '0',
         monto_total: precioNum,
         adicionales,
         creador: myOpName
     };
     if(id_mov) payload.id_mov = id_mov;
-    
+
     fetchPostBg(endpoint, payload).then(res => {
-        resetFormularioVenta(); 
-        if(res.status === 'error') alert(res.message);
-        fetchDashboardDataBg();
+        if(res.status === 'error') { alert(res.message); return; }
+        // Programa sincronización debounced: si ya hay una pendiente, cancela la anterior
+        // para que solo se dispare UNA vez luego del último POST completado
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(syncManifestBg, 2500);
     });
 }
 
@@ -1025,14 +1209,60 @@ function prepararAsignacion(id_reserva, cliente, pax, contacto) {
     abrirModal('modal-asignar-bote'); 
 }
 function confirmarAsignacion() {
-    let id_reserva = document.getElementById('hidden-reserva-id').value;
-    let pax = document.getElementById('hidden-reserva-pax').value;
-    let contacto = document.getElementById('hidden-reserva-agencia').value;
+    let id_reserva   = document.getElementById('hidden-reserva-id').value;
+    let pax          = document.getElementById('hidden-reserva-pax').value;
+    let contacto     = document.getElementById('hidden-reserva-agencia').value;
     let id_operacion = document.getElementById('select-asignar-op').value.trim();
     if(!id_operacion) return alert("❌ Selecciona a qué lancha subirán los pasajeros.");
-    cerrarModales(); toggleSpinner(true);
-    fetchPost('asignar_reserva', { id_reserva, id_operacion, cant_pax: pax, id_contacto: contacto, creador: myOpName }).then(res => {
-        if(res.status==='error') alert(res.message);
+
+    let paxNum = parseInt(pax) || 1;
+
+    // Get monto from reserva
+    let reserva = (window.reservasData||[]).find(r => r.id === id_reserva);
+    let monto   = reserva ? parseFloat(reserva.monto||0) : 0;
+
+    // Determine tipo from contactosData
+    let contactInfo   = (window.contactosData||[]).find(c => c.nombre === contacto || c.id === contacto);
+    let tipoRaw       = contactInfo ? normTipo(contactInfo.tipo) : '';
+    let tipoMovimiento = tipoRaw.includes('aliado')   ? 'Aliado'
+                       : tipoRaw.includes('comision') ? 'Comisionado'
+                       : 'Agencia'; // default for Agencia or unknown
+
+    // Optimistic: mark reserva card as "abordando"
+    let resIdx = (window.reservasData||[]).findIndex(r => r.id === id_reserva);
+    if(resIdx !== -1) window.reservasData[resIdx]._asignando = true;
+    renderReservas(window.reservasData);
+
+    // Optimistic: add temp item to manifest
+    let opIdx = window.operacionesData.findIndex(o => o.id === id_operacion);
+    if(opIdx !== -1) {
+        let op = window.operacionesData[opIdx];
+        op.manifiesto.unshift({
+            id: 'temp-crm-' + Date.now(),
+            tipo: tipoMovimiento,
+            contacto: contacto,
+            pax: pax,
+            monto: monto.toFixed(2),
+            estado: 'Embarcado', _syncing: true
+        });
+        op.ocupados += paxNum;
+        renderOperaciones(window.operacionesData);
+    }
+
+    cerrarModales();
+
+    fetchPost('asignar_reserva', {
+        id_reserva,
+        id_operacion,
+        cant_pax: pax,
+        id_contacto: contactInfo ? contactInfo.id : contacto,
+        nombre_contacto: contactInfo ? contactInfo.nombre : contacto,
+        tipo: tipoMovimiento,
+        monto_total: monto,
+        precio_unitario: paxNum > 0 ? (monto / paxNum).toFixed(2) : '0',
+        creador: myOpName
+    }).then(res => {
+        if(res.status === 'error') alert(res.message);
         fetchDashboardData();
     });
 }
@@ -1062,6 +1292,83 @@ function confirmarCaja() {
     fetchPost('registrar_caja_v2', { categoria: cat, monto: parseFloat(monto), metodo_pago: metodo, referencia: ref, operador: myOpName }).then(() => fetchDashboardData());
 }
 
+function eliminarMovimiento(id_mov, pax) {
+    if(!confirm(`¿Eliminar este movimiento (${pax} PAX)? Se marcará como Cancelado.`)) return;
+    let id_op = document.getElementById('hidden-gestion-op').value;
+    // Optimistic: quitar de lista local
+    let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
+    if(opIdx !== -1) {
+        let op = window.operacionesData[opIdx];
+        let movIdx = op.manifiesto.findIndex(m => m.id === id_mov);
+        if(movIdx !== -1) {
+            op.ocupados -= parseInt(op.manifiesto[movIdx].pax) || 0;
+            op.manifiesto.splice(movIdx, 1);
+        }
+        actualizarModalSiAbierto();
+        renderOperaciones(window.operacionesData);
+    }
+    window.editandoMovId = null;
+    fetchPostBg('eliminar_movimiento', { id_mov, creador: myOpName }).then(res => {
+        if(res.status === 'error') { alert(res.message); fetchDashboardData(); }
+    });
+}
+
+function abrirModalImpuestos(id_mov, contacto) {
+    document.getElementById('hidden-impuestos-idmov').value = id_mov;
+    document.getElementById('impuestos-contacto').textContent = contacto;
+    let lista = document.getElementById('impuestos-lista');
+    let impuestos = (window.catalogosData && window.catalogosData.impuestos) || [];
+    if(!impuestos.length) {
+        lista.innerHTML = '<p class="text-center text-gray-400 text-xs py-4">No hay impuestos configurados en la hoja Impuestos.</p>';
+    } else {
+        lista.innerHTML = impuestos.map(imp => `
+        <div class="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl p-3">
+            <div>
+                <span class="text-sm font-bold text-gray-800">${imp.nombre}</span>
+                <span class="text-[11px] text-gray-500 block">S/ ${parseFloat(imp.monto).toFixed(2)} c/u</span>
+            </div>
+            <div class="flex items-center space-x-2">
+                <button onclick="cambiarQtyImpuesto('${imp.id}', -1)" class="w-8 h-8 rounded-full bg-gray-200 text-gray-700 font-black text-base hover:bg-red-100 hover:text-red-600 transition flex items-center justify-center">−</button>
+                <span id="qty-imp-${imp.id}" class="w-7 text-center font-black text-gray-800 text-sm" data-monto="${imp.monto}">0</span>
+                <button onclick="cambiarQtyImpuesto('${imp.id}', 1)" class="w-8 h-8 rounded-full bg-gray-200 text-gray-700 font-black text-base hover:bg-green-100 hover:text-green-600 transition flex items-center justify-center">+</button>
+            </div>
+        </div>`).join('');
+    }
+    document.getElementById('impuestos-total').textContent = 'S/ 0.00';
+    abrirModal('modal-impuestos');
+}
+
+function cambiarQtyImpuesto(id, delta) {
+    let el = document.getElementById('qty-imp-' + id);
+    if(!el) return;
+    let qty = Math.max(0, parseInt(el.textContent||0) + delta);
+    el.textContent = qty;
+    // Recalcular total
+    let total = 0;
+    document.querySelectorAll('[id^="qty-imp-"]').forEach(e => {
+        total += parseInt(e.textContent||0) * parseFloat(e.dataset.monto||0);
+    });
+    document.getElementById('impuestos-total').textContent = 'S/ ' + total.toFixed(2);
+}
+
+function confirmarImpuestos() {
+    let id_mov = document.getElementById('hidden-impuestos-idmov').value;
+    let impuestos = (window.catalogosData && window.catalogosData.impuestos) || [];
+    let partes = [];
+    impuestos.forEach(imp => {
+        let el = document.getElementById('qty-imp-' + imp.id);
+        let qty = parseInt(el ? el.textContent : 0) || 0;
+        if(qty > 0) partes.push(`${imp.nombre}:${(qty * imp.monto).toFixed(2)}`);
+    });
+    if(!partes.length) return alert('Agrega al menos un impuesto con cantidad mayor a 0.');
+    let adicionales = partes.join(', ');
+    cerrarSubModal('modal-impuestos');
+    fetchPostBg('actualizar_adicionales', { id_mov, adicionales, creador: myOpName }).then(res => {
+        if(res.status === 'error') alert(res.message);
+        else mostrarToast('✅ Adicionales registrados: ' + adicionales);
+    });
+}
+
 function abrirModalDerivar(id_mov, pax) {
     document.getElementById('hidden-derivar-idmov').value = id_mov;
     document.getElementById('derivar-pax').innerText = pax;
@@ -1071,14 +1378,16 @@ function abrirModalDerivar(id_mov, pax) {
         let aliados = window.contactosData.filter(c => c.tipo && c.tipo.toLowerCase().includes('aliado'));
         if (aliados.length === 0) aliados = window.contactosData; // fallback
         
-        select.innerHTML = '<option value="">- Elige Aliado -</option>' + aliados.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+        select.innerHTML = '<option value="">- Elige Aliado -</option>' + aliados.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre}</option>`).join('');
     }
     abrirModal('modal-derivar');
 }
 
 function confirmarDerivacion() {
     let id_mov = document.getElementById('hidden-derivar-idmov').value;
-    let aliado = document.getElementById('select-derivar-aliado').value;
+    let selAliado = getContactoSeleccionado('select-derivar-aliado');
+    let aliado = selAliado.nombre;
+    let aliado_id = selAliado.id || aliado;
     let id_op = document.getElementById('hidden-gestion-op').value;
     if(!aliado) return alert("Selecciona a quién se le emite el Pase.");
 
@@ -1090,28 +1399,34 @@ function confirmarDerivacion() {
         let movIndex = op.manifiesto.findIndex(m => m.id === id_mov);
         if(movIndex !== -1) {
             let mov = op.manifiesto[movIndex];
-            op.ocupados -= parseInt(mov.pax);
-            
+            let paxNum = parseInt(mov.pax) || 0;
+            op.ocupados -= paxNum;
+
+            // Agregar a pases del día con los campos que muestra la tabla
             if(!window.pasesExternosData) window.pasesExternosData = [];
-            window.pasesExternosData.push({
-                ...mov,
-                estado: 'Pase Emitido a ' + aliado,
+            window.pasesExternosData.unshift({
+                id: mov.id,
+                tipo: 'Aliado(PaseOut)',
+                contacto: aliado_id,
+                nombreContacto: mov.nombreContacto || mov.contacto,  // nombre original
+                pax: mov.pax,
+                monto: mov.monto,
+                estado: 'Pasado',
+                aliadoDestino: aliado,
                 timestamp: new Date().toISOString()
             });
 
             op.manifiesto.splice(movIndex, 1);
-            
-            document.getElementById('gestion-pax-total').innerText = op.ocupados;
-            let aforoEl = document.getElementById('gestion-bote-aforo');
-            if (aforoEl) aforoEl.innerText = `${op.ocupados} / ${op.capacidad} PAX`;
-            document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
+            actualizarModalSiAbierto();
             renderOperaciones(window.operacionesData);
-            renderCaja(window.cajaData || []);
         }
     }
 
-    toggleSpinner(true);
-    fetchPost('derivar_pase', { id_mov, aliado, id_operacion_origen: id_op, operador: myOpName }).then(() => fetchDashboardData());
+    fetchPostBg('derivar_pase', { id_mov, aliado, aliado_id, id_operacion_origen: id_op, operador: myOpName }).then(res => {
+        if(res.status === 'error') { alert(res.message); return; }
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(syncManifestBg, 3000);
+    });
 }
 
 function abrirDetalleCaja(id_tx) {
@@ -1188,6 +1503,178 @@ function fetchPostBg(action, payload) {
             mostrarToast('⚠️ Sin conexión. El dato puede no haberse guardado. Recarga para verificar.', 'error');
             return { status: 'error', message: 'Error de conexión' };
         });
+}
+
+// ==========================
+// PASE DIRECTO DESDE RESERVA
+// ==========================
+function abrirPaseDesdeReserva(id_reserva, cliente, pax, contacto) {
+    document.getElementById('hidden-pase-res-id').value      = id_reserva;
+    document.getElementById('hidden-pase-res-pax').value     = pax;
+    document.getElementById('hidden-pase-res-contacto').value = contacto;
+    document.getElementById('pase-res-cliente').textContent  = cliente;
+    document.getElementById('pase-res-pax').textContent      = pax;
+
+    let sel = document.getElementById('select-pase-res-aliado');
+    let aliados = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('aliado'));
+    if(!aliados.length) aliados = window.contactosData || [];
+    sel.innerHTML = '<option value="">- Elige Aliado -</option>' +
+        aliados.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre}</option>`).join('');
+
+    abrirModal('modal-pase-reserva');
+}
+
+function confirmarPaseDesdeReserva() {
+    let id_reserva = document.getElementById('hidden-pase-res-id').value;
+    let pax        = document.getElementById('hidden-pase-res-pax').value;
+    let contacto   = document.getElementById('hidden-pase-res-contacto').value;
+    let sel        = getContactoSeleccionado('select-pase-res-aliado');
+    if(!sel.nombre) return alert('Selecciona a qué aliado enviamos los pax.');
+
+    // Optimistic: marcar reserva como procesando
+    let resIdx = (window.reservasData||[]).findIndex(r => r.id === id_reserva);
+    if(resIdx !== -1) window.reservasData[resIdx]._asignando = true;
+    renderReservas(window.reservasData);
+
+    // Optimistic: agregar a pases del día
+    if(!window.pasesExternosData) window.pasesExternosData = [];
+    window.pasesExternosData.unshift({
+        id: 'temp-pase-' + Date.now(),
+        tipo: 'Aliado(PaseOut)',
+        contacto: sel.id || sel.nombre,
+        nombreContacto: contacto,
+        aliadoDestino: sel.nombre,
+        pax: pax,
+        monto: '0',
+        estado: 'Pasado',
+        timestamp: new Date().toISOString()
+    });
+    renderOperaciones(window.operacionesData);
+
+    cerrarSubModal('modal-pase-reserva');
+
+    fetchPostBg('pase_desde_reserva', {
+        id_reserva,
+        cant_pax: pax,
+        aliado: sel.nombre,
+        aliado_id: sel.id || sel.nombre,
+        nombre_contacto_original: contacto,
+        creador: myOpName
+    }).then(res => {
+        if(res.status === 'error') { alert(res.message); return; }
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
+    });
+}
+
+// ==========================
+// EDITAR OPERACIÓN
+// ==========================
+function abrirModalEditarOp(id_op) {
+    let op = window.operacionesData.find(o => o.id === id_op);
+    if(!op) return;
+
+    document.getElementById('hidden-editar-op-id').value = id_op;
+    document.getElementById('editar-op-id').textContent  = id_op;
+    document.getElementById('editar-op-hora').value      = op.hora_salida || '';
+
+    // Usar todos_capitanes / todos_guias (incluye los que están en uso)
+    let todosCapitanes = window.catalogosData?.todos_capitanes || window.catalogosData?.capitanes || [];
+    let selCap = document.getElementById('editar-op-capitan');
+    selCap.innerHTML = '<option value="">Sin capitán</option>' +
+        todosCapitanes.map(c => `<option value="${c.id}" ${c.nombre === op.capitan ? 'selected' : ''}>${c.nombre}</option>`).join('');
+
+    let todosGuias = window.catalogosData?.todos_guias || window.catalogosData?.guias || [];
+    let selGuia = document.getElementById('editar-op-guia');
+    selGuia.innerHTML = '<option value="">Sin guía</option>' +
+        todosGuias.map(g => `<option value="${g.id}" ${g.nombre === op.guia ? 'selected' : ''}>${g.nombre}</option>`).join('');
+
+    abrirModal('modal-editar-op');
+}
+
+function confirmarEditarOp() {
+    let id_op   = document.getElementById('hidden-editar-op-id').value;
+    let selCap  = document.getElementById('editar-op-capitan');
+    let selGuia = document.getElementById('editar-op-guia');
+    let hora    = document.getElementById('editar-op-hora').value.trim();
+
+    let id_capitan = selCap.value;
+    let id_guia    = selGuia.value;
+    let nombreCap  = selCap.options[selCap.selectedIndex]?.text || '';
+    let nombreGuia = selGuia.options[selGuia.selectedIndex]?.text || '';
+
+    // Optimistic: actualizar local
+    let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
+    if(opIdx !== -1) {
+        if(id_capitan) window.operacionesData[opIdx].capitan    = nombreCap;
+        if(id_guia)    window.operacionesData[opIdx].guia       = nombreGuia;
+        if(hora)       window.operacionesData[opIdx].hora_salida = hora;
+        renderOperaciones(window.operacionesData);
+    }
+    cerrarSubModal('modal-editar-op');
+
+    fetchPostBg('editar_operacion', {
+        id_operacion: id_op,
+        id_capitan, id_guia, hora_salida: hora,
+        creador: myOpName
+    }).then(res => {
+        if(res.status === 'error') alert(res.message);
+        else clearTimeout(window._syncTimer), window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
+    });
+}
+
+function verDetallePase(idx) {
+    let p = (window.pasesExternosData || [])[idx];
+    if(!p) return;
+    let nombre   = p.nombreContacto || p.contacto || '—';
+    let destino  = p.aliadoDestino || p.contacto || '—';
+    let pax      = p.pax || '—';
+    let monto    = p.monto ? 'S/ ' + parseFloat(p.monto).toFixed(2) : '—';
+    let ts       = p.timestamp ? new Date(p.timestamp).toLocaleString('es-PE') : '—';
+
+    // Mini modal de detalle inline (reutilizamos el overlay del backdrop existente)
+    let existing = document.getElementById('modal-detalle-pase');
+    if(existing) existing.remove();
+
+    let div = document.createElement('div');
+    div.id = 'modal-detalle-pase';
+    div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;width:88%;max-width:320px;';
+    div.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-2xl border border-purple-200 overflow-hidden">
+            <div class="bg-purple-100 px-4 py-3 flex justify-between items-center border-b border-purple-200">
+                <span class="font-black text-purple-800 text-sm uppercase tracking-wider"><i class="fas fa-people-carry mr-2"></i>Detalle del Pase</span>
+                <button onclick="document.getElementById('modal-detalle-pase').remove()" class="w-7 h-7 bg-purple-200 hover:bg-purple-300 rounded-full text-purple-700 text-xs font-bold transition"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-4 space-y-2.5">
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] text-gray-500 font-bold uppercase">Contacto original</span>
+                    <span class="text-xs font-black text-gray-800 uppercase">${nombre}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] text-gray-500 font-bold uppercase">Aliado destino</span>
+                    <span class="text-xs font-black text-purple-700">${destino}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] text-gray-500 font-bold uppercase">PAX pasados</span>
+                    <span class="text-sm font-black text-blue-600">${pax} PAX</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] text-gray-500 font-bold uppercase">Monto</span>
+                    <span class="text-xs font-black text-gray-700">${monto}</span>
+                </div>
+                <div class="flex justify-between items-center pt-1 border-t border-gray-100">
+                    <span class="text-[10px] text-gray-500 font-bold uppercase">Hora</span>
+                    <span class="text-[10px] text-gray-500">${ts}</span>
+                </div>
+            </div>
+        </div>`;
+    document.body.appendChild(div);
+
+    // Cerrar al tocar fuera
+    setTimeout(() => {
+        let handler = (e) => { if(!div.querySelector('.bg-white').contains(e.target)) { div.remove(); document.removeEventListener('click', handler); } };
+        document.addEventListener('click', handler);
+    }, 100);
 }
 
 function mostrarToast(msg, tipo = 'info') {
