@@ -97,12 +97,11 @@ function fetchDashboardData() {
             if(data.status === 'error') return console.error("Error backend:", data.error);
             window.operacionesData = data.operaciones_abiertas || [];
             window.contactosData = data.catalogos ? data.catalogos.contactos : [];
-            window.reservasData = data.sala_de_espera || [];
-            
-            // Fix: Store pasesExternosData and cajaData to be used globally
+            window.catalogosData  = data.catalogos || {};   // guardar globalmente
+            window.reservasData   = data.sala_de_espera || [];
             window.pasesExternosData = data.pases_externos || [];
             window.cajaData = data.movimientos_dia || [];
-            
+
             renderCatalogos(data.catalogos);
             renderOperaciones(window.operacionesData);
             renderReservas(window.reservasData);
@@ -116,35 +115,62 @@ function fetchDashboardData() {
 
 function fetchDashboardDataBg() {
     let spinner = document.getElementById('global-spinner');
-    if(pendingPostRequests > 0 || !spinner.classList.contains('hidden')) return; 
-    
+    if(pendingPostRequests > 0 || !spinner.classList.contains('hidden')) return;
+
     let refreshIcon = document.querySelector('#btn-refresh i');
     if(refreshIcon) refreshIcon.classList.add('fa-spin');
-    
+
     fetch(GAS_URL + "?action=getDashboardData")
         .then(res => res.json())
         .then(data => {
             if(refreshIcon) refreshIcon.classList.remove('fa-spin');
             if(data.status === 'error') return;
-            window.operacionesData = data.operaciones_abiertas || [];
-            window.contactosData = data.catalogos ? data.catalogos.contactos : [];
-            window.reservasData = data.sala_de_espera || [];
-            
-            // Fix: Store pasesExternosData and cajaData to be used globally
+
+            window.operacionesData   = data.operaciones_abiertas || [];
+            window.contactosData     = data.catalogos ? data.catalogos.contactos : [];
+            window.catalogosData     = data.catalogos || {};   // guardar globalmente
+            window.reservasData      = data.sala_de_espera || [];
             window.pasesExternosData = data.pases_externos || [];
-            window.cajaData = data.movimientos_dia || [];
-            
-            renderCatalogos(data.catalogos);
+            window.cajaData          = data.movimientos_dia || [];
+
+            // FIX "se borra al rato": si el modal Abrir Bote está abierto,
+            // guardar selecciones actuales, repoblar con datos frescos y restaurar.
+            let modalAbrirOpen = !document.getElementById('modal-abrir-bote').classList.contains('hidden');
+            if(modalAbrirOpen) {
+                let selBote  = document.getElementById('select-bote-id');
+                let selCap   = document.getElementById('select-capitan-id');
+                let selGuia  = document.getElementById('select-guia-id');
+                let savedBote = selBote?.value;
+                let savedCap  = selCap?.value;
+                let savedGuia = selGuia?.value;
+
+                renderCatalogos(data.catalogos);   // repuebla con datos frescos
+
+                // Restaurar solo si la opción sigue existiendo (recurso aún disponible)
+                if(savedBote && selBote) selBote.value = savedBote;
+                if(savedCap  && selCap)  selCap.value  = savedCap;
+                if(savedGuia && selGuia) selGuia.value = savedGuia;
+
+                // Avisar si algún recurso ya no está disponible
+                if((savedBote && !selBote.value) || (savedCap && !selCap.value)) {
+                    mostrarToast('⚠️ Un recurso seleccionado ya no está disponible. Vuelve a elegir.', 'error');
+                }
+            } else {
+                renderCatalogos(data.catalogos);
+            }
+
             renderOperaciones(window.operacionesData);
             renderReservas(window.reservasData);
             renderCaja(window.cajaData);
-            let isModalOpen = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
+
+            // Actualizar modal Gestión Bote si está abierto
+            let isGestionOpen = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
             let opId = document.getElementById('hidden-gestion-op').value;
-            if(isModalOpen && opId) {
+            if(isGestionOpen && opId) {
                 let op = window.operacionesData.find(o => o.id === opId);
                 if(op) {
-                   document.getElementById('gestion-pax-total').innerText = op.ocupados;
-                   document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
+                    document.getElementById('gestion-pax-total').innerText = op.ocupados;
+                    document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
                 }
             }
         })
@@ -413,15 +439,59 @@ function renderCaja(caja) {
 function renderCatalogos(cats) {
     if(!cats) return;
     const selBote = document.getElementById('select-bote-id');
-    const selCap = document.getElementById('select-capitan-id');
+    const selCap  = document.getElementById('select-capitan-id');
     const selGuia = document.getElementById('select-guia-id');
-    
-    selBote.innerHTML = '<option value="">- Lancha -</option>' + 
-        (cats.botes.length ? cats.botes.map(b => `<option value="${b.id}">${b.nombre} (${b.cap} px)</option>`).join('') : '<option value="" disabled>Todos Ocupados</option>');
-    selCap.innerHTML = '<option value="">- Capitán -</option>' + 
-        (cats.capitanes.length ? cats.capitanes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('') : '<option value="" disabled>Ninguno disp.</option>');
-    selGuia.innerHTML = '<option value="">- Guía -</option>' + 
-        (cats.guias.length ? cats.guias.map(g => `<option value="${g.id}">${g.nombre}</option>`).join('') : '<option value="" disabled>Libres</option>');
+    if(!selBote || !selCap || !selGuia) return;
+
+    selBote.innerHTML = '<option value="">- Lancha -</option>' +
+        (cats.botes && cats.botes.length
+            ? cats.botes.map(b => `<option value="${b.id}">${b.nombre} (${b.cap} px)</option>`).join('')
+            : '<option value="" disabled>Todos ocupados</option>');
+    selCap.innerHTML = '<option value="">- Capitán -</option>' +
+        (cats.capitanes && cats.capitanes.length
+            ? cats.capitanes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('')
+            : '<option value="" disabled>Ninguno disponible</option>');
+    selGuia.innerHTML = '<option value="">- Guía (opcional) -</option>' +
+        (cats.guias && cats.guias.length
+            ? cats.guias.map(g => `<option value="${g.id}">${g.nombre}</option>`).join('')
+            : '<option value="" disabled>Ninguno disponible</option>');
+}
+
+// Refresca catálogos desde la Sheet sin cerrar el modal.
+// Guarda y restaura la selección actual.
+function refrescarCatalogosModal() {
+    let btn = document.getElementById('btn-refrescar-catalogo');
+    if(btn) { btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i> Cargando...'; btn.disabled = true; }
+
+    let savedBote = document.getElementById('select-bote-id')?.value;
+    let savedCap  = document.getElementById('select-capitan-id')?.value;
+    let savedGuia = document.getElementById('select-guia-id')?.value;
+
+    fetch(GAS_URL + "?action=getDashboardData")
+        .then(res => res.json())
+        .then(data => {
+            if(data.status !== 'error') {
+                window.operacionesData   = data.operaciones_abiertas || [];
+                window.contactosData     = data.catalogos?.contactos || [];
+                window.catalogosData     = data.catalogos || {};
+                renderCatalogos(data.catalogos);
+
+                // Restaurar selección si el recurso sigue disponible
+                let selBote = document.getElementById('select-bote-id');
+                let selCap  = document.getElementById('select-capitan-id');
+                let selGuia = document.getElementById('select-guia-id');
+                if(savedBote) selBote.value = savedBote;
+                if(savedCap)  selCap.value  = savedCap;
+                if(savedGuia) selGuia.value = savedGuia;
+
+                mostrarToast('✅ Lista actualizada desde la planilla.');
+            }
+            if(btn) { btn.innerHTML = '<i class="fas fa-sync-alt"></i> Actualizar lista'; btn.disabled = false; }
+        })
+        .catch(() => {
+            mostrarToast('⚠️ No se pudo actualizar. Verifica conexión.', 'error');
+            if(btn) { btn.innerHTML = '<i class="fas fa-sync-alt"></i> Actualizar lista'; btn.disabled = false; }
+        });
 }
 
 function abrirModal(id) {
@@ -433,6 +503,8 @@ function abrirModal(id) {
         cambiarTipoCRM();
         setTimeout(actualizarHoraSugeridaCRM, 50);
     } else if (id === 'modal-abrir-bote') {
+        // Repoblar con los catálogos más frescos en memoria
+        if(window.catalogosData) renderCatalogos(window.catalogosData);
         let selectHora = document.getElementById('select-bote-hora');
         if(selectHora) {
             let suggested = obtenerHoraSugerida();

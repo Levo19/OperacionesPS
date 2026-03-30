@@ -84,7 +84,12 @@
 
     <!-- Modal Abrir Bote -->
     <div id="modal-abrir-bote" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-40 hidden shadow-2xl">
-        <h3 class="font-extrabold text-xl text-blue-900 mb-1">Abrir Embarcación</h3>
+        <div class="flex justify-between items-start mb-1">
+            <h3 class="font-extrabold text-xl text-blue-900">Abrir Embarcación</h3>
+            <button onclick="refrescarCatalogosModal()" class="text-[10px] font-bold text-blue-500 bg-blue-50 border border-blue-100 px-2 py-1 rounded-lg hover:bg-blue-100 active:scale-95 transition flex items-center gap-1" id="btn-refrescar-catalogo">
+                <i class="fas fa-sync-alt"></i> Actualizar lista
+            </button>
+        </div>
         <p class="text-[13px] text-gray-500 mb-5 leading-snug">Selecciona recursos <span class="font-bold text-green-600">disponibles</span>.</p>
         <div class="space-y-4">
             <div>
