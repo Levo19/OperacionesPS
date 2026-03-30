@@ -596,22 +596,34 @@ function generarListaHTML(manifiesto) {
         let iconoEdicion = isEditadoObj ? `<i class="fas fa-pen text-[9px] text-orange-400 ml-1"></i>` : '';
         let iconoSinc = isSyncing ? `<i class="fas fa-sync-alt fa-spin text-[9px] text-blue-400 ml-1"></i> Cargando...` : '';
         
-        let subBtns = (isSelected && m.tipo !== 'Pase_Recibido' && !isSyncing) ? `
+        let isAliado       = m.tipo === 'Aliado' || m.tipo === 'Pase_Recibido';
+        let isComisionado  = m.tipo === 'Comisionado';
+
+        // Aliado: puede derivar pero no cobrar. Comisionado/Libre/Agencia: cobrar y derivar.
+        let subBtns = (isSelected && !isSyncing) ? `
         <div class="flex space-x-2 mt-3 pt-3 border-t border-orange-200">
-            <button class="flex-1 bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('Ingreso_Venta', '${m.id}', ${m.monto}); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Pagar</button>
+            ${!isAliado ? `<button class="flex-1 bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('Ingreso_Venta', '${m.id}', ${m.monto}); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Pagar</button>` : ''}
             <button class="flex-1 bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-share-square mr-1"></i> Derivar</button>
         </div>` : '';
+
+        // Monto display según tipo
+        let montoDisplay = isAliado
+            ? `<span class="text-[10px] font-black text-purple-500 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">PASE</span>`
+            : `<span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto||0).toFixed(2)}</span>`;
+
+        // Etiqueta tipo legible
+        let tipoLabel = { Libre:'Libre', Agencia:'Agencia', Aliado:'Aliado·Pase', Comisionado:'Comisionado', Pase_Recibido:'Pase', Abordaje_CRM:'CRM', Directo:'Libre' }[m.tipo] || m.tipo.replace('_',' ');
 
         return `
         <div class="flex flex-col ${bgClass} ${opacityClass} border border-gray-200 p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm mb-2" onclick="cargarParaEditar('${m.id}')">
             <div class="flex justify-between items-center">
                 <div>
                     <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block">${m.contacto} ${iconoEdicion} ${iconoSinc}</span>
-                    <span class="text-[10px] text-gray-500 font-bold">${m.tipo.replace('_',' ')}</span>
+                    <span class="text-[10px] ${isAliado?'text-purple-500':isComisionado?'text-orange-500':'text-gray-500'} font-bold">${tipoLabel}</span>
                 </div>
                 <div class="text-right">
                     <span class="font-black text-blue-600 text-sm">${m.pax} PAX</span>
-                    <span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto).toFixed(2)}</span>
+                    ${montoDisplay}
                 </div>
             </div>
             ${subBtns}
@@ -642,33 +654,106 @@ function abrirModalGestionBote(id_op) {
     abrirModal('modal-gestion-bote');
 }
 
+// Helper: normaliza strings para comparar tipos sin acento/mayúsculas
+function normTipo(s) { return (s||'').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
+
+function _selectInputClass() {
+    return 'w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm mt-0.5 outline-none';
+}
+function _textInputClass() {
+    return 'w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5 uppercase';
+}
+
 function cambiarTipoVentaDirecta() {
     let tipo = document.getElementById('input-vd-tipo').value;
-    let container = document.getElementById('container-contacto-input');
-    if(tipo === 'Agencia' || tipo === 'Pase_Recibido') {
-        let options = window.contactosData.map(c => `<option value="${c.nombre}">${c.nombre} (S/ ${c.precio})</option>`).join('');
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado/Agencia</label><select id="input-vd-contacto-select" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm mt-0.5 outline-none" onchange="actualizarPrecioDefecto()"><option value="">Seleccionar...</option>${options}</select>`;
-    } else {
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Familia/Apellido</label><input type="text" id="input-vd-contacto-text" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5 uppercase" placeholder="Ej: Familia Vasquez">`;
+    let container   = document.getElementById('container-contacto-input');
+    let precioInput = document.getElementById('input-vd-precio');
+    let precioLabel = document.getElementById('label-precio-venta');
+    let comisionBox = document.getElementById('box-comision-info');
+    let precioContainer = document.getElementById('container-precio-venta');
+
+    // Resetear estado del precio
+    precioInput.readOnly = false;
+    precioInput.classList.remove('bg-gray-100', 'opacity-60');
+    precioContainer.classList.remove('hidden');
+    comisionBox.classList.add('hidden');
+
+    if(tipo === 'Libre') {
+        precioLabel.textContent = 'S/ Total Cobrado';
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Apellido / Nombre</label>
+            <input type="text" id="input-vd-contacto-text" class="${_textInputClass()}" placeholder="Ej: Familia Vasquez">`;
+
+    } else if(tipo === 'Agencia') {
+        precioLabel.textContent = 'S/ Total (precio especial)';
+        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('agencia'));
+        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre} (S/${c.precio}/pax)</option>`).join('');
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Agencia</label>
+            <select id="input-vd-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefecto()">
+                <option value="">Seleccionar...</option>${opts}</select>`;
+
+    } else if(tipo === 'Aliado') {
+        precioLabel.textContent = 'Pase (sin cobro)';
+        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('aliado'));
+        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado</label>
+            <select id="input-vd-contacto-select" class="${_selectInputClass()}">
+                <option value="">Seleccionar...</option>${opts}</select>`;
+        // Aliado = pase, no hay cobro de dinero
+        precioInput.value = '0';
+        precioInput.readOnly = true;
+        precioInput.classList.add('bg-gray-100', 'opacity-60');
+
+    } else if(tipo === 'Comisionado') {
+        precioLabel.textContent = 'S/ Precio cobrado al PAX';
+        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('comision'));
+        let opts = filtered.map(c => `<option value="${c.nombre}" data-comision="${c.precio}">${c.nombre}</option>`).join('');
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Comisionado</label>
+            <select id="input-vd-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefecto()">
+                <option value="">Seleccionar...</option>${opts}</select>`;
+        comisionBox.classList.remove('hidden');
     }
+
     actualizarPrecioDefecto();
 }
 
 function actualizarPrecioDefecto() {
     let tipo = document.getElementById('input-vd-tipo').value;
-    let pax = parseInt(document.getElementById('input-vd-pax').value) || 0;
-    if((tipo === 'Agencia' || tipo === 'Pase_Recibido') && pax > 0) {
-        let select = document.getElementById('input-vd-contacto-select');
-        if(select && select.value) {
-            let info = window.contactosData.find(c => c.nombre === select.value);
-            if(info) document.getElementById('input-vd-precio').value = (info.precio * pax).toFixed(2);
+    let pax  = parseInt(document.getElementById('input-vd-pax').value) || 0;
+    let precioInput = document.getElementById('input-vd-precio');
+
+    if(tipo === 'Libre') {
+        if(pax > 0) precioInput.value = (30 * pax).toFixed(2);
+
+    } else if(tipo === 'Agencia' && pax > 0) {
+        let sel = document.getElementById('input-vd-contacto-select');
+        if(sel && sel.value) {
+            let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
+            if(info) precioInput.value = (info.precio * pax).toFixed(2);
+        }
+
+    } else if(tipo === 'Aliado') {
+        precioInput.value = '0';
+
+    } else if(tipo === 'Comisionado') {
+        let sel = document.getElementById('input-vd-contacto-select');
+        let comisionBox = document.getElementById('box-comision-info');
+        if(sel && sel.value && pax > 0) {
+            let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
+            if(info) {
+                let totalComision = (info.precio * pax).toFixed(2);
+                document.getElementById('text-comision-monto').textContent = 'S/ ' + totalComision;
+                document.getElementById('text-comision-detalle').textContent = `S/ ${info.precio} × ${pax} PAX`;
+                comisionBox.classList.remove('hidden');
+            }
+        } else {
+            if(comisionBox) comisionBox.classList.add('hidden');
         }
     }
 }
 
 function resetFormularioVenta() {
     document.getElementById('hidden-vd-idmov').value = '';
-    document.getElementById('input-vd-tipo').value = 'Directo';
+    document.getElementById('input-vd-tipo').value = 'Libre';
     cambiarTipoVentaDirecta(); 
     document.getElementById('input-vd-pax').value = '';
     document.getElementById('input-vd-precio').value = '';
@@ -710,17 +795,26 @@ function cargarParaEditar(id_mov) {
 
     window.editandoMovId = id_mov;
     document.getElementById('hidden-vd-idmov').value = movToEdit.id;
-    document.getElementById('input-vd-tipo').value = movToEdit.tipo;
-    cambiarTipoVentaDirecta(); 
-    if(movToEdit.tipo === 'Agencia' || movToEdit.tipo === 'Pase_Recibido') {
-        let s = document.getElementById('input-vd-contacto-select');
-        if(s) s.value = movToEdit.contacto;
-    } else {
+
+    // Compatibilidad con tipos viejos almacenados en la sheet
+    let tipoMapeado = movToEdit.tipo;
+    if(tipoMapeado === 'Directo')      tipoMapeado = 'Libre';
+    if(tipoMapeado === 'Pase_Recibido') tipoMapeado = 'Aliado';
+
+    document.getElementById('input-vd-tipo').value = tipoMapeado;
+    cambiarTipoVentaDirecta();
+
+    // Cargar contacto según tipo
+    if(tipoMapeado === 'Libre') {
         let t = document.getElementById('input-vd-contacto-text');
         if(t) t.value = movToEdit.contacto;
+    } else {
+        let s = document.getElementById('input-vd-contacto-select');
+        if(s) s.value = movToEdit.contacto;
     }
     document.getElementById('input-vd-pax').value = movToEdit.pax;
     document.getElementById('input-vd-precio').value = movToEdit.monto;
+    actualizarPrecioDefecto(); // recalcular comisión si aplica
     
     document.getElementById('titulo-form-venta').innerHTML = `<i class="fas fa-pen text-orange-500 text-sm mr-1"></i> Editando Registro`;
     // Assuming 'titulo-form-venta' is the correct ID for the title, not 'titulo-formulario'
@@ -745,14 +839,30 @@ function cargarParaEditar(id_mov) {
 function confirmarVentaDirecta() {
     let id_op = document.getElementById('hidden-gestion-op').value;
     let id_mov = document.getElementById('hidden-vd-idmov').value;
-    let tipo = document.getElementById('input-vd-tipo').value;
-    let pax = document.getElementById('input-vd-pax').value.trim();
+    let tipo   = document.getElementById('input-vd-tipo').value;
+    let pax    = document.getElementById('input-vd-pax').value.trim();
     let precio = document.getElementById('input-vd-precio').value.trim();
-    let contacto = tipo === 'Directo' ? document.getElementById('input-vd-contacto-text')?.value.trim().toUpperCase() : document.getElementById('input-vd-contacto-select')?.value;
-    
-    if(!contacto || !pax || !precio) return alert("❌ Cliente/Agencia, Pax y Precio total son obligatorios.");
-    if(parseFloat(pax) <= 0) return alert("❌ Cantidad de pasajeros errónea.");
-    
+
+    // Contacto: texto libre para Libre, select para el resto
+    let contacto = tipo === 'Libre'
+        ? (document.getElementById('input-vd-contacto-text')?.value.trim().toUpperCase() || '')
+        : (document.getElementById('input-vd-contacto-select')?.value || '');
+
+    if(!contacto) return alert("❌ Ingresa el nombre o selecciona el contacto.");
+    if(!pax || parseFloat(pax) <= 0) return alert("❌ Cantidad de pasajeros inválida.");
+    // Aliado no requiere precio (es 0), los demás sí
+    if(tipo !== 'Aliado' && (!precio || parseFloat(precio) < 0)) return alert("❌ Ingresa el precio cobrado al pasajero.");
+
+    // Para Aliado forzar precio 0
+    if(tipo === 'Aliado') precio = '0';
+
+    // Calcular comisión para Comisionado (se guarda en adicionales)
+    let adicionales = '';
+    if(tipo === 'Comisionado') {
+        let info = (window.contactosData||[]).find(c => c.nombre === contacto);
+        if(info) adicionales = `Comision:S/${(info.precio * parseFloat(pax)).toFixed(2)}`;
+    }
+
     let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
     if(opIndex !== -1) {
         let currentOp = window.operacionesData[opIndex];
@@ -782,7 +892,15 @@ function confirmarVentaDirecta() {
     }
 
     let endpoint = id_mov ? 'editar_movimiento_pax' : 'registrar_movimiento_pax';
-    let payload = { id_operacion: id_op, tipo: tipo, contacto: contacto, pax: pax, precio_unitario: (parseFloat(precio)/parseFloat(pax)).toFixed(2), monto_total: parseFloat(precio), creador: myOpName };
+    let paxNum = parseFloat(pax);
+    let precioNum = parseFloat(precio);
+    let payload = {
+        id_operacion: id_op, tipo, contacto, pax,
+        precio_unitario: paxNum > 0 ? (precioNum / paxNum).toFixed(2) : '0',
+        monto_total: precioNum,
+        adicionales,
+        creador: myOpName
+    };
     if(id_mov) payload.id_mov = id_mov;
     
     fetchPostBg(endpoint, payload).then(res => {
@@ -798,23 +916,60 @@ function confirmarVentaDirecta() {
 function cambiarTipoCRM() {
     let tipo = document.getElementById('input-crm-tipo').value;
     let container = document.getElementById('container-crm-contacto');
-    if(tipo === 'Agencia' || tipo === 'Pase_Recibido') {
-        let options = window.contactosData.map(c => `<option value="${c.nombre}">${c.nombre} (S/ ${c.precio})</option>`).join('');
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado / Agencia</label><select id="input-crm-contacto-select" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-[11px] font-bold text-gray-800 shadow-sm mt-0.5 outline-none" onchange="actualizarPrecioDefectoCRM()"><option value="">Seleccionar...</option>${options}</select>`;
-    } else {
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Familia / Apellido</label><input type="text" id="input-crm-contacto-text" class="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5 uppercase" placeholder="Ej: Familia Vasquez">`;
+
+    if(tipo === 'Libre') {
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Apellido / Nombre</label>
+            <input type="text" id="input-crm-contacto-text" class="${_textInputClass()}" placeholder="Ej: Familia Vasquez">`;
+
+    } else if(tipo === 'Agencia') {
+        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('agencia'));
+        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre} (S/${c.precio}/pax)</option>`).join('');
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Agencia</label>
+            <select id="input-crm-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefectoCRM()">
+                <option value="">Seleccionar...</option>${opts}</select>`;
+
+    } else if(tipo === 'Aliado') {
+        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('aliado'));
+        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado</label>
+            <select id="input-crm-contacto-select" class="${_selectInputClass()}">
+                <option value="">Seleccionar...</option>${opts}</select>`;
+        document.getElementById('input-crm-precio').value = '0';
+
+    } else if(tipo === 'Comisionado') {
+        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('comision'));
+        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Comisionado</label>
+            <select id="input-crm-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefectoCRM()">
+                <option value="">Seleccionar...</option>${opts}</select>`;
     }
     actualizarPrecioDefectoCRM();
 }
 
 function actualizarPrecioDefectoCRM() {
     let tipo = document.getElementById('input-crm-tipo').value;
-    let pax = parseInt(document.getElementById('input-crm-pax').value) || 0;
-    if((tipo === 'Agencia' || tipo === 'Pase_Recibido') && pax > 0) {
-        let select = document.getElementById('input-crm-contacto-select');
-        if(select && select.value) {
-            let info = window.contactosData.find(c => c.nombre === select.value);
-            if(info) document.getElementById('input-crm-precio').value = (info.precio * pax).toFixed(2);
+    let pax  = parseInt(document.getElementById('input-crm-pax').value) || 0;
+    let precioInput = document.getElementById('input-crm-precio');
+
+    if(tipo === 'Libre' && pax > 0) {
+        precioInput.value = (30 * pax).toFixed(2);
+
+    } else if(tipo === 'Agencia' && pax > 0) {
+        let sel = document.getElementById('input-crm-contacto-select');
+        if(sel && sel.value) {
+            let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
+            if(info) precioInput.value = (info.precio * pax).toFixed(2);
+        }
+
+    } else if(tipo === 'Aliado') {
+        precioInput.value = '0';
+
+    } else if(tipo === 'Comisionado' && pax > 0) {
+        let sel = document.getElementById('input-crm-contacto-select');
+        if(sel && sel.value) {
+            let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
+            // Para reservas CRM de comisionado se registra el precio al PAX (se ingresa manual)
+            // No auto-llenamos para que el operador lo ingrese conscientemente
         }
     }
 }
@@ -825,7 +980,9 @@ function confirmarNuevaReserva() {
     let tipo = document.getElementById('input-crm-tipo').value;
     let pax = document.getElementById('input-crm-pax').value.trim();
     let precio = document.getElementById('input-crm-precio').value.trim();
-    let contacto = tipo === 'Directo' ? document.getElementById('input-crm-contacto-text')?.value.trim().toUpperCase() : document.getElementById('input-crm-contacto-select')?.value;
+    let contacto = tipo === 'Libre'
+        ? (document.getElementById('input-crm-contacto-text')?.value.trim().toUpperCase() || '')
+        : (document.getElementById('input-crm-contacto-select')?.value || '');
     
     if(!fecha || !contacto || !pax || !precio) return alert("❌ Fecha, Cliente, PAX y Total son obligatorios.");
     
