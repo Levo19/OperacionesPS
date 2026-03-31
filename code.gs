@@ -192,8 +192,9 @@ function getDashboardData() {
     .filter(m => {
       if ((m.estado_movimiento || '').toLowerCase() !== 'pasado') return false;
       let ts = m.timestamp_registro;
-      if (!ts) return true;
+      if (!ts) return false; // sin timestamp = no incluir
       let d = (ts instanceof Date) ? ts : new Date(ts);
+      if (isNaN(d.getTime())) return false; // fecha inválida = no incluir
       return d.toLocaleDateString('en-GB') === hoyStr;
     })
     .map(m => ({
@@ -218,7 +219,7 @@ function getDashboardData() {
       guias: guiasDisponibles,
       contactos: contactosCat,
       operadores:      todoPersonal.filter(p => p.id_empleado && normalizeStr(p.rol).includes('operador')).map(p => ({ id: p.id_empleado, nombre: p.nombre })),
-      impuestos:       sheetToJSON('Impuestos').filter(i => i.id_impuesto).map(i => ({ id: i.id_impuesto, nombre: i.nombre, monto: parseFloat(i.monto)||0 })),
+      impuestos:       sheetToJSON('Impuestos').map(i => { let v = Object.values(i); return { id: v[0], nombre: v[1], monto: parseFloat(v[2])||0 }; }).filter(i => i.id && i.nombre),
       todos_capitanes: todoPersonal.filter(p => p.id_empleado && normalizeStr(p.rol).includes('capit')).map(p => ({ id: p.id_empleado, nombre: p.nombre })),
       todos_guias:     todoPersonal.filter(p => p.id_empleado && normalizeStr(p.rol).includes('guia')).map(p => ({ id: p.id_empleado, nombre: p.nombre }))
     }

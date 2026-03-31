@@ -452,14 +452,16 @@ function renderCaja(caja) {
 
     let saldo = ingresos - salidas;
 
-    // ── Panel Pases ──────────────────────────────────────────────────────
+    // ── Panel Pases (solo hoy) ────────────────────────────────────────────
     let resumenPases = {};
-    (window.pasesExternosData || []).forEach(p => {
-        let aliado = p.aliadoDestino || p.contacto || '—';
+    // PaseOut: desde pasesExternosData, filtrar estrictamente por hoy
+    (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp)).forEach(p => {
+        let aliado = p.aliadoDestino || p.nombreContacto || p.contacto || '—';
         if(!resumenPases[aliado]) resumenPases[aliado] = { out: 0, in: 0 };
-        if(p.tipo === 'Aliado(PaseOut)' || p.estado === 'Pasado') resumenPases[aliado].out += parseInt(p.pax)||0;
+        resumenPases[aliado].out += parseInt(p.pax)||0;
     });
-    (window.operacionesData || []).forEach(op => {
+    // PaseIn: desde manifiesto de operaciones de hoy
+    (window.operacionesData || []).filter(op => op.fecha === getHoyLocal() || !op.fecha).forEach(op => {
         (op.manifiesto || []).forEach(m => {
             if(m.tipo === 'Aliado(PaseIn)' || m.tipo === 'Aliado') {
                 let aliado = m.nombreContacto || m.contacto || '—';
@@ -500,40 +502,59 @@ function renderCaja(caja) {
         </div>` : '';
 
     // ── Panel Comisionados ────────────────────────────────────────────────
-    // Extraer comisiones de Movimientos (adicionales: "Comision:S/XX")
+    // Comisión = monto_total_cobrado − (precio_pax_defecto × cant_pax)
+    // precio_pax_defecto viene de contactosData (campo precio)
     let comisionMovMap = {};
-    (window.operacionesData || []).forEach(op => {
+    (window.operacionesData || []).filter(op => op.fecha === getHoyLocal() || !op.fecha).forEach(op => {
         (op.manifiesto || []).forEach(m => {
-            if(m.tipo === 'Comisionado' && m.adicionales) {
-                let match = String(m.adicionales).match(/Comision:S\/([\d.]+)/);
-                if(match) {
-                    let key = m.nombreContacto || m.contacto || '—';
-                    if(!comisionMovMap[key]) comisionMovMap[key] = { comision: 0, pax: 0 };
-                    comisionMovMap[key].comision += parseFloat(match[1]);
-                    comisionMovMap[key].pax      += parseInt(m.pax)||0;
-                }
-            }
+            if(m.tipo !== 'Comisionado') return;
+            let cantPax    = parseInt(m.pax) || 0;
+            let cobrado    = parseFloat(m.monto) || 0;
+            // Buscar precio base del contacto en el catálogo
+            let info       = (window.contactosData || []).find(c =>
+                c.id === m.contacto || c.nombre === (m.nombreContacto || m.contacto));
+            let precioBase = info ? (parseFloat(info.precio) || 0) : 0;
+            let baseTotal  = precioBase * cantPax;
+            let comision   = Math.max(0, cobrado - baseTotal);
+            if(cantPax === 0) return;
+            let key = m.nombreContacto || m.contacto || '—';
+            if(!comisionMovMap[key]) comisionMovMap[key] = { cobrado: 0, base: 0, comision: 0, pax: 0, precioBase };
+            comisionMovMap[key].cobrado  += cobrado;
+            comisionMovMap[key].base     += baseTotal;
+            comisionMovMap[key].comision += comision;
+            comisionMovMap[key].pax      += cantPax;
         });
     });
 
-    let totalComision = Object.values(comisionMovMap).reduce((s,v)=>s+v.comision, 0);
-    let comisionesHtml = Object.keys(comisionMovMap).map(nombre => {
-        let d = comisionMovMap[nombre];
-        return `
-        <div class="flex items-center justify-between bg-white border border-orange-100 p-3 rounded-xl mb-2 shadow-sm">
-            <div>
-                <span class="font-bold text-gray-800 text-xs uppercase block">${nombre}</span>
-                <span class="text-[10px] text-gray-400 font-bold">${d.pax} pax comisionados</span>
-            </div>
-            <div class="text-right">
-                <span class="font-black text-orange-600 text-sm">S/ ${d.comision.toFixed(2)}</span>
-                <span class="text-[9px] text-gray-400 block">a pagar</span>
-            </div>
-        </div>`;
-    }).join('') || '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin comisiones registradas hoy.</div>';
+    let totalComision = Object.values(comisionMovMap).reduce((s,v) => s + v.comision, 0);
+    let comisionesHtml = Object.keys(comisionMovMap).length === 0
+        ? '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin comisiones registradas hoy.</div>'
+        : `<div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-3">
+            <table class="w-full text-xs">
+                <thead><tr class="bg-orange-50 text-orange-700 font-bold uppercase text-[9px] tracking-wider">
+                    <th class="py-2 px-3 text-left">Comisionado</th>
+                    <th class="py-2 px-2 text-center">PAX</th>
+                    <th class="py-2 px-2 text-right">Cobrado</th>
+                    <th class="py-2 px-2 text-right">Base</th>
+                    <th class="py-2 px-2 text-right">Comisión</th>
+                </tr></thead>
+                <tbody class="divide-y divide-gray-100">
+                ${Object.keys(comisionMovMap).map(nombre => {
+                    let d = comisionMovMap[nombre];
+                    return `<tr>
+                        <td class="py-2 px-3 font-bold text-gray-800 uppercase text-[10px]">${nombre}</td>
+                        <td class="py-2 px-2 text-center text-gray-600">${d.pax}</td>
+                        <td class="py-2 px-2 text-right text-gray-600">S/${d.cobrado.toFixed(2)}</td>
+                        <td class="py-2 px-2 text-right text-gray-500">−S/${d.base.toFixed(2)}</td>
+                        <td class="py-2 px-2 text-right font-black text-orange-600">S/${d.comision.toFixed(2)}</td>
+                    </tr>`;
+                }).join('')}
+                </tbody>
+            </table>
+           </div>`;
 
     let comisionesSummaryHtml = totalComision > 0 ? `
-        <div class="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4 flex justify-between items-center">
+        <div class="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3 flex justify-between items-center">
             <span class="text-xs font-black text-orange-700 uppercase">Total a pagar comisionados</span>
             <span class="font-black text-orange-700 text-lg">S/ ${totalComision.toFixed(2)}</span>
         </div>` : '';
@@ -732,9 +753,24 @@ function generarListaHTML(manifiesto) {
         </div>` : '';
 
         // Monto display según tipo
-        let montoDisplay = isAliado
-            ? `<span class="text-[10px] font-black text-purple-500 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">PASE</span>`
-            : `<span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto||0).toFixed(2)}</span>`;
+        let montoDisplay;
+        if (isAliado) {
+            montoDisplay = `<span class="text-[10px] font-black text-purple-500 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">PASE</span>`;
+        } else if (isAgencia && m.adicionales) {
+            // Parse "Item1:25.00, Item2:10.00" and sum the amounts
+            let adicionalesSum = (m.adicionales + '').split(',').reduce((acc, part) => {
+                let val = parseFloat((part.split(':')[1] || '').trim()) || 0;
+                return acc + val;
+            }, 0);
+            let montoBase = parseFloat(m.monto || 0);
+            if (adicionalesSum > 0) {
+                montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${montoBase.toFixed(2)} <span class="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 border border-amber-300 text-[9px] font-black px-1 py-0.5 rounded ml-0.5">+${adicionalesSum.toFixed(2)}</span></span>`;
+            } else {
+                montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${montoBase.toFixed(2)}</span>`;
+            }
+        } else {
+            montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto||0).toFixed(2)}</span>`;
+        }
 
         // Etiqueta tipo legible
         let tipoLabel = { Libre:'Libre', Agencia:'Agencia', Aliado:'Aliado·Pase', 'Aliado(PaseIn)':'Pase·Entrada', 'Aliado(PaseOut)':'Pase·Salida', Comisionado:'Comisionado', Pase_Recibido:'Pase', Abordaje_CRM:'CRM', Directo:'Libre' }[m.tipo] || m.tipo.replace(/_/g,' ');
