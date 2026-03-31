@@ -12,9 +12,43 @@
         .tab-content { display: none; padding-bottom: 90px; }
         .tab-content.active { display: block; animation: fadeIn 0.2s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-        .nav-item.active { color: #2563eb; }
+        .nav-item.active { color: #56070c; }
         .nav-item.active .icon { transform: scale(1.15); }
-        .nav-item.active.red-tab { color: #dc2626; }
+
+        /* ── Colores empresa #56070c ───────────────── */
+        .bg-blue-600, .bg-blue-500 { background-color: #56070c !important; }
+        .bg-blue-700 { background-color: #3d0508 !important; }
+        .bg-blue-800 { background-color: #2e0406 !important; }
+        .bg-blue-50  { background-color: #fdf2f2 !important; }
+        .bg-blue-100 { background-color: #f9e0e1 !important; }
+        .text-blue-600, .text-blue-700 { color: #56070c !important; }
+        .text-blue-800, .text-blue-900 { color: #3d0508 !important; }
+        .text-blue-400, .text-blue-500 { color: #8b1a1f !important; }
+        .border-blue-200, .border-blue-300 { border-color: #f0c4c6 !important; }
+        .border-blue-500, .border-blue-600, .border-blue-700 { border-color: #56070c !important; }
+        .hover\:bg-blue-100:hover { background-color: #f9e0e1 !important; }
+        .hover\:bg-blue-700:hover { background-color: #3d0508 !important; }
+        .focus\:outline-blue-500:focus { outline-color: #56070c !important; }
+        .ring-2.ring-orange-400 { --tw-ring-color: #56070c; }
+        .from-blue-400 { --tw-gradient-from: #7a1015 !important; }
+        .from-blue-600 { --tw-gradient-from: #56070c !important; }
+        .to-blue-500  { --tw-gradient-to: #6b0e12 !important; }
+        .shadow-blue-500\/20, .shadow-blue-500\/30 { --tw-shadow-color: rgba(86,7,12,0.25) !important; }
+        .border-blue-500 { border-color: #56070c !important; }
+        header.bg-blue-600 { background-color: #56070c !important; }
+
+        /* fin-subtabs */
+        .fin-section { display: none; }
+        .fin-section.active { display: block; }
+        .fin-tab-btn { border-bottom: 2px solid transparent; color: #6b7280; font-size: 11px; font-weight: 700; padding: 8px 12px; text-transform: uppercase; letter-spacing: .05em; cursor: pointer; transition: all .2s; }
+        .fin-tab-btn.active { border-bottom-color: #56070c; color: #56070c; }
+
+        /* print cierre del día */
+        @media print {
+            body > *:not(#print-cierre) { display: none !important; }
+            #print-cierre { display: block !important; position: static; width: 100%; }
+        }
+        #print-cierre { display: none; }
     </style>
 </head>
 <body class="font-sans antialiased text-gray-800">
@@ -460,69 +494,91 @@
             </div>
         </section>
 
-        <!-- PESTAÑA 3 -->
+        <!-- PESTAÑA 3: FINANZAS -->
         <section id="tab-caja" class="tab-content">
-            <h2 class="font-bold text-gray-700 mb-4">Movimientos Extraordinarios</h2>
-            <div class="grid grid-cols-2 gap-4 mb-6">
-                <!-- Mantendremos promps rapidos aquí porque son eficientes monetariamente -->
-                <button class="bg-green-50 text-green-700 p-4 rounded-3xl flex flex-col items-center justify-center border border-green-200 shadow-sm transition hover:bg-green-100 active:scale-95" onclick="abrirModalCaja('Caja_Chica')">
-                    <div class="bg-green-100/50 p-3 rounded-full mb-1"><i class="fas fa-plus text-xl"></i></div>
-                    <span class="font-black text-xs uppercase tracking-wider">Caja Chica</span>
-                </button>
-                <button class="bg-red-50 text-red-700 p-4 rounded-3xl flex flex-col items-center justify-center border border-red-200 shadow-sm transition hover:bg-red-100 active:scale-95" onclick="abrirModalCaja('Retiro_Jefatura')">
-                    <div class="bg-red-100/50 p-3 rounded-full mb-1"><i class="fas fa-minus text-xl"></i></div>
-                    <span class="font-black text-xs uppercase tracking-wider">Retiro</span>
-                </button>
-            </div>
-            <h3 class="font-bold text-gray-500 mb-3 text-sm uppercase tracking-wider px-1">Historial Hoy (Turno)</h3>
-            <div id="caja-historial-container" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y">
-                <div class="text-center py-6"><i class="fas fa-spinner fa-spin text-xl text-blue-500"></i></div>
-            </div>
-        </section>
-
-        <!-- PESTAÑA 4 -->
-        <section id="tab-cierre" class="tab-content">
-            <!-- Panel Operador -->
-            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-4 flex items-center justify-between">
+            <!-- Operador activo -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-3 mb-4 flex items-center justify-between">
                 <div>
-                    <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Operador activo</p>
+                    <p class="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Operador activo</p>
                     <p class="font-extrabold text-gray-800 text-sm" id="label-operador-actual"></p>
                 </div>
-                <button class="bg-blue-50 text-blue-600 px-3 py-2 rounded-xl text-xs font-bold border border-blue-100 hover:bg-blue-100 active:scale-95 transition" onclick="cambiarOperador()"><i class="fas fa-user-edit mr-1"></i> Cambiar</button>
+                <button class="bg-[#fdf2f2] text-[#56070c] px-3 py-2 rounded-xl text-xs font-bold border border-[#f0c4c6] hover:bg-[#f9e0e1] active:scale-95 transition" onclick="cambiarOperador()"><i class="fas fa-user-edit mr-1"></i> Cambiar</button>
             </div>
-            <div class="bg-white rounded-2xl shadow p-5 mb-5">
-                <div class="text-center mb-5">
-                    <div class="bg-red-50 text-red-500 inline-block p-3 rounded-full mb-2"><i class="fas fa-lock text-3xl"></i></div>
-                    <h2 class="font-extrabold text-xl text-gray-800">Cierre de Operación</h2>
-                </div>
-                <div class="mb-4">
-                    <label class="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-1"><i class="fas fa-ship text-blue-400 mr-1"></i> Selecciona la operación a cerrar</label>
-                    <select id="select-cierre-op" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm font-bold text-gray-800 focus:outline-red-400 shadow-inner">
-                        <option value="">- Cargando operaciones activas... -</option>
-                    </select>
-                </div>
-                <div class="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center shadow-inner cursor-pointer" onclick="document.getElementById('zarpe-foto').click()">
-                    <i class="fas fa-camera text-4xl text-gray-300 mb-3 block"></i>
-                    <p class="text-sm font-bold text-gray-700">Subir foto de Zarpe firmado</p>
-                    <input type="file" id="zarpe-foto" accept="image/*" class="hidden" onchange="document.getElementById('file-name').innerText = this.files[0]?.name || ''">
-                    <span id="file-name" class="mt-2 block text-xs text-green-600 font-bold"></span>
-                </div>
-                <button class="mt-5 w-full bg-red-600 text-white font-black py-4 rounded-xl shadow-lg transition active:scale-95 text-lg flex items-center justify-center" onclick="cerrarOperacion()"><i class="fas fa-flag-checkered mr-2"></i> LIQUIDAR Y CERRAR</button>
+
+            <!-- Sub-tabs -->
+            <div class="flex border-b border-gray-200 mb-4 bg-white rounded-t-2xl overflow-hidden shadow-sm">
+                <button class="fin-tab-btn active flex-1" onclick="switchFinanzas('pases', this)"><i class="fas fa-people-carry mr-1"></i>Pases</button>
+                <button class="fin-tab-btn flex-1" onclick="switchFinanzas('comisionados', this)"><i class="fas fa-handshake mr-1"></i>Comisiones</button>
+                <button class="fin-tab-btn flex-1" onclick="switchFinanzas('historial', this)"><i class="fas fa-list mr-1"></i>Caja</button>
             </div>
-            <div id="pdf-result" class="hidden mt-4 bg-green-50 border border-green-200 p-5 rounded-2xl text-center shadow-sm">
-                <i class="fas fa-check-circle text-4xl text-green-500 mb-3 block drop-shadow-sm"></i>
-                <h3 class="font-extrabold text-green-800 text-lg mb-1">¡Turno Cerrado!</h3>
-                <a href="#" class="inline-flex w-full items-center justify-center bg-white text-green-700 font-bold py-3 px-4 border border-green-300 rounded-xl mt-3"><i class="fas fa-download mr-2 text-xl"></i> Descargar PDF</a>
+
+            <!-- Sección: Pases del día -->
+            <div id="fin-pases" class="fin-section active">
+                <div id="fin-pases-content">
+                    <div class="text-center py-8 text-gray-400 text-sm">Sin pases registrados hoy.</div>
+                </div>
+            </div>
+
+            <!-- Sección: Comisionados -->
+            <div id="fin-comisionados" class="fin-section">
+                <div id="fin-comisionados-content">
+                    <div class="text-center py-8 text-gray-400 text-sm">Sin pagos a comisionados hoy.</div>
+                </div>
+            </div>
+
+            <!-- Sección: Historial Caja -->
+            <div id="fin-historial" class="fin-section">
+                <div class="grid grid-cols-2 gap-3 mb-4">
+                    <button class="bg-green-50 text-green-700 p-4 rounded-2xl flex flex-col items-center justify-center border border-green-200 shadow-sm transition hover:bg-green-100 active:scale-95" onclick="abrirModalCaja('Caja_Chica')">
+                        <div class="bg-green-100 p-2.5 rounded-full mb-1"><i class="fas fa-plus text-lg"></i></div>
+                        <span class="font-black text-xs uppercase tracking-wider">Caja Chica</span>
+                    </button>
+                    <button class="bg-red-50 text-red-700 p-4 rounded-2xl flex flex-col items-center justify-center border border-red-200 shadow-sm transition hover:bg-red-100 active:scale-95" onclick="abrirModalCaja('Retiro_Jefatura')">
+                        <div class="bg-red-100 p-2.5 rounded-full mb-1"><i class="fas fa-minus text-lg"></i></div>
+                        <span class="font-black text-xs uppercase tracking-wider">Retiro</span>
+                    </button>
+                </div>
+                <h3 class="font-bold text-gray-500 mb-3 text-[11px] uppercase tracking-wider px-1">Historial del turno</h3>
+                <div id="caja-historial-container" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y">
+                    <div class="text-center py-6 text-gray-400"><i class="fas fa-spinner fa-spin text-xl"></i></div>
+                </div>
+            </div>
+
+            <!-- Botón cierre del día -->
+            <div class="mt-6 pb-2">
+                <button onclick="generarCierreDelDia()" class="w-full bg-[#56070c] hover:bg-[#3d0508] active:scale-95 text-white font-black py-4 rounded-2xl shadow-lg transition flex items-center justify-center text-sm uppercase tracking-wider border border-[#3d0508]">
+                    <i class="fas fa-flag-checkered mr-2 text-base"></i> Cierre del Día
+                </button>
             </div>
         </section>
     </main>
+
+    <!-- Modal Foto Zarpe -->
+    <div id="modal-zarpe-foto" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-50 hidden shadow-2xl">
+        <h3 class="font-extrabold text-lg text-gray-800 mb-1"><i class="fas fa-camera text-gray-500 mr-2"></i>Foto de Zarpe</h3>
+        <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-4">Operación: <span id="zarpe-foto-op-id" class="text-[#56070c]"></span></p>
+        <input type="hidden" id="hidden-zarpe-op-id">
+        <div id="zarpe-foto-preview" class="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center cursor-pointer mb-4 hover:border-[#56070c] transition" onclick="document.getElementById('zarpe-foto-input').click()">
+            <i class="fas fa-camera text-4xl text-gray-300 mb-2 block"></i>
+            <p class="text-sm font-bold text-gray-600">Toca para seleccionar foto</p>
+            <p class="text-xs text-gray-400 mt-1">JPG, PNG — opcional</p>
+        </div>
+        <input type="file" id="zarpe-foto-input" accept="image/*" capture="environment" class="hidden" onchange="previsualizarFotoZarpe(this)">
+        <p id="zarpe-foto-nombre" class="text-xs text-green-600 font-bold text-center mb-4 hidden"></p>
+        <div class="flex space-x-3">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-zarpe-foto')">Cancelar</button>
+            <button class="flex-[2] bg-[#56070c] text-white py-3 rounded-xl font-bold text-sm" onclick="confirmarFotoZarpe()"><i class="fas fa-check mr-1"></i> Confirmar</button>
+        </div>
+    </div>
+
+    <!-- Área de impresión Cierre del Día -->
+    <div id="print-cierre"></div>
 
     <nav class="fixed bottom-0 w-full max-w-md mx-auto bg-white border-t border-gray-200 shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)] z-20 left-1/2 -translate-x-1/2 rounded-t-2xl pb-safe">
         <div class="flex justify-around items-center h-16">
             <div class="nav-item active flex flex-col items-center justify-center w-full h-full text-gray-400 transition cursor-pointer" onclick="switchTab('tab-operaciones', 'El Muelle', this)"><i class="fas fa-ship text-xl mb-1 duration-200 icon"></i><span class="text-[10px] font-bold uppercase tracking-wide">Muelle</span></div>
             <div class="nav-item flex flex-col items-center justify-center w-full h-full text-gray-400 transition cursor-pointer border-r border-l border-gray-100" onclick="switchTab('tab-reservas', 'Sala de Espera', this)"><i class="fas fa-clipboard-list text-xl mb-1 duration-200 icon"></i><span class="text-[10px] font-bold uppercase tracking-wide">Reservas</span></div>
-            <div class="nav-item flex flex-col items-center justify-center w-full h-full text-gray-400 transition cursor-pointer" onclick="switchTab('tab-caja', 'Caja Ext.', this)"><i class="fas fa-wallet text-xl mb-1 duration-200 icon"></i><span class="text-[10px] font-bold uppercase tracking-wide">Caja</span></div>
-            <div class="nav-item flex flex-col items-center justify-center w-full h-full text-gray-400 transition cursor-pointer border-l border-gray-100" onclick="switchTab('tab-cierre', 'Liquidación', this)"><i class="fas fa-flag-checkered text-xl mb-1 duration-200 icon"></i><span class="text-[10px] font-bold uppercase tracking-wide">Cierre</span></div>
+            <div class="nav-item flex flex-col items-center justify-center w-full h-full text-gray-400 transition cursor-pointer" onclick="switchTab('tab-caja', 'Finanzas', this)"><i class="fas fa-chart-line text-xl mb-1 duration-200 icon"></i><span class="text-[10px] font-bold uppercase tracking-wide">Finanzas</span></div>
         </div>
     </nav>
     <script src="app.js"></script>

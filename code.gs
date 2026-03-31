@@ -35,6 +35,7 @@ function doPost(e) {
     else if (action === 'actualizar_adicionales')   { return jsonResponse(actualizarAdicionales(data.payload)); }
     else if (action === 'pase_desde_reserva')       { return jsonResponse(paseDesdeReserva(data.payload)); }
     else if (action === 'editar_operacion')         { return jsonResponse(editarOperacion(data.payload)); }
+    else if (action === 'subir_foto_zarpe')         { return jsonResponse(subirFotoZarpe(data.payload)); }
     return jsonResponse({ error: 'Acción no requerida o desconocida' }, 400);
   } catch (error) {
     return jsonResponse({ error: error.toString() }, 500);
@@ -499,6 +500,36 @@ function cerrarOperacion(payload) {
     }
   }
   return { status: 'error', message: '❌ Operación no encontrada.' };
+}
+
+// Guardar foto de zarpe (base64) en Drive y URL en Operaciones col 10
+function subirFotoZarpe(payload) {
+  try {
+    const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName('Operaciones');
+    const data  = sheet.getDataRange().getValues();
+
+    // Extraer base64 puro (quitar prefijo data:image/...;base64,)
+    let base64 = (payload.foto_base64 || '').replace(/^data:image\/\w+;base64,/, '');
+    if(!base64) return { status: 'error', message: 'Sin imagen.' };
+
+    let blob    = Utilities.newBlob(Utilities.base64Decode(base64), 'image/jpeg', 'zarpe_' + payload.id_operacion + '.jpg');
+    let folder  = DriveApp.getRootFolder(); // guarda en raíz de Drive del script
+    let file    = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    let url     = 'https://drive.google.com/uc?id=' + file.getId();
+
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === payload.id_operacion) {
+        sheet.getRange(i+1, 10).setValue(url);
+        SpreadsheetApp.flush();
+        return { message: '✅ Foto guardada.', url };
+      }
+    }
+    return { status: 'error', message: 'Operación no encontrada.' };
+  } catch(e) {
+    return { status: 'error', message: e.toString() };
+  }
 }
 
 // Pase directo desde reserva CRM (sin asignar a lancha)

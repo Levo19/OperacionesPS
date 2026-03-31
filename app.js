@@ -99,54 +99,18 @@ function esFechaHoy(ts) {
 }
 
 function switchTab(tabId, title, btnElement) {
-    const tabs = document.querySelectorAll('.tab-content');
-    tabs.forEach(tab => tab.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.getElementById(tabId).classList.add('active');
-    const navItems = document.querySelectorAll('.nav-item');
-    navItems.forEach(item => item.classList.remove('active', 'red-tab'));
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     btnElement.classList.add('active');
-    if(tabId === 'tab-cierre') {
-        btnElement.classList.add('red-tab');
-        poblarSelectorCierre();
-    }
     document.getElementById('app-title').innerText = title;
 }
 
-function poblarSelectorCierre() {
-    let sel = document.getElementById('select-cierre-op');
-    if(!sel) return;
-    let ops = (window.operacionesData || []).filter(op => op.estado === 'Abierta' || op.estado === 'En_Viaje');
-    if(ops.length === 0) {
-        sel.innerHTML = '<option value="">— No hay operaciones activas —</option>';
-    } else {
-        sel.innerHTML = '<option value="">— Selecciona —</option>' +
-            ops.map(op => `<option value="${op.id}">${op.bote} · ${op.hora_salida || 'S/H'} · ${op.ocupados}/${op.capacidad} PAX · ${op.estado}</option>`).join('');
-    }
-}
-
-function cerrarOperacion() {
-    let id_operacion = document.getElementById('select-cierre-op')?.value;
-    if(!id_operacion) return alert('❌ Selecciona primero la operación a cerrar.');
-    if(!confirm('¿Confirmas el CIERRE y LIQUIDACIÓN de esta operación? Esta acción no se puede deshacer.')) return;
-
-    toggleSpinner(true);
-    fetchPost('cerrar_operacion', { id_operacion, creador: myOpName })
-        .then(res => {
-            toggleSpinner(false);
-            if(res.status === 'error') return;
-            // Mostrar resultado de liquidación
-            let total = res.liquidacion ? res.liquidacion.total_a_entregar : 0;
-            let result = document.getElementById('pdf-result');
-            if(result) {
-                result.classList.remove('hidden');
-                result.innerHTML = `
-                <i class="fas fa-check-circle text-4xl text-green-500 mb-3 block drop-shadow-sm"></i>
-                <h3 class="font-extrabold text-green-800 text-lg mb-1">¡Turno Cerrado!</h3>
-                <p class="text-sm text-gray-600 mb-3">Total a entregar: <span class="font-black text-green-700 text-xl">S/ ${parseFloat(total).toFixed(2)}</span></p>`;
-            }
-            // Actualizar datos
-            fetchDashboardData();
-        });
+function switchFinanzas(seccion, btnEl) {
+    document.querySelectorAll('.fin-section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.fin-tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('fin-' + seccion).classList.add('active');
+    if(btnEl) btnEl.classList.add('active');
 }
 
 function fetchDashboardData() {
@@ -385,9 +349,12 @@ function renderOperaciones(operaciones) {
                 </button>
             </div>
             ` : `
-            <div class="mt-2 w-full">
+            <div class="mt-2 space-y-2">
                 <button class="w-full bg-orange-100 text-orange-800 font-bold py-2.5 rounded-xl border border-orange-200 hover:bg-orange-200 shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
                     <i class="fas fa-clipboard-list mr-1.5"></i> Ver Manifiesto
+                </button>
+                <button class="w-full bg-gray-50 text-gray-600 font-bold py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalZarpeFoto('${op.id}')">
+                    <i class="fas fa-camera mr-1.5 text-gray-400"></i> Subir Foto de Zarpe
                 </button>
             </div>
             `}
@@ -454,142 +421,143 @@ function renderReservas(reservas) {
 }
 
 function renderCaja(caja) {
-    let container = document.getElementById('tab-caja');
-    if(!container) return;
+    let txHoy = (caja || []).filter(c => esFechaHoy(c.timestamp));
+    let ingresos = 0, salidas = 0;
+    let comisionadosMap = {};
 
-    let hoy = getHoyLocal();
-    let txHoy = caja.filter(c => esFechaHoy(c.timestamp));
-
-    let ingresos = 0;
-    let salidas = 0;
-
-    let html = txHoy.map(c => {
+    let historialHtml = txHoy.map(c => {
         let monto = parseFloat(c.monto) || 0;
-        let esIngreso = ['Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'].includes(c.categoria);
-        let isPase = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
-        
-        let colorText = isPase ? 'text-purple-600' : (esIngreso ? 'text-green-600' : 'text-red-600');
-        let signo = isPase ? '🤝' : (esIngreso ? '+' : '-');
-        
-        if(!isPase) {
-            if(esIngreso) ingresos += monto;
-            else salidas += monto;
+        let esIngreso = ['Caja Chica','Ingreso por Venta','Ingreso_Venta','Caja_Chica'].includes(c.categoria);
+        let isPase    = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
+        let esComision = c.categoria === 'Pago_Comisionado' || c.categoria === 'Pago Comisionado';
+
+        if(!isPase) { if(esIngreso) ingresos += monto; else salidas += monto; }
+        if(esComision && c.operador) {
+            if(!comisionadosMap[c.operador]) comisionadosMap[c.operador] = 0;
+            comisionadosMap[c.operador] += monto;
         }
 
+        let colorText = isPase ? 'text-purple-600' : (esIngreso ? 'text-green-600' : 'text-red-600');
+        let signo     = isPase ? '🤝' : (esIngreso ? '+' : '-');
+        let hora      = c.timestamp ? new Date(c.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '—';
         return `
-        <div class="flex justify-between items-center bg-white p-4 rounded-2xl mb-3 shadow-sm border border-gray-100 cursor-pointer hover:bg-gray-50 transition active:scale-95" onclick="abrirDetalleCaja('${c.id}')">
+        <div class="flex justify-between items-center p-3.5 cursor-pointer hover:bg-gray-50 transition active:scale-95" onclick="abrirDetalleCaja('${c.id}')">
             <div>
-                <span class="text-sm font-extrabold text-gray-800 tracking-tight block flex items-center"><i class="fas fa-circle text-[8px] ${esIngreso ? 'text-green-400' : 'text-red-400'} mr-2"></i> ${c.categoria.replace('_',' ')}</span>
-                <span class="text-[10px] text-gray-500 block font-bold mt-1">${new Date(c.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • ${c.metodo_pago || 'Efectivo'}</span>
+                <span class="text-xs font-extrabold text-gray-800 block"><i class="fas fa-circle text-[7px] ${esIngreso?'text-green-400':'text-red-400'} mr-1.5"></i>${c.categoria.replace(/_/g,' ')}</span>
+                <span class="text-[10px] text-gray-400 font-bold">${hora} · ${c.metodo_pago||'Efectivo'} · ${c.operador||''}</span>
             </div>
-            <span class="font-black ${colorText}">${signo} S/ ${monto.toFixed(2)}</span>
+            <span class="font-black text-sm ${colorText}">${signo} S/${monto.toFixed(2)}</span>
         </div>`;
-    }).join('');
+    }).join('') || '<div class="text-center p-6 text-gray-400 text-sm font-bold">No hay movimientos hoy.</div>';
 
     let saldo = ingresos - salidas;
-    
-    // Calcular Estado de Pases
+
+    // ── Panel Pases ──────────────────────────────────────────────────────
     let resumenPases = {};
-    if(window.operacionesData) {
-        window.operacionesData.forEach(op => {
-            if(op.fecha === hoy || !op.fecha) {
-                op.manifiesto.forEach(m => {
-                    if(m.tipo === 'Pase_Recibido') {
-                        if(!resumenPases[m.contacto]) resumenPases[m.contacto] = { recibidos: 0, emitidos: 0 };
-                        resumenPases[m.contacto].recibidos += parseInt(m.pax);
-                    }
-                    if(m.estado && m.estado.includes('Pase Emitido a ')) {
-                        let aliado = m.estado.replace('Pase Emitido a ', '').trim();
-                        if(!resumenPases[aliado]) resumenPases[aliado] = { recibidos: 0, emitidos: 0 };
-                        resumenPases[aliado].emitidos += parseInt(m.pax);
-                    }
-                });
+    (window.pasesExternosData || []).forEach(p => {
+        let aliado = p.aliadoDestino || p.contacto || '—';
+        if(!resumenPases[aliado]) resumenPases[aliado] = { out: 0, in: 0 };
+        if(p.tipo === 'Aliado(PaseOut)' || p.estado === 'Pasado') resumenPases[aliado].out += parseInt(p.pax)||0;
+    });
+    (window.operacionesData || []).forEach(op => {
+        (op.manifiesto || []).forEach(m => {
+            if(m.tipo === 'Aliado(PaseIn)' || m.tipo === 'Aliado') {
+                let aliado = m.nombreContacto || m.contacto || '—';
+                if(!resumenPases[aliado]) resumenPases[aliado] = { out: 0, in: 0 };
+                resumenPases[aliado].in += parseInt(m.pax)||0;
             }
         });
-    }
+    });
 
-    if(window.pasesExternosData) {
-        window.pasesExternosData.forEach(m => {
-            if(m.estado && m.estado.includes('Pase Emitido a ')) {
-                if(esFechaHoy(m.timestamp)) {
-                    let aliado = m.estado.replace('Pase Emitido a ', '').trim();
-                    if(!resumenPases[aliado]) resumenPases[aliado] = { recibidos: 0, emitidos: 0 };
-                    resumenPases[aliado].emitidos += parseInt(m.pax);
+    let totalPaxOut = 0, totalPaxIn = 0;
+    let pasesHtml = Object.keys(resumenPases).map(aliado => {
+        let d = resumenPases[aliado];
+        totalPaxOut += d.out; totalPaxIn += d.in;
+        let saldoPax = d.in - d.out; // positivo = nos deben ellos
+        return `
+        <div class="flex items-center justify-between bg-white border border-purple-100 p-3 rounded-xl mb-2 shadow-sm">
+            <div>
+                <span class="font-bold text-gray-800 text-xs uppercase block">${aliado}</span>
+                <div class="text-[10px] mt-0.5 space-x-2">
+                    ${d.in  ? `<span class="text-green-600 font-bold"><i class="fas fa-arrow-down mr-1"></i>Recibimos ${d.in} pax</span>` : ''}
+                    ${d.out ? `<span class="text-red-500 font-bold"><i class="fas fa-arrow-up mr-1"></i>Enviamos ${d.out} pax</span>` : ''}
+                </div>
+            </div>
+            <span class="font-black text-sm ${saldoPax>0?'text-green-600':saldoPax<0?'text-red-500':'text-gray-500'}">${saldoPax>0?'+':''}${saldoPax} pax</span>
+        </div>`;
+    }).join('') || '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin pases registrados hoy.</div>';
+
+    let pasesSummaryHtml = (totalPaxIn || totalPaxOut) ? `
+        <div class="grid grid-cols-2 gap-3 mb-4">
+            <div class="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                <p class="text-[9px] font-bold text-green-600 uppercase">Recibidos</p>
+                <p class="text-xl font-black text-green-700">${totalPaxIn} <span class="text-xs font-bold">pax</span></p>
+            </div>
+            <div class="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+                <p class="text-[9px] font-bold text-red-600 uppercase">Enviados</p>
+                <p class="text-xl font-black text-red-600">${totalPaxOut} <span class="text-xs font-bold">pax</span></p>
+            </div>
+        </div>` : '';
+
+    // ── Panel Comisionados ────────────────────────────────────────────────
+    // Extraer comisiones de Movimientos (adicionales: "Comision:S/XX")
+    let comisionMovMap = {};
+    (window.operacionesData || []).forEach(op => {
+        (op.manifiesto || []).forEach(m => {
+            if(m.tipo === 'Comisionado' && m.adicionales) {
+                let match = String(m.adicionales).match(/Comision:S\/([\d.]+)/);
+                if(match) {
+                    let key = m.nombreContacto || m.contacto || '—';
+                    if(!comisionMovMap[key]) comisionMovMap[key] = { comision: 0, pax: 0 };
+                    comisionMovMap[key].comision += parseFloat(match[1]);
+                    comisionMovMap[key].pax      += parseInt(m.pax)||0;
                 }
             }
         });
-    }
+    });
 
-    let pasesHtml = Object.keys(resumenPases).map(aliado => {
-        let r = resumenPases[aliado].recibidos;
-        let e = resumenPases[aliado].emitidos;
-        let saldoPax = r - e; // Si > 0, nos llenaron el bote (le debemos). Si < 0 (favor nuestro).
-        // En tu logica: Recibido = Aliado nos metió PAX (nos debe). Emitido = Nosotros le metimos PAX (les debemos).
-        // Wait: User said "ingresaron por pase 5 pax de aliado A ... me deben 5 pax".
-        // Entonces Recibidos = Favor nuestro (positivo). Emitidos = Favor en contra (negativo).
-        
+    let totalComision = Object.values(comisionMovMap).reduce((s,v)=>s+v.comision, 0);
+    let comisionesHtml = Object.keys(comisionMovMap).map(nombre => {
+        let d = comisionMovMap[nombre];
         return `
-        <div class="flex items-center justify-between bg-white border border-purple-100 p-3 rounded-xl mb-2">
+        <div class="flex items-center justify-between bg-white border border-orange-100 p-3 rounded-xl mb-2 shadow-sm">
             <div>
-                <span class="font-bold text-gray-700 text-xs uppercase">${aliado}</span>
-                <div class="flex space-x-3 mt-1 text-[10px]">
-                    <span class="text-green-600 font-bold"><i class="fas fa-arrow-down mr-1"></i> A nuestro favor: ${r} PAX</span>
-                    <span class="text-red-500 font-bold"><i class="fas fa-arrow-up mr-1"></i> A su favor: ${e} PAX</span>
-                </div>
+                <span class="font-bold text-gray-800 text-xs uppercase block">${nombre}</span>
+                <span class="text-[10px] text-gray-400 font-bold">${d.pax} pax comisionados</span>
             </div>
             <div class="text-right">
-                <span class="text-[9px] uppercase tracking-widest text-gray-400 font-bold block mb-0.5">Saldo Final</span>
-                <span class="font-black ${saldoPax >= 0 ? 'text-green-600' : 'text-red-500'} text-sm">${saldoPax >= 0 ? '+' : ''}${saldoPax} PAX</span>
+                <span class="font-black text-orange-600 text-sm">S/ ${d.comision.toFixed(2)}</span>
+                <span class="text-[9px] text-gray-400 block">a pagar</span>
             </div>
         </div>`;
-    }).join('');
+    }).join('') || '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin comisiones registradas hoy.</div>';
 
-    if(!pasesHtml) pasesHtml = '<div class="text-[11px] text-gray-400 text-center py-4 bg-gray-50 rounded-xl font-bold border border-dashed border-gray-200">No hay pases registrados hoy.</div>';
-    
-    let headerHtml = `
-    <h2 class="font-bold text-gray-700 mb-4 block"><i class="fas fa-coins text-yellow-500 mr-2"></i> Finanzas de Hoy</h2>
-    
-    <div class="bg-gradient-to-br from-blue-600 to-indigo-800 rounded-3xl p-6 mb-6 shadow-xl relative overflow-hidden">
-        <i class="fas fa-wallet absolute -right-6 -bottom-6 text-8xl text-white opacity-10"></i>
-        <p class="text-blue-100 text-[10px] font-bold uppercase tracking-widest mb-1">Balance Efectivo/Digital</p>
-        <h3 class="text-4xl font-black text-white mb-4 shadow-sm">S/ ${saldo.toFixed(2)}</h3>
-        <div class="flex space-x-3 bg-white/10 rounded-2xl p-3 backdrop-blur-sm border border-white/20">
-            <div class="flex-1">
-                <p class="text-green-300 text-[9px] font-bold uppercase tracking-wider mb-0.5"><i class="fas fa-arrow-down mr-1"></i> Entradas</p>
-                <p class="text-white font-bold text-xs truncate">+ S/ ${ingresos.toFixed(2)}</p>
-            </div>
-            <div class="w-px bg-white/20"></div>
-            <div class="flex-1 text-right">
-                <p class="text-red-300 text-[9px] font-bold uppercase tracking-wider mb-0.5"><i class="fas fa-arrow-up mr-1"></i> Salidas</p>
-                <p class="text-white font-bold text-xs truncate">- S/ ${salidas.toFixed(2)}</p>
+    let comisionesSummaryHtml = totalComision > 0 ? `
+        <div class="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4 flex justify-between items-center">
+            <span class="text-xs font-black text-orange-700 uppercase">Total a pagar comisionados</span>
+            <span class="font-black text-orange-700 text-lg">S/ ${totalComision.toFixed(2)}</span>
+        </div>` : '';
+
+    // ── Actualizar DOM ────────────────────────────────────────────────────
+    let pPanel = document.getElementById('fin-pases-content');
+    if(pPanel) pPanel.innerHTML = pasesSummaryHtml + pasesHtml;
+
+    let cPanel = document.getElementById('fin-comisionados-content');
+    if(cPanel) cPanel.innerHTML = comisionesSummaryHtml + comisionesHtml;
+
+    let hPanel = document.getElementById('caja-historial-container');
+    if(hPanel) {
+        hPanel.innerHTML = `
+        <div class="bg-[#56070c] rounded-t-2xl p-4 text-white">
+            <p class="text-[9px] font-bold uppercase tracking-widest opacity-70 mb-1">Balance del turno</p>
+            <p class="text-3xl font-black">S/ ${saldo.toFixed(2)}</p>
+            <div class="flex justify-between mt-2 text-xs opacity-80">
+                <span>+ S/${ingresos.toFixed(2)} entradas</span>
+                <span>- S/${salidas.toFixed(2)} salidas</span>
             </div>
         </div>
-    </div>
-    
-    <h3 class="font-extrabold text-gray-800 text-xs mb-3 uppercase tracking-wider flex items-center"><i class="fas fa-handshake mr-2 text-purple-500"></i> Balance de Pases (Favores)</h3>
-    <div class="mb-6">
-        ${pasesHtml}
-    </div>
-    
-    <div class="grid grid-cols-2 gap-4 mb-6">
-
-        <button class="bg-green-50 text-green-700 p-4 rounded-3xl flex flex-col items-center justify-center border border-green-200 shadow-sm transition hover:bg-green-100 active:scale-95" onclick="abrirModalCaja('Caja Chica')">
-            <div class="bg-green-100/50 p-3 rounded-full mb-1"><i class="fas fa-plus text-xl"></i></div>
-            <span class="font-black text-xs uppercase tracking-wider">Caja Chica</span>
-        </button>
-        <button class="bg-red-50 text-red-700 p-4 rounded-3xl flex flex-col items-center justify-center border border-red-200 shadow-sm transition hover:bg-red-100 active:scale-95" onclick="abrirModalCaja('Retiro Jefatura')">
-            <div class="bg-red-100/50 p-3 rounded-full mb-1"><i class="fas fa-minus text-xl"></i></div>
-            <span class="font-black text-xs uppercase tracking-wider">Retiro</span>
-        </button>
-    </div>
-    
-    <h3 class="font-extrabold text-gray-800 text-xs mb-3 uppercase tracking-wider flex items-center"><i class="fas fa-list-ul mr-2 text-blue-500"></i> Historial Turno</h3>
-    <div id="lista-historial-caja" class="pb-10">
-        ${html || '<div class="text-center p-6 bg-gray-50 rounded-2xl text-gray-400 font-bold border-2 border-dashed border-gray-200"><i class="fas fa-receipt text-3xl mb-2 opacity-30 block"></i> No hay movimientos hoy.</div>'}
-    </div>
-    `;
-
-    container.innerHTML = headerHtml;
+        <div class="divide-y divide-gray-100">${historialHtml}</div>`;
+    }
 }
 
 
@@ -1621,6 +1589,190 @@ function confirmarEditarOp() {
         if(res.status === 'error') alert(res.message);
         else clearTimeout(window._syncTimer), window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
     });
+}
+
+// ==========================
+// FOTO DE ZARPE
+// ==========================
+function abrirModalZarpeFoto(id_op) {
+    let op = window.operacionesData.find(o => o.id === id_op);
+    document.getElementById('hidden-zarpe-op-id').value    = id_op;
+    document.getElementById('zarpe-foto-op-id').textContent = id_op + (op ? ' · ' + op.bote : '');
+    document.getElementById('zarpe-foto-nombre').classList.add('hidden');
+    document.getElementById('zarpe-foto-input').value = '';
+    document.getElementById('zarpe-foto-preview').innerHTML = `
+        <i class="fas fa-camera text-4xl text-gray-300 mb-2 block"></i>
+        <p class="text-sm font-bold text-gray-600">Toca para seleccionar foto</p>
+        <p class="text-xs text-gray-400 mt-1">JPG, PNG — opcional</p>`;
+    abrirModal('modal-zarpe-foto');
+}
+
+function previsualizarFotoZarpe(input) {
+    let file = input.files[0];
+    if(!file) return;
+    let reader = new FileReader();
+    reader.onload = e => {
+        document.getElementById('zarpe-foto-preview').innerHTML =
+            `<img src="${e.target.result}" class="w-full max-h-40 object-cover rounded-xl">`;
+        let label = document.getElementById('zarpe-foto-nombre');
+        label.textContent = '✅ ' + file.name;
+        label.classList.remove('hidden');
+    };
+    reader.readAsDataURL(file);
+}
+
+function confirmarFotoZarpe() {
+    let id_op = document.getElementById('hidden-zarpe-op-id').value;
+    let input = document.getElementById('zarpe-foto-input');
+    let file  = input.files[0];
+
+    cerrarSubModal('modal-zarpe-foto');
+
+    if(!file) { mostrarToast('Sin foto seleccionada.', 'error'); return; }
+
+    let reader = new FileReader();
+    reader.onload = e => {
+        let base64 = e.target.result; // data:image/...;base64,...
+        fetchPostBg('subir_foto_zarpe', { id_operacion: id_op, foto_base64: base64, creador: myOpName })
+            .then(res => {
+                if(res.status === 'error') mostrarToast('Error al subir foto.', 'error');
+                else mostrarToast('✅ Foto de zarpe guardada.');
+            });
+    };
+    reader.readAsDataURL(file);
+}
+
+// ==========================
+// CIERRE DEL DÍA — PDF
+// ==========================
+function generarCierreDelDia() {
+    if(!confirm('¿Confirmas el CIERRE DEL DÍA? Se generará el reporte y se anularán las operaciones pendientes.')) return;
+
+    let ops       = window.operacionesData || [];
+    let caja      = (window.cajaData || []).filter(c => esFechaHoy(c.timestamp));
+    let pases     = window.pasesExternosData || [];
+    let hoy       = new Date().toLocaleDateString('es-PE', {day:'2-digit', month:'long', year:'numeric'});
+    let horaCorte = new Date().toLocaleTimeString('es-PE', {hour:'2-digit', minute:'2-digit'});
+
+    // Calcular totales caja
+    let ingresos = 0, salidas = 0;
+    caja.forEach(c => {
+        let m = parseFloat(c.monto)||0;
+        let esIngreso = ['Caja Chica','Ingreso_Venta','Caja_Chica','Ingreso por Venta'].includes(c.categoria);
+        let isPase    = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
+        if(!isPase) { if(esIngreso) ingresos += m; else salidas += m; }
+    });
+
+    // Resumen por operación
+    let opsHtml = ops.map(op => {
+        let totalOp = (op.manifiesto||[]).reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
+        let movHtml = (op.manifiesto||[]).map(m => {
+            let nombre = m.nombreContacto || m.contacto || '—';
+            let tipo   = m.tipo || '—';
+            return `<tr>
+                <td style="padding:4px 8px;font-size:11px;">${nombre}</td>
+                <td style="padding:4px 8px;font-size:11px;text-align:center;">${tipo}</td>
+                <td style="padding:4px 8px;font-size:11px;text-align:center;">${m.pax}</td>
+                <td style="padding:4px 8px;font-size:11px;text-align:right;">S/ ${parseFloat(m.monto||0).toFixed(2)}</td>
+            </tr>`;
+        }).join('');
+        return `
+        <div style="margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            <div style="background:#56070c;color:white;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:900;font-size:13px;"><i class="fas fa-ship"></i> ${op.bote}</span>
+                <span style="font-size:11px;">${op.hora_salida||'S/H'} · ${op.ocupados}/${op.capacidad} PAX · ${op.estado}</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="background:#fdf2f2;font-size:10px;color:#56070c;font-weight:700;text-transform:uppercase;">
+                    <th style="padding:4px 8px;text-align:left;">Contacto</th>
+                    <th style="padding:4px 8px;text-align:center;">Tipo</th>
+                    <th style="padding:4px 8px;text-align:center;">PAX</th>
+                    <th style="padding:4px 8px;text-align:right;">Monto</th>
+                </tr></thead>
+                <tbody>${movHtml}</tbody>
+                <tfoot><tr style="background:#f9fafb;font-weight:900;">
+                    <td colspan="3" style="padding:5px 8px;font-size:11px;text-align:right;">Total operación:</td>
+                    <td style="padding:5px 8px;font-size:12px;text-align:right;color:#16a34a;">S/ ${totalOp.toFixed(2)}</td>
+                </tr></tfoot>
+            </table>
+        </div>`;
+    }).join('') || '<p style="color:#9ca3af;font-size:12px;">Sin operaciones registradas hoy.</p>';
+
+    // Resumen pases
+    let pasesHtmlPrint = pases.map(p => `
+        <tr>
+            <td style="padding:4px 8px;font-size:11px;">${p.nombreContacto||p.contacto||'—'}</td>
+            <td style="padding:4px 8px;font-size:11px;">${p.aliadoDestino||p.contacto||'—'}</td>
+            <td style="padding:4px 8px;font-size:11px;text-align:center;">${p.pax}</td>
+        </tr>`).join('') || '<tr><td colspan="3" style="padding:8px;text-align:center;color:#9ca3af;font-size:11px;">Sin pases del día.</td></tr>';
+
+    // Historial caja
+    let cajaHtmlPrint = caja.map(c => {
+        let m = parseFloat(c.monto)||0;
+        let esI = ['Caja Chica','Ingreso_Venta','Caja_Chica','Ingreso por Venta'].includes(c.categoria);
+        return `<tr>
+            <td style="padding:4px 8px;font-size:11px;">${c.categoria.replace(/_/g,' ')}</td>
+            <td style="padding:4px 8px;font-size:11px;">${c.operador||'—'}</td>
+            <td style="padding:4px 8px;font-size:11px;">${c.metodo_pago||'Efectivo'}</td>
+            <td style="padding:4px 8px;font-size:11px;text-align:right;color:${esI?'#16a34a':'#dc2626'}">${esI?'+':'-'} S/ ${m.toFixed(2)}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="4" style="padding:8px;text-align:center;color:#9ca3af;font-size:11px;">Sin movimientos de caja.</td></tr>';
+
+    let printDiv = document.getElementById('print-cierre');
+    printDiv.innerHTML = `
+    <div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;">
+        <div style="text-align:center;margin-bottom:20px;border-bottom:3px solid #56070c;padding-bottom:16px;">
+            <div style="background:#56070c;color:white;display:inline-block;padding:8px 20px;border-radius:8px;font-weight:900;font-size:18px;letter-spacing:1px;margin-bottom:8px;">CIERRE DEL DÍA</div>
+            <p style="font-size:13px;color:#374151;font-weight:700;margin:4px 0;">${hoy} · Corte: ${horaCorte}</p>
+            <p style="font-size:12px;color:#6b7280;margin:0;">Operador: <b>${myOpName||'—'}</b></p>
+        </div>
+
+        <h3 style="color:#56070c;font-size:13px;font-weight:900;text-transform:uppercase;margin:16px 0 8px;border-left:4px solid #56070c;padding-left:8px;">Operaciones del día</h3>
+        ${opsHtml}
+
+        <h3 style="color:#56070c;font-size:13px;font-weight:900;text-transform:uppercase;margin:16px 0 8px;border-left:4px solid #56070c;padding-left:8px;">Pases del día</h3>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            <thead><tr style="background:#fdf2f2;font-size:10px;color:#56070c;font-weight:700;text-transform:uppercase;">
+                <th style="padding:5px 8px;text-align:left;">Contacto origen</th>
+                <th style="padding:5px 8px;text-align:left;">Aliado destino</th>
+                <th style="padding:5px 8px;text-align:center;">PAX</th>
+            </tr></thead>
+            <tbody>${pasesHtmlPrint}</tbody>
+        </table>
+
+        <h3 style="color:#56070c;font-size:13px;font-weight:900;text-transform:uppercase;margin:16px 0 8px;border-left:4px solid #56070c;padding-left:8px;">Movimientos de caja</h3>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            <thead><tr style="background:#fdf2f2;font-size:10px;color:#56070c;font-weight:700;text-transform:uppercase;">
+                <th style="padding:5px 8px;text-align:left;">Categoría</th>
+                <th style="padding:5px 8px;text-align:left;">Operador</th>
+                <th style="padding:5px 8px;text-align:left;">Método</th>
+                <th style="padding:5px 8px;text-align:right;">Monto</th>
+            </tr></thead>
+            <tbody>${cajaHtmlPrint}</tbody>
+        </table>
+
+        <div style="background:#56070c;color:white;padding:16px;border-radius:12px;display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <p style="font-size:10px;opacity:.7;font-weight:700;text-transform:uppercase;margin:0 0 4px;">Total a entregar</p>
+                <p style="font-size:28px;font-weight:900;margin:0;">S/ ${(ingresos - salidas).toFixed(2)}</p>
+            </div>
+            <div style="text-align:right;font-size:11px;opacity:.8;">
+                <p style="margin:0;">+ S/${ingresos.toFixed(2)} entradas</p>
+                <p style="margin:0;">− S/${salidas.toFixed(2)} salidas</p>
+            </div>
+        </div>
+        <p style="font-size:10px;color:#9ca3af;text-align:center;margin-top:12px;">Generado por OperacionesPS · ${new Date().toLocaleString('es-PE')}</p>
+    </div>`;
+
+    // Anular ops pendientes en background
+    ops.filter(op => op.estado === 'Abierta').forEach(op => {
+        fetchPostBg('cerrar_operacion', { id_operacion: op.id, creador: myOpName });
+    });
+
+    setTimeout(() => {
+        window.print();
+        setTimeout(() => { printDiv.innerHTML = ''; fetchDashboardDataBg(); }, 2000);
+    }, 300);
 }
 
 function verDetallePase(idx) {
