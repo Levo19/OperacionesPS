@@ -1356,7 +1356,8 @@ function onCajaCategoriaChange() {
         sel.innerHTML = '<option value="">— Seleccionar —</option>';
         let contactos = window.contactosData || [];
         if (cat === 'Cobro') {
-            contactos.forEach(c => {
+            // Excluir aliados — ellos manejan pases, no cobros en efectivo
+            contactos.filter(c => !(c.tipo||'').toLowerCase().includes('aliado')).forEach(c => {
                 let opt = document.createElement('option');
                 opt.value = c.nombre; opt.dataset.id = c.id; opt.textContent = c.nombre + (c.tipo ? ' · ' + c.tipo : '');
                 sel.appendChild(opt);
