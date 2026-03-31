@@ -25,6 +25,7 @@ function doPost(e) {
     else if (action === 'registrar_movimiento_pax') { return jsonResponse(registrarMovimientoPax(data.payload)); }
     else if (action === 'editar_movimiento_pax')    { return jsonResponse(editarMovimientoPax(data.payload)); }
     else if (action === 'registrar_caja')           { return jsonResponse(registrarCaja(data.payload)); }
+    else if (action === 'registrar_transaccion')    { return jsonResponse(registrarTransaccion(data.payload)); }
     else if (action === 'cerrar_operacion')         { return jsonResponse(cerrarOperacion(data.payload)); }
     else if (action === 'abrir_operacion')          { return jsonResponse(abrirOperacion(data.payload)); }
     else if (action === 'asignar_reserva')          { return jsonResponse(asignarReserva(data.payload)); }
@@ -175,15 +176,24 @@ function getDashboardData() {
       creado_por: r.usuario || ''   // FIX: columna real en la hoja
     }));
 
-  // FIX #8: usar formatTimestamp para conservar la hora
-  const movimientosCaja = sheetToJSON('Caja_Operador').map(c => ({
-    id: c.id_transaccion,
-    categoria: c.categoria,
-    metodo_pago: c.metodo_pago,
-    operador: c.operador_caja,
-    monto: parseFloat(c.monto)||0,
-    timestamp: formatTimestamp(c.timestamp_transaccion)
-  }));
+  // Caja_Operador: nueva estructura positional
+  // cols: 0=id_transaccion 1=id_operacion 2=Id_Contacto 3=categoria 4=monto
+  //        5=metodo_pago 6=comentarios 7=foto_comprobante_url 8=operador_caja 9=timestamp
+  const movimientosCaja = sheetToJSON('Caja_Operador').map(c => {
+    let v = Object.values(c);
+    return {
+      id:           v[0] || '',
+      id_operacion: v[1] || '',
+      id_contacto:  v[2] || '',
+      categoria:    v[3] || '',
+      monto:        parseFloat(v[4]) || 0,
+      metodo_pago:  v[5] || '',
+      comentarios:  v[6] || '',
+      foto_url:     v[7] || '',
+      operador:     v[8] || '',
+      timestamp:    formatTimestamp(v[9])
+    };
+  });
 
   // Pases del día: movimientos con estado 'Pasado' del día de hoy
   const hoy = new Date();
@@ -389,22 +399,51 @@ function asignarReserva(payload) {
   return { message: '✅ Pasajeros asignados al Bote.' };
 }
 
-function registrarCaja(payload) {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sheet = ss.getSheetByName('Caja_Operador');
-  const newId = 'TX-' + Date.now().toString().slice(-6);
-  sheet.appendRow([newId, '', '', payload.categoria, payload.monto, payload.metodo_pago, '', payload.operador, new Date()]);
-  SpreadsheetApp.flush();
-  return { message: 'Caja actualizada', id_transaccion: newId };
-}
+// Deprecado — mantenido por compatibilidad
+function registrarCaja(payload) { return registrarTransaccion(payload); }
+function registrarCajaV2(payload) { return registrarTransaccion(payload); }
 
-function registrarCajaV2(payload) {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sheet = ss.getSheetByName('Caja_Operador');
-  const newId = 'TX-' + Date.now().toString().slice(-6);
-  sheet.appendRow([newId, payload.referencia || '', '', payload.categoria, payload.monto, payload.metodo_pago, '', payload.operador, new Date()]);
-  SpreadsheetApp.flush();
-  return { message: '✅ Transacción registrada en Caja.' };
+// Nueva estructura Caja_Operador:
+// id_transaccion | id_operacion | Id_Contacto | categoria | monto | metodo_pago | comentarios | foto_comprobante_url | operador_caja | timestamp
+// payload: { id_operacion, id_contacto, categoria, monto, metodo_pago, comentarios, foto_base64, operador }
+function registrarTransaccion(payload) {
+  try {
+    const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName('Caja_Operador');
+    const newId = 'TX-' + Date.now().toString().slice(-6);
+
+    // Subir foto comprobante a Drive/Comprobantes si se proveyó
+    let fotoUrl = '';
+    if (payload.foto_base64) {
+      let base64 = payload.foto_base64.replace(/^data:image\/\w+;base64,/, '');
+      if (base64) {
+        let hoy      = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+        let filename = hoy + ' ' + newId + '.jpg';
+        let blob     = Utilities.newBlob(Utilities.base64Decode(base64), 'image/jpeg', filename);
+        let folder   = getOrCreateSubfolder('Comprobantes');
+        let file     = folder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        fotoUrl = 'https://drive.google.com/uc?id=' + file.getId();
+      }
+    }
+
+    sheet.appendRow([
+      newId,
+      payload.id_operacion  || '',
+      payload.id_contacto   || '',
+      payload.categoria     || 'Cobro',
+      parseFloat(payload.monto) || 0,
+      payload.metodo_pago   || 'Efectivo',
+      payload.comentarios   || '',
+      fotoUrl,
+      payload.operador      || '',
+      new Date()
+    ]);
+    SpreadsheetApp.flush();
+    return { message: '✅ Transacción registrada.', id_transaccion: newId, foto_url: fotoUrl };
+  } catch(e) {
+    return { status: 'error', message: e.toString() };
+  }
 }
 
 function derivarPase(payload) {
@@ -503,22 +542,38 @@ function cerrarOperacion(payload) {
   return { status: 'error', message: '❌ Operación no encontrada.' };
 }
 
-// Guardar foto de zarpe (base64) en Drive y URL en Operaciones col 10
+// Helper: obtiene (o crea) una subcarpeta por nombre dentro de la carpeta del Spreadsheet
+function getOrCreateSubfolder(nombreCarpeta) {
+  const ss         = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const fileId     = ss.getId();
+  const ssFile     = DriveApp.getFileById(fileId);
+  const parentIter = ssFile.getParents();
+  const parent     = parentIter.hasNext() ? parentIter.next() : DriveApp.getRootFolder();
+  const existing   = parent.getFoldersByName(nombreCarpeta);
+  return existing.hasNext() ? existing.next() : parent.createFolder(nombreCarpeta);
+}
+
+// Guardar foto de zarpe (base64) en Drive/Zarpes y URL en Operaciones col 10
+// payload: { id_operacion, foto_base64, hora_salida }
 function subirFotoZarpe(payload) {
   try {
     const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = ss.getSheetByName('Operaciones');
     const data  = sheet.getDataRange().getValues();
 
-    // Extraer base64 puro (quitar prefijo data:image/...;base64,)
     let base64 = (payload.foto_base64 || '').replace(/^data:image\/\w+;base64,/, '');
     if(!base64) return { status: 'error', message: 'Sin imagen.' };
 
-    let blob    = Utilities.newBlob(Utilities.base64Decode(base64), 'image/jpeg', 'zarpe_' + payload.id_operacion + '.jpg');
-    let folder  = DriveApp.getRootFolder(); // guarda en raíz de Drive del script
-    let file    = folder.createFile(blob);
+    // Nombre: [fecha] [hora_salida] [id_operacion]
+    let hoy      = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    let horaNorm = (payload.hora_salida || '').replace(/:/g, '-') || 'sin-hora';
+    let filename = hoy + ' ' + horaNorm + ' ' + (payload.id_operacion || 'OP') + '.jpg';
+
+    let blob   = Utilities.newBlob(Utilities.base64Decode(base64), 'image/jpeg', filename);
+    let folder = getOrCreateSubfolder('Zarpes');
+    let file   = folder.createFile(blob);
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    let url     = 'https://drive.google.com/uc?id=' + file.getId();
+    let url    = 'https://drive.google.com/uc?id=' + file.getId();
 
     for (let i = 1; i < data.length; i++) {
       if (data[i][0] === payload.id_operacion) {

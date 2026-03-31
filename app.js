@@ -425,28 +425,38 @@ function renderCaja(caja) {
     let ingresos = 0, salidas = 0;
     let comisionadosMap = {};
 
+    // Categorías que son ingresos: Cobro, Varios-ingreso (modo ingreso), legacy
+    let CATS_INGRESO = ['Cobro', 'Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'];
+    // Categorías que son salidas: Pagos, Varios-salida, legacy
+    let CATS_SALIDA  = ['Pagos', 'Pago_Comisionado', 'Pago Comisionado', 'Retiro_Jefatura', 'Retiro a Jefatura'];
+
     let historialHtml = txHoy.map(c => {
         let monto = parseFloat(c.monto) || 0;
-        let esIngreso = ['Caja Chica','Ingreso por Venta','Ingreso_Venta','Caja_Chica'].includes(c.categoria);
-        let isPase    = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
-        let esComision = c.categoria === 'Pago_Comisionado' || c.categoria === 'Pago Comisionado';
-
-        if(!isPase) { if(esIngreso) ingresos += monto; else salidas += monto; }
-        if(esComision && c.operador) {
-            if(!comisionadosMap[c.operador]) comisionadosMap[c.operador] = 0;
-            comisionadosMap[c.operador] += monto;
+        let isPase = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
+        // Varios: detectar si es ingreso o salida por el campo modo guardado en comentarios (prefijo "[I]"/["S]")
+        // Si no hay prefijo, asumir ingreso para Varios (retrocompatibilidad)
+        let esIngreso, esSalida;
+        if (c.categoria === 'Varios') {
+            esSalida  = (c.comentarios || '').startsWith('[S]');
+            esIngreso = !esSalida;
+        } else {
+            esIngreso = CATS_INGRESO.includes(c.categoria);
+            esSalida  = CATS_SALIDA.includes(c.categoria);
         }
+        if (!isPase) { if (esIngreso) ingresos += monto; else if (esSalida) salidas += monto; }
 
         let colorText = isPase ? 'text-purple-600' : (esIngreso ? 'text-green-600' : 'text-red-600');
         let signo     = isPase ? '🤝' : (esIngreso ? '+' : '-');
+        let dotColor  = isPase ? 'text-purple-400' : (esIngreso ? 'text-green-400' : 'text-red-400');
         let hora      = c.timestamp ? new Date(c.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '—';
+        let catLabel  = c.categoria === 'Varios' ? ('Varios · ' + (c.comentarios||'').replace(/^\[.\] ?/,'').substring(0,30)) : c.categoria.replace(/_/g,' ');
         return `
         <div class="flex justify-between items-center p-3.5 cursor-pointer hover:bg-gray-50 transition active:scale-95" onclick="abrirDetalleCaja('${c.id}')">
-            <div>
-                <span class="text-xs font-extrabold text-gray-800 block"><i class="fas fa-circle text-[7px] ${esIngreso?'text-green-400':'text-red-400'} mr-1.5"></i>${c.categoria.replace(/_/g,' ')}</span>
+            <div class="flex-1 min-w-0 pr-2">
+                <span class="text-xs font-extrabold text-gray-800 block truncate"><i class="fas fa-circle text-[7px] ${dotColor} mr-1.5"></i>${catLabel}</span>
                 <span class="text-[10px] text-gray-400 font-bold">${hora} · ${c.metodo_pago||'Efectivo'} · ${c.operador||''}</span>
             </div>
-            <span class="font-black text-sm ${colorText}">${signo} S/${monto.toFixed(2)}</span>
+            <span class="font-black text-sm ${colorText} shrink-0">${signo} S/${monto.toFixed(2)}</span>
         </div>`;
     }).join('') || '<div class="text-center p-6 text-gray-400 text-sm font-bold">No hay movimientos hoy.</div>';
 
@@ -746,7 +756,7 @@ function generarListaHTML(manifiesto) {
         // Botones: Cobrar (no aliado), Adicionales (solo agencia), Pasar (no pase out), X (todos)
         let subBtns = (isSelected && !isSyncing) ? `
         <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
-            ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('Ingreso_Venta', '${m.id}', ${m.monto}); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar</button>` : ''}
+            ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('cobro_directo', { id_operacion: document.getElementById('hidden-gestion-op').value, id_contacto: '${m.contacto}', nombre_contacto: '${(m.nombreContacto||m.contacto||'').replace(/'/g,"\\'")}', monto: ${m.monto||0}, bloqueado: false }); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar</button>` : ''}
             ${isAgencia ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
             ${m.tipo !== 'Aliado(PaseOut)' ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
             <button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>
@@ -1272,28 +1282,154 @@ function confirmarAsignacion() {
 }
 
 // Extras CRM
-function abrirModalCaja(tipo, id_ref = '', propMonto = '') {
-    document.getElementById('caja-categoria').value = tipo;
-    document.getElementById('caja-id-referencia').value = id_ref;
-    document.getElementById('caja-monto').value = propMonto;
-    
-    // Forzar deshabilitar categoria si es Ingreso por Venta
-    let catEl = document.getElementById('caja-categoria');
-    if(tipo === 'Ingreso_Venta') { catEl.setAttribute('disabled', 'true'); } else { catEl.removeAttribute('disabled'); }
+// modo: 'ingreso' | 'salida' | 'cobro_directo'
+// opts: { id_operacion, id_contacto, nombre_contacto, monto, bloqueado }
+function abrirModalCaja(modo, opts = {}) {
+    let titulo = document.getElementById('titulo-modal-caja');
+    let desc   = document.getElementById('desc-modal-caja');
+    let btnOk  = document.getElementById('btn-confirmar-caja');
 
+    document.getElementById('caja-modo').value             = modo;
+    document.getElementById('caja-id-operacion').value     = opts.id_operacion || '';
+    document.getElementById('caja-id-contacto-hidden').value = opts.id_contacto || '';
+    document.getElementById('caja-monto').value            = opts.monto || '';
+    document.getElementById('caja-comentarios').value      = '';
+    document.getElementById('comprobante-foto-camara').value  = '';
+    document.getElementById('comprobante-foto-galeria').value = '';
+    document.getElementById('comprobante-foto-preview').innerHTML = '<span class="text-xs text-gray-400">Sin foto</span>';
+    document.getElementById('comprobante-foto-nombre').classList.add('hidden');
+
+    let catSel = document.getElementById('caja-categoria');
+
+    if (modo === 'ingreso') {
+        titulo.innerHTML = '<i class="fas fa-plus-circle text-green-500 mr-2"></i> Registrar Ingreso';
+        desc.textContent = 'Cobros del día o ingresos varios.';
+        btnOk.className  = btnOk.className.replace(/bg-\w+-\d+/g,'') + ' bg-green-500 hover:bg-green-600';
+        catSel.innerHTML = `
+            <option value="Cobro">💰 Cobro (Agencia / Libre / Comisionado)</option>
+            <option value="Varios">🔀 Varios</option>`;
+        catSel.removeAttribute('disabled');
+    } else if (modo === 'salida') {
+        titulo.innerHTML = '<i class="fas fa-minus-circle text-red-500 mr-2"></i> Registrar Salida';
+        desc.textContent = 'Pagos a comisionados u otros egresos.';
+        btnOk.className  = btnOk.className.replace(/bg-\w+-\d+/g,'') + ' bg-red-500 hover:bg-red-600';
+        catSel.innerHTML = `
+            <option value="Pagos">🤝 Pagos (Comisionados)</option>
+            <option value="Varios">🔀 Varios</option>`;
+        catSel.removeAttribute('disabled');
+    } else {
+        // cobro_directo: desde botón "Cobrar" en el manifiesto
+        titulo.innerHTML = '<i class="fas fa-money-bill-wave text-green-500 mr-2"></i> Cobrar';
+        desc.textContent = opts.nombre_contacto ? `Cobro a ${opts.nombre_contacto}` : 'Registrar cobro.';
+        btnOk.className  = btnOk.className.replace(/bg-\w+-\d+/g,'') + ' bg-green-500 hover:bg-green-600';
+        catSel.innerHTML = `<option value="Cobro">💰 Cobro</option>`;
+        catSel.setAttribute('disabled', 'true');
+    }
+
+    onCajaCategoriaChange();
+    // Pre-seleccionar contacto si viene en opts
+    if (opts.id_contacto) {
+        let sel = document.getElementById('caja-select-contacto');
+        for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].dataset.id === opts.id_contacto) { sel.selectedIndex = i; break; }
+        }
+        document.getElementById('caja-id-contacto-hidden').value = opts.id_contacto;
+    }
+    if (opts.bloqueado) {
+        document.getElementById('caja-select-contacto').setAttribute('disabled','true');
+    }
     abrirModal('modal-caja');
 }
 
-function confirmarCaja() {
-    let cat = document.getElementById('caja-categoria').value;
-    let monto = document.getElementById('caja-monto').value;
-    let metodo = document.getElementById('caja-metodo').value;
-    let ref = document.getElementById('caja-id-referencia').value;
+// Actualiza la UI cuando cambia la categoría
+function onCajaCategoriaChange() {
+    let modo = document.getElementById('caja-modo').value;
+    let cat  = document.getElementById('caja-categoria').value;
 
-    if(!monto || isNaN(monto) || monto <= 0) return alert('Ingresa un monto válido.');
-    
-    cerrarSubModal('modal-caja'); toggleSpinner(true);
-    fetchPost('registrar_caja_v2', { categoria: cat, monto: parseFloat(monto), metodo_pago: metodo, referencia: ref, operador: myOpName }).then(() => fetchDashboardData());
+    let contactoRow  = document.getElementById('caja-contacto-row');
+    let comentReq    = document.getElementById('caja-comentarios-req');
+    let sel          = document.getElementById('caja-select-contacto');
+
+    // Mostrar selector de contacto en Cobro o Pagos
+    if (cat === 'Cobro' || cat === 'Pagos') {
+        contactoRow.classList.remove('hidden');
+        sel.innerHTML = '<option value="">— Seleccionar —</option>';
+        let contactos = window.contactosData || [];
+        if (cat === 'Cobro') {
+            contactos.forEach(c => {
+                let opt = document.createElement('option');
+                opt.value = c.nombre; opt.dataset.id = c.id; opt.textContent = c.nombre + (c.tipo ? ' · ' + c.tipo : '');
+                sel.appendChild(opt);
+            });
+        } else {
+            // Pagos: solo comisionados
+            contactos.filter(c => (c.tipo||'').toLowerCase().includes('comisionado')).forEach(c => {
+                let opt = document.createElement('option');
+                opt.value = c.nombre; opt.dataset.id = c.id; opt.textContent = c.nombre;
+                sel.appendChild(opt);
+            });
+        }
+        sel.removeAttribute('disabled');
+    } else {
+        contactoRow.classList.add('hidden');
+    }
+
+    // Comentarios obligatorios en Varios
+    if (cat === 'Varios') { comentReq.classList.remove('hidden'); }
+    else { comentReq.classList.add('hidden'); }
+}
+
+function onCajaContactoChange() {
+    let sel = document.getElementById('caja-select-contacto');
+    let opt = sel.options[sel.selectedIndex];
+    document.getElementById('caja-id-contacto-hidden').value = opt?.dataset?.id || '';
+}
+
+function confirmarCaja() {
+    let modo      = document.getElementById('caja-modo').value;
+    let cat       = document.getElementById('caja-categoria').value;
+    let monto     = document.getElementById('caja-monto').value;
+    let metodo    = document.getElementById('caja-metodo').value;
+    let comentario= document.getElementById('caja-comentarios').value.trim();
+    let idOp      = document.getElementById('caja-id-operacion').value;
+    let idContacto= document.getElementById('caja-id-contacto-hidden').value;
+
+    if (!monto || isNaN(monto) || parseFloat(monto) <= 0) { alert('Ingresa un monto válido.'); return; }
+    if (cat === 'Varios' && !comentario) { alert('El campo "Comentarios" es obligatorio para movimientos varios.'); return; }
+
+    // Prefixar comentarios de Varios con [I] o [S] para identificar dirección
+    if (cat === 'Varios') {
+        comentario = (modo === 'salida' ? '[S] ' : '[I] ') + comentario;
+    }
+
+    // Leer foto comprobante si existe
+    let camFile = document.getElementById('comprobante-foto-camara').files[0];
+    let galFile = document.getElementById('comprobante-foto-galeria').files[0];
+    let fotoFile = camFile || galFile;
+
+    cerrarSubModal('modal-caja');
+    toggleSpinner(true);
+
+    function enviar(foto_base64) {
+        fetchPost('registrar_transaccion', {
+            id_operacion: idOp,
+            id_contacto:  idContacto,
+            categoria:    cat,
+            monto:        parseFloat(monto),
+            metodo_pago:  metodo,
+            comentarios:  comentario,
+            foto_base64:  foto_base64 || '',
+            operador:     myOpName
+        }).then(() => fetchDashboardData());
+    }
+
+    if (fotoFile) {
+        let reader = new FileReader();
+        reader.onload = e => enviar(e.target.result);
+        reader.readAsDataURL(fotoFile);
+    } else {
+        enviar('');
+    }
 }
 
 function eliminarMovimiento(id_mov, pax) {
@@ -1433,18 +1569,25 @@ function confirmarDerivacion() {
     });
 }
 
+function _esIngresoCaja(tx) {
+    let CATS_INGRESO = ['Cobro', 'Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'];
+    let CATS_SALIDA  = ['Pagos', 'Pago_Comisionado', 'Pago Comisionado', 'Retiro_Jefatura', 'Retiro a Jefatura'];
+    if (tx.categoria === 'Varios') return !(tx.comentarios||'').startsWith('[S]');
+    return CATS_INGRESO.includes(tx.categoria);
+}
+
 function abrirDetalleCaja(id_tx) {
     let tx = window.cajaData.find(c => c.id === id_tx);
     if(!tx) return;
-    
-    let esIngreso = ['Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'].includes(tx.categoria);
-    let isPase = tx.metodo_pago === 'Pase_Canje' || tx.metodo_pago === 'Pase / Canje';
-    
-    let icono = document.getElementById('detalle-caja-icono');
+
+    let isPase    = tx.metodo_pago === 'Pase_Canje' || tx.metodo_pago === 'Pase / Canje';
+    let esIngreso = _esIngresoCaja(tx);
+
+    let icono  = document.getElementById('detalle-caja-icono');
     let boxCat = document.getElementById('detalle-caja-cat');
-    let signo = isPase ? '🤝' : (esIngreso ? '+' : '-');
-    
-    if(isPase) {
+    let signo  = isPase ? '🤝' : (esIngreso ? '+' : '-');
+
+    if (isPase) {
         icono.className = 'w-16 h-16 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center mx-auto mb-3 text-2xl shadow-inner';
         icono.innerHTML = '<i class="fas fa-handshake"></i>';
     } else if (esIngreso) {
@@ -1457,12 +1600,13 @@ function abrirDetalleCaja(id_tx) {
 
     document.getElementById('detalle-caja-monto').innerText = signo + ' S/ ' + parseFloat(tx.monto).toFixed(2);
     document.getElementById('detalle-caja-fecha').innerText = new Date(tx.timestamp).toLocaleString();
-    
-    document.getElementById('detalle-caja-id').innerText = tx.id;
-    boxCat.innerText = tx.categoria.replace('_', ' ');
+    document.getElementById('detalle-caja-id').innerText    = tx.id;
+    boxCat.innerText = (tx.categoria === 'Varios'
+        ? 'Varios · ' + (tx.comentarios||'').replace(/^\[.\] ?/,'')
+        : tx.categoria.replace(/_/g,' '));
     document.getElementById('detalle-caja-metodo').innerText = tx.metodo_pago || 'Efectivo';
-    document.getElementById('detalle-caja-op').innerText = tx.operador || 'Sistema';
-    
+    document.getElementById('detalle-caja-op').innerText     = tx.operador || 'Sistema';
+
     abrirModal('modal-detalle-caja');
 }
 
@@ -1632,44 +1776,46 @@ function confirmarEditarOp() {
 // ==========================
 function abrirModalZarpeFoto(id_op) {
     let op = window.operacionesData.find(o => o.id === id_op);
-    document.getElementById('hidden-zarpe-op-id').value    = id_op;
+    document.getElementById('hidden-zarpe-op-id').value     = id_op;
+    document.getElementById('hidden-zarpe-hora').value      = op ? (op.hora_salida || '') : '';
     document.getElementById('zarpe-foto-op-id').textContent = id_op + (op ? ' · ' + op.bote : '');
     document.getElementById('zarpe-foto-nombre').classList.add('hidden');
-    document.getElementById('zarpe-foto-input').value = '';
-    document.getElementById('zarpe-foto-preview').innerHTML = `
-        <i class="fas fa-camera text-4xl text-gray-300 mb-2 block"></i>
-        <p class="text-sm font-bold text-gray-600">Toca para seleccionar foto</p>
-        <p class="text-xs text-gray-400 mt-1">JPG, PNG — opcional</p>`;
+    document.getElementById('zarpe-foto-camara').value  = '';
+    document.getElementById('zarpe-foto-galeria').value = '';
+    document.getElementById('zarpe-foto-preview').innerHTML = '<span class="text-sm text-gray-400 font-bold">Sin foto seleccionada</span>';
     abrirModal('modal-zarpe-foto');
 }
 
-function previsualizarFotoZarpe(input) {
+// Usado por zarpe (prefijo='zarpe') y comprobante (prefijo='comprobante')
+function previsualizarFotoZarpe(input, prefijo) {
     let file = input.files[0];
     if(!file) return;
+    let previewId = prefijo === 'zarpe' ? 'zarpe-foto-preview' : 'comprobante-foto-preview';
+    let nombreId  = prefijo === 'zarpe' ? 'zarpe-foto-nombre'  : 'comprobante-foto-nombre';
     let reader = new FileReader();
     reader.onload = e => {
-        document.getElementById('zarpe-foto-preview').innerHTML =
+        document.getElementById(previewId).innerHTML =
             `<img src="${e.target.result}" class="w-full max-h-40 object-cover rounded-xl">`;
-        let label = document.getElementById('zarpe-foto-nombre');
-        label.textContent = '✅ ' + file.name;
-        label.classList.remove('hidden');
+        let label = document.getElementById(nombreId);
+        if(label) { label.textContent = '✅ ' + file.name; label.classList.remove('hidden'); }
     };
     reader.readAsDataURL(file);
 }
 
 function confirmarFotoZarpe() {
     let id_op = document.getElementById('hidden-zarpe-op-id').value;
-    let input = document.getElementById('zarpe-foto-input');
-    let file  = input.files[0];
+    let hora  = document.getElementById('hidden-zarpe-hora').value;
+    // Priorizar cámara, luego galería
+    let inputCam = document.getElementById('zarpe-foto-camara');
+    let inputGal = document.getElementById('zarpe-foto-galeria');
+    let file = (inputCam.files[0]) || (inputGal.files[0]);
 
     cerrarSubModal('modal-zarpe-foto');
-
     if(!file) { mostrarToast('Sin foto seleccionada.', 'error'); return; }
 
     let reader = new FileReader();
     reader.onload = e => {
-        let base64 = e.target.result; // data:image/...;base64,...
-        fetchPostBg('subir_foto_zarpe', { id_operacion: id_op, foto_base64: base64, creador: myOpName })
+        fetchPostBg('subir_foto_zarpe', { id_operacion: id_op, hora_salida: hora, foto_base64: e.target.result, creador: myOpName })
             .then(res => {
                 if(res.status === 'error') mostrarToast('Error al subir foto.', 'error');
                 else mostrarToast('✅ Foto de zarpe guardada.');
@@ -1694,9 +1840,8 @@ function generarCierreDelDia() {
     let ingresos = 0, salidas = 0;
     caja.forEach(c => {
         let m = parseFloat(c.monto)||0;
-        let esIngreso = ['Caja Chica','Ingreso_Venta','Caja_Chica','Ingreso por Venta'].includes(c.categoria);
-        let isPase    = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
-        if(!isPase) { if(esIngreso) ingresos += m; else salidas += m; }
+        let isPase = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
+        if(!isPase) { if(_esIngresoCaja(c)) ingresos += m; else salidas += m; }
     });
 
     // Resumen por operación
@@ -1744,10 +1889,13 @@ function generarCierreDelDia() {
 
     // Historial caja
     let cajaHtmlPrint = caja.map(c => {
-        let m = parseFloat(c.monto)||0;
-        let esI = ['Caja Chica','Ingreso_Venta','Caja_Chica','Ingreso por Venta'].includes(c.categoria);
+        let m   = parseFloat(c.monto)||0;
+        let esI = _esIngresoCaja(c);
+        let catLabel = c.categoria === 'Varios'
+            ? 'Varios · ' + (c.comentarios||'').replace(/^\[.\] ?/,'').substring(0,40)
+            : c.categoria.replace(/_/g,' ');
         return `<tr>
-            <td style="padding:4px 8px;font-size:11px;">${c.categoria.replace(/_/g,' ')}</td>
+            <td style="padding:4px 8px;font-size:11px;">${catLabel}</td>
             <td style="padding:4px 8px;font-size:11px;">${c.operador||'—'}</td>
             <td style="padding:4px 8px;font-size:11px;">${c.metodo_pago||'Efectivo'}</td>
             <td style="padding:4px 8px;font-size:11px;text-align:right;color:${esI?'#16a34a':'#dc2626'}">${esI?'+':'-'} S/ ${m.toFixed(2)}</td>

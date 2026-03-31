@@ -297,32 +297,41 @@
         </div>
     </div>
 
-    <!-- Modal Caja 2.0 -->
+    <!-- Modal Caja 3.0 -->
     <div id="modal-caja" class="fixed inset-x-0 bottom-0 top-16 md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-[90%] md:max-w-sm bg-white rounded-t-3xl md:rounded-3xl p-5 z-40 hidden shadow-2xl flex flex-col transition-transform">
-        <h3 class="font-extrabold text-xl text-blue-900 mb-1 shrink-0" id="titulo-modal-caja"><i class="fas fa-wallet text-green-500 mr-2"></i> Transacción</h3>
-        <p class="text-[11px] text-gray-500 mb-4 leading-snug shrink-0" id="desc-modal-caja">Registra un movimiento de dinero o pase.</p>
-        
-        <input type="hidden" id="caja-id-referencia">
-        
+        <h3 class="font-extrabold text-xl mb-1 shrink-0" id="titulo-modal-caja"><i class="fas fa-wallet mr-2"></i> Registrar</h3>
+        <p class="text-[11px] text-gray-500 mb-3 leading-snug shrink-0" id="desc-modal-caja"></p>
+
+        <input type="hidden" id="caja-modo">          <!-- ingreso | salida | cobro_directo -->
+        <input type="hidden" id="caja-id-operacion">
+        <input type="hidden" id="caja-id-contacto-hidden">
+
         <div class="space-y-3 overflow-y-auto flex-1 px-1 pb-2">
+            <!-- Categoría -->
             <div>
                 <label class="text-[10px] font-bold text-gray-700 uppercase tracking-widest block mb-1">Categoría</label>
-                <select id="caja-categoria" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm font-bold text-gray-800 shadow-inner outline-none focus:border-blue-400">
-                    <option value="Ingreso_Venta">🛒 Ingreso por Venta</option>
-                    <option value="Caja_Chica">⬇️ Caja Chica / Recepción</option>
-                    <option value="Retiro_Jefatura">⬆️ Retiro a Jefatura</option>
+                <select id="caja-categoria" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm font-bold text-gray-800 shadow-inner outline-none" onchange="onCajaCategoriaChange()">
                 </select>
             </div>
-            
+
+            <!-- Contacto (para Cobro y Pagos) -->
+            <div id="caja-contacto-row" class="hidden">
+                <label class="text-[10px] font-bold text-gray-700 uppercase tracking-widest block mb-1">Contacto</label>
+                <select id="caja-select-contacto" class="w-full bg-white border border-gray-200 rounded-xl p-3 text-[11px] font-bold text-gray-800 shadow-sm outline-none" onchange="onCajaContactoChange()">
+                    <option value="">— Seleccionar —</option>
+                </select>
+            </div>
+
+            <!-- Monto + Método -->
             <div class="flex space-x-2">
                 <div class="flex-1 relative">
-                    <label class="text-[10px] font-bold text-gray-700 uppercase tracking-widest block mb-1 text-center">Monto o Valor</label>
+                    <label class="text-[10px] font-bold text-gray-700 uppercase tracking-widest block mb-1 text-center">Monto</label>
                     <span class="absolute left-3 top-8 text-gray-500 font-black">S/</span>
-                    <input type="number" id="caja-monto" class="w-full bg-white border border-gray-200 rounded-xl p-3 pl-8 text-xl font-black text-center text-gray-800 focus:outline-blue-500 shadow-sm" placeholder="0.00">
+                    <input type="number" id="caja-monto" class="w-full bg-white border border-gray-200 rounded-xl p-3 pl-8 text-xl font-black text-center text-gray-800 focus:outline-none shadow-sm" placeholder="0.00" min="0" step="0.50">
                 </div>
                 <div class="flex-1">
                     <label class="text-[10px] font-bold text-gray-700 uppercase tracking-widest block mb-1">Método</label>
-                    <select id="caja-metodo" class="w-full bg-white border border-gray-200 rounded-xl p-3 text-[11px] font-bold text-gray-800 shadow-sm outline-none focus:border-blue-400">
+                    <select id="caja-metodo" class="w-full bg-white border border-gray-200 rounded-xl p-3 text-[11px] font-bold text-gray-800 shadow-sm outline-none">
                         <option value="Efectivo">💵 Efectivo</option>
                         <option value="Yape_Plin">📱 Yape / Plin</option>
                         <option value="Transferencia">🏦 Transf.</option>
@@ -330,11 +339,38 @@
                     </select>
                 </div>
             </div>
+
+            <!-- Comentarios (obligatorio en Varios) -->
+            <div id="caja-comentarios-row">
+                <label class="text-[10px] font-bold text-gray-700 uppercase tracking-widest block mb-1">
+                    Comentarios <span id="caja-comentarios-req" class="text-red-500 hidden">*obligatorio</span>
+                </label>
+                <textarea id="caja-comentarios" rows="2" class="w-full bg-white border border-gray-200 rounded-xl p-3 text-xs font-bold text-gray-800 shadow-sm outline-none resize-none" placeholder="Descripción del movimiento..."></textarea>
+            </div>
+
+            <!-- Foto comprobante -->
+            <div>
+                <label class="text-[10px] font-bold text-gray-700 uppercase tracking-widest block mb-1">Foto comprobante <span class="text-gray-400 font-normal">(opcional)</span></label>
+                <div id="comprobante-foto-preview" class="border-2 border-dashed border-gray-200 rounded-xl p-3 text-center min-h-[56px] flex items-center justify-center mb-2">
+                    <span class="text-xs text-gray-400">Sin foto</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button type="button" class="bg-[#fdf2f2] text-[#56070c] border border-[#f0c4c6] rounded-xl py-2 font-bold text-xs flex items-center justify-center gap-1 hover:bg-[#f9e0e1] active:scale-95 transition" onclick="document.getElementById('comprobante-foto-camara').click()">
+                        <i class="fas fa-camera"></i> Cámara
+                    </button>
+                    <button type="button" class="bg-gray-50 text-gray-600 border border-gray-200 rounded-xl py-2 font-bold text-xs flex items-center justify-center gap-1 hover:bg-gray-100 active:scale-95 transition" onclick="document.getElementById('comprobante-foto-galeria').click()">
+                        <i class="fas fa-images"></i> Galería
+                    </button>
+                </div>
+                <input type="file" id="comprobante-foto-camara"  accept="image/*" capture="environment" class="hidden" onchange="previsualizarFotoZarpe(this, 'comprobante')">
+                <input type="file" id="comprobante-foto-galeria" accept="image/*" class="hidden" onchange="previsualizarFotoZarpe(this, 'comprobante')">
+                <p id="comprobante-foto-nombre" class="text-xs text-green-600 font-bold text-center mt-1 hidden"></p>
+            </div>
         </div>
 
         <div class="flex space-x-3 mt-4 shrink-0 pt-3 border-t border-gray-100">
             <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold" onclick="cerrarSubModal('modal-caja')">Cancelar</button>
-            <button class="flex-[2] bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3.5 rounded-xl font-bold shadow-md shadow-green-500/30 transition flex items-center justify-center uppercase tracking-wide text-xs" onclick="confirmarCaja()"><i class="fas fa-bolt mr-2 text-base"></i> Registrar</button>
+            <button id="btn-confirmar-caja" class="flex-[2] bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3.5 rounded-xl font-bold shadow-md shadow-green-500/30 transition flex items-center justify-center uppercase tracking-wide text-xs" onclick="confirmarCaja()"><i class="fas fa-bolt mr-2 text-base"></i> Registrar</button>
         </div>
     </div>
 
@@ -529,13 +565,11 @@
             <!-- Sección: Historial Caja -->
             <div id="fin-historial" class="fin-section">
                 <div class="grid grid-cols-2 gap-3 mb-4">
-                    <button class="bg-green-50 text-green-700 p-4 rounded-2xl flex flex-col items-center justify-center border border-green-200 shadow-sm transition hover:bg-green-100 active:scale-95" onclick="abrirModalCaja('Caja_Chica')">
-                        <div class="bg-green-100 p-2.5 rounded-full mb-1"><i class="fas fa-plus text-lg"></i></div>
-                        <span class="font-black text-xs uppercase tracking-wider">Caja Chica</span>
+                    <button class="bg-green-50 text-green-700 p-5 rounded-2xl flex items-center justify-center border border-green-200 shadow-sm transition hover:bg-green-100 active:scale-95" onclick="abrirModalCaja('ingreso')">
+                        <i class="fas fa-plus text-2xl font-black"></i>
                     </button>
-                    <button class="bg-red-50 text-red-700 p-4 rounded-2xl flex flex-col items-center justify-center border border-red-200 shadow-sm transition hover:bg-red-100 active:scale-95" onclick="abrirModalCaja('Retiro_Jefatura')">
-                        <div class="bg-red-100 p-2.5 rounded-full mb-1"><i class="fas fa-minus text-lg"></i></div>
-                        <span class="font-black text-xs uppercase tracking-wider">Retiro</span>
+                    <button class="bg-red-50 text-red-700 p-5 rounded-2xl flex items-center justify-center border border-red-200 shadow-sm transition hover:bg-red-100 active:scale-95" onclick="abrirModalCaja('salida')">
+                        <i class="fas fa-minus text-2xl font-black"></i>
                     </button>
                 </div>
                 <h3 class="font-bold text-gray-500 mb-3 text-[11px] uppercase tracking-wider px-1">Historial del turno</h3>
@@ -558,12 +592,23 @@
         <h3 class="font-extrabold text-lg text-gray-800 mb-1"><i class="fas fa-camera text-gray-500 mr-2"></i>Foto de Zarpe</h3>
         <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-4">Operación: <span id="zarpe-foto-op-id" class="text-[#56070c]"></span></p>
         <input type="hidden" id="hidden-zarpe-op-id">
-        <div id="zarpe-foto-preview" class="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center cursor-pointer mb-4 hover:border-[#56070c] transition" onclick="document.getElementById('zarpe-foto-input').click()">
-            <i class="fas fa-camera text-4xl text-gray-300 mb-2 block"></i>
-            <p class="text-sm font-bold text-gray-600">Toca para seleccionar foto</p>
-            <p class="text-xs text-gray-400 mt-1">JPG, PNG — opcional</p>
+        <input type="hidden" id="hidden-zarpe-hora">
+        <!-- Preview -->
+        <div id="zarpe-foto-preview" class="border-2 border-dashed border-gray-300 rounded-2xl p-4 text-center mb-3 min-h-[80px] flex items-center justify-center">
+            <span class="text-sm text-gray-400 font-bold">Sin foto seleccionada</span>
         </div>
-        <input type="file" id="zarpe-foto-input" accept="image/*" capture="environment" class="hidden" onchange="previsualizarFotoZarpe(this)">
+        <!-- Botones selección -->
+        <div class="grid grid-cols-2 gap-2 mb-4">
+            <button class="bg-[#fdf2f2] text-[#56070c] border border-[#f0c4c6] rounded-xl py-3 font-bold text-xs flex flex-col items-center gap-1 hover:bg-[#f9e0e1] active:scale-95 transition" onclick="document.getElementById('zarpe-foto-camara').click()">
+                <i class="fas fa-camera text-lg"></i> Tomar Foto
+            </button>
+            <button class="bg-gray-50 text-gray-600 border border-gray-200 rounded-xl py-3 font-bold text-xs flex flex-col items-center gap-1 hover:bg-gray-100 active:scale-95 transition" onclick="document.getElementById('zarpe-foto-galeria').click()">
+                <i class="fas fa-images text-lg"></i> Galería
+            </button>
+        </div>
+        <!-- Inputs ocultos: cámara vs galería -->
+        <input type="file" id="zarpe-foto-camara"  accept="image/*" capture="environment" class="hidden" onchange="previsualizarFotoZarpe(this, 'zarpe')">
+        <input type="file" id="zarpe-foto-galeria" accept="image/*" class="hidden" onchange="previsualizarFotoZarpe(this, 'zarpe')">
         <p id="zarpe-foto-nombre" class="text-xs text-green-600 font-bold text-center mb-4 hidden"></p>
         <div class="flex space-x-3">
             <button class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-zarpe-foto')">Cancelar</button>
