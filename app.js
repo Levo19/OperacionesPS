@@ -278,14 +278,20 @@ function renderOperaciones(operaciones) {
     if(pases.length > 0) {
         let totalPaxPases = pases.reduce((s, p) => s + (parseInt(p.pax)||0), 0);
         let filas = pases.map((p, idx) => {
-            let destino = p.aliadoDestino || p.contacto || '';
-            let nombre  = p.nombreContacto || p.contacto || '';
-            let ts      = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
+            // Resolver nombre real del aliado destino desde contactosData
+            let contactos   = window.contactosData || [];
+            let aliadoId    = p.aliadoDestino || p.contacto || '';
+            let aliadoInfo  = contactos.find(c => c.id === aliadoId || c.nombre === aliadoId);
+            let aliadoNombre= aliadoInfo ? aliadoInfo.nombre : aliadoId;
+            // Origen: nombre del contacto original que generó el pase
+            let origen      = p.nombreContacto || '';
+            let ts          = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
             return `
             <tr class="border-t border-gray-100 cursor-pointer hover:bg-purple-50 transition" onclick="verDetallePase(${idx})">
                 <td class="py-2 px-2">
-                    <span class="text-[10px] font-bold text-gray-800 block uppercase">${nombre}</span>
-                    <span class="text-[9px] text-purple-500 font-bold">→ ${destino}</span>
+                    <span class="text-[9px] font-bold text-purple-400 uppercase tracking-wide block">Para:</span>
+                    <span class="text-[11px] font-black text-purple-800 block uppercase leading-tight">${aliadoNombre}</span>
+                    ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
                 </td>
                 <td class="py-2 px-2 text-center text-sm font-black text-blue-600">${p.pax}</td>
                 <td class="py-2 px-2 text-[9px] text-gray-400 text-right">${ts}</td>
@@ -299,7 +305,7 @@ function renderOperaciones(operaciones) {
             </div>
             <table class="w-full">
                 <thead><tr class="text-[9px] text-purple-500 uppercase tracking-wider bg-purple-50">
-                    <th class="py-1.5 px-2 text-left font-bold">Contacto → Aliado</th>
+                    <th class="py-1.5 px-2 text-left font-bold">Destino / Origen</th>
                     <th class="py-1.5 px-2 text-center font-bold">PAX</th>
                     <th class="py-1.5 px-2 text-right font-bold">Hora</th>
                 </tr></thead>
@@ -450,10 +456,12 @@ function renderCaja(caja) {
         let dotColor  = isPase ? 'text-purple-400' : (esIngreso ? 'text-green-400' : 'text-red-400');
         let hora      = c.timestamp ? new Date(c.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '—';
         let catLabel  = c.categoria === 'Varios' ? ('Varios · ' + (c.comentarios||'').replace(/^\[.\] ?/,'').substring(0,30)) : c.categoria.replace(/_/g,' ');
+        let syncDot   = c._syncing ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1 align-middle"></span>` : '';
+        let rowBg     = c._syncing ? 'bg-blue-50' : '';
         return `
-        <div class="flex justify-between items-center p-3.5 cursor-pointer hover:bg-gray-50 transition active:scale-95" onclick="abrirDetalleCaja('${c.id}')">
+        <div class="flex justify-between items-center p-3.5 ${rowBg} cursor-pointer hover:bg-gray-50 transition active:scale-95" onclick="${c._syncing ? '' : `abrirDetalleCaja('${c.id}')`}">
             <div class="flex-1 min-w-0 pr-2">
-                <span class="text-xs font-extrabold text-gray-800 block truncate"><i class="fas fa-circle text-[7px] ${dotColor} mr-1.5"></i>${catLabel}</span>
+                <span class="text-xs font-extrabold text-gray-800 block truncate"><i class="fas fa-circle text-[7px] ${dotColor} mr-1.5"></i>${catLabel} ${syncDot}</span>
                 <span class="text-[10px] text-gray-400 font-bold">${hora} · ${c.metodo_pago||'Efectivo'} · ${c.operador||''}</span>
             </div>
             <span class="font-black text-sm ${colorText} shrink-0">${signo} S/${monto.toFixed(2)}</span>
@@ -463,39 +471,76 @@ function renderCaja(caja) {
     let saldo = ingresos - salidas;
 
     // ── Panel Pases (solo hoy) ────────────────────────────────────────────
+    let contactos = window.contactosData || [];
+    function resolverNombreAliado(idONombre) {
+        if (!idONombre) return '—';
+        let info = contactos.find(c => c.id === idONombre || c.nombre === idONombre);
+        return info ? info.nombre : idONombre;
+    }
+
     let resumenPases = {};
-    // PaseOut: desde pasesExternosData, filtrar estrictamente por hoy
+    function _getAliado(key) {
+        if (!resumenPases[key]) resumenPases[key] = { out: 0, in: 0, txs: [] };
+        return resumenPases[key];
+    }
+
+    // PaseOut: pases que enviamos a aliados (desde pasesExternosData de hoy)
     (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp)).forEach(p => {
-        let aliado = p.aliadoDestino || p.nombreContacto || p.contacto || '—';
-        if(!resumenPases[aliado]) resumenPases[aliado] = { out: 0, in: 0 };
-        resumenPases[aliado].out += parseInt(p.pax)||0;
+        let aliadoKey = resolverNombreAliado(p.aliadoDestino || p.contacto);
+        let d = _getAliado(aliadoKey);
+        let pax = parseInt(p.pax) || 0;
+        d.out += pax;
+        let hora = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—';
+        d.txs.push({ dir: 'out', pax, hora, detalle: p.nombreContacto || '' });
     });
-    // PaseIn: desde manifiesto de operaciones de hoy
+
+    // PaseIn: pases que recibimos de aliados (desde manifiesto de operaciones de hoy)
     (window.operacionesData || []).filter(op => op.fecha === getHoyLocal() || !op.fecha).forEach(op => {
         (op.manifiesto || []).forEach(m => {
-            if(m.tipo === 'Aliado(PaseIn)' || m.tipo === 'Aliado') {
-                let aliado = m.nombreContacto || m.contacto || '—';
-                if(!resumenPases[aliado]) resumenPases[aliado] = { out: 0, in: 0 };
-                resumenPases[aliado].in += parseInt(m.pax)||0;
-            }
+            if (m.tipo !== 'Aliado(PaseIn)' && m.tipo !== 'Aliado') return;
+            let aliadoKey = resolverNombreAliado(m.contacto) || resolverNombreAliado(m.nombreContacto);
+            let d = _getAliado(aliadoKey);
+            let pax = parseInt(m.pax) || 0;
+            d.in += pax;
+            d.txs.push({ dir: 'in', pax, hora: '—', detalle: m.nombreContacto || '' });
         });
     });
 
     let totalPaxOut = 0, totalPaxIn = 0;
-    let pasesHtml = Object.keys(resumenPases).map(aliado => {
+    let pasesHtml = Object.keys(resumenPases).map((aliado, idx) => {
         let d = resumenPases[aliado];
         totalPaxOut += d.out; totalPaxIn += d.in;
-        let saldoPax = d.in - d.out; // positivo = nos deben ellos
+        let saldoPax   = d.in - d.out;
+        let saldoColor = saldoPax > 0 ? 'text-green-600' : saldoPax < 0 ? 'text-red-500' : 'text-gray-400';
+        let saldoLabel = saldoPax === 0 ? 'tablas' : (saldoPax > 0 ? `+${saldoPax} a favor` : `${saldoPax} a deber`);
+
+        let detalleHtml = d.txs.map(tx => {
+            let isOut = tx.dir === 'out';
+            let icon  = isOut ? 'fa-arrow-up text-red-400' : 'fa-arrow-down text-green-500';
+            let label = isOut ? `Enviamos ${tx.pax} pax` : `Recibimos ${tx.pax} pax`;
+            let sub   = tx.detalle ? `<span class="text-gray-400"> · De: ${tx.detalle}</span>` : '';
+            let hora  = tx.hora !== '—' ? `<span class="text-gray-400 ml-1">${tx.hora}</span>` : '';
+            return `<div class="flex items-center gap-2 py-1.5 border-t border-gray-100 first:border-0">
+                <i class="fas ${icon} text-xs w-4 text-center"></i>
+                <span class="text-[11px] font-bold text-gray-700">${label}${sub}</span>
+                ${hora}
+            </div>`;
+        }).join('');
+
         return `
-        <div class="flex items-center justify-between bg-white border border-purple-100 p-3 rounded-xl mb-2 shadow-sm">
-            <div>
-                <span class="font-bold text-gray-800 text-xs uppercase block">${aliado}</span>
-                <div class="text-[10px] mt-0.5 space-x-2">
-                    ${d.in  ? `<span class="text-green-600 font-bold"><i class="fas fa-arrow-down mr-1"></i>Recibimos ${d.in} pax</span>` : ''}
-                    ${d.out ? `<span class="text-red-500 font-bold"><i class="fas fa-arrow-up mr-1"></i>Enviamos ${d.out} pax</span>` : ''}
+        <div class="bg-white border border-purple-100 rounded-xl mb-2 shadow-sm overflow-hidden">
+            <div class="flex items-center justify-between p-3 cursor-pointer select-none" onclick="this.nextElementSibling.classList.toggle('hidden')">
+                <div class="flex-1 min-w-0">
+                    <span class="text-[9px] font-bold text-purple-400 uppercase tracking-wide block">Aliado</span>
+                    <span class="font-black text-gray-800 text-xs uppercase truncate block">${aliado}</span>
+                    <span class="text-[9px] font-bold ${saldoColor}">${d.in ? `↓${d.in} recibidos` : ''}${d.in && d.out ? ' · ' : ''}${d.out ? `↑${d.out} enviados` : ''}</span>
+                </div>
+                <div class="text-right shrink-0 ml-3">
+                    <span class="font-black text-base ${saldoColor} block">${saldoPax > 0 ? '+' : ''}${saldoPax} pax</span>
+                    <span class="text-[9px] font-bold ${saldoColor}">${saldoLabel}</span>
                 </div>
             </div>
-            <span class="font-black text-sm ${saldoPax>0?'text-green-600':saldoPax<0?'text-red-500':'text-gray-500'}">${saldoPax>0?'+':''}${saldoPax} pax</span>
+            <div class="hidden px-3 pb-3 bg-gray-50">${detalleHtml}</div>
         </div>`;
     }).join('') || '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin pases registrados hoy.</div>';
 
@@ -536,37 +581,69 @@ function renderCaja(caja) {
         });
     });
 
-    let totalComision = Object.values(comisionMovMap).reduce((s,v) => s + v.comision, 0);
-    let comisionesHtml = Object.keys(comisionMovMap).length === 0
+    // ── Cruzar con pagos ya realizados (categoria='Pagos' en cajaData de hoy) ──
+    let pagosMap = {};
+    txHoy.filter(c => c.categoria === 'Pagos').forEach(c => {
+        // Resolver nombre: primero por id_contacto en catálogo, luego usar id_contacto directo
+        let key = '';
+        if (c.id_contacto) {
+            let info = (window.contactosData || []).find(ct => ct.id === c.id_contacto || ct.nombre === c.id_contacto);
+            key = info ? info.nombre : c.id_contacto;
+        }
+        if (!key) key = '—';
+        if (!pagosMap[key]) pagosMap[key] = 0;
+        pagosMap[key] += parseFloat(c.monto) || 0;
+    });
+
+    // Unir comisionMovMap con pagosMap: incluir comisionados que solo tienen pago (sin movimiento aún)
+    let todosComisionados = new Set([...Object.keys(comisionMovMap), ...Object.keys(pagosMap)]);
+
+    let totalDebe = 0, totalPagado = 0;
+    let comisionesHtml = todosComisionados.size === 0
         ? '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin comisiones registradas hoy.</div>'
         : `<div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-3">
             <table class="w-full text-xs">
                 <thead><tr class="bg-orange-50 text-orange-700 font-bold uppercase text-[9px] tracking-wider">
                     <th class="py-2 px-3 text-left">Comisionado</th>
-                    <th class="py-2 px-2 text-center">PAX</th>
-                    <th class="py-2 px-2 text-right">Cobrado</th>
-                    <th class="py-2 px-2 text-right">Base</th>
                     <th class="py-2 px-2 text-right">Comisión</th>
+                    <th class="py-2 px-2 text-right">Pagado</th>
+                    <th class="py-2 px-2 text-right">Pendiente</th>
                 </tr></thead>
                 <tbody class="divide-y divide-gray-100">
-                ${Object.keys(comisionMovMap).map(nombre => {
-                    let d = comisionMovMap[nombre];
-                    return `<tr>
-                        <td class="py-2 px-3 font-bold text-gray-800 uppercase text-[10px]">${nombre}</td>
-                        <td class="py-2 px-2 text-center text-gray-600">${d.pax}</td>
-                        <td class="py-2 px-2 text-right text-gray-600">S/${d.cobrado.toFixed(2)}</td>
-                        <td class="py-2 px-2 text-right text-gray-500">−S/${d.base.toFixed(2)}</td>
-                        <td class="py-2 px-2 text-right font-black text-orange-600">S/${d.comision.toFixed(2)}</td>
+                ${[...todosComisionados].map(nombre => {
+                    let d        = comisionMovMap[nombre] || { comision: 0, pax: 0, cobrado: 0, base: 0 };
+                    let pagado   = pagosMap[nombre] || 0;
+                    let pendiente= Math.max(0, d.comision - pagado);
+                    totalDebe   += d.comision;
+                    totalPagado += pagado;
+                    let pendColor = pendiente > 0 ? 'text-red-600' : 'text-green-600';
+                    let pendIcon  = pendiente > 0 ? '' : '<i class="fas fa-check-circle mr-1"></i>';
+                    return `<tr class="hover:bg-gray-50 cursor-pointer" onclick="abrirModalCaja('salida', { id_contacto: '', nombre_contacto: '${nombre.replace(/'/g,"\\'")}' })">
+                        <td class="py-2.5 px-3 font-bold text-gray-800 uppercase text-[10px]">${nombre}<br><span class="text-gray-400 font-normal normal-case">${d.pax} pax · cobrado S/${d.cobrado.toFixed(2)}</span></td>
+                        <td class="py-2 px-2 text-right font-bold text-orange-600">S/${d.comision.toFixed(2)}</td>
+                        <td class="py-2 px-2 text-right text-green-600 font-bold">S/${pagado.toFixed(2)}</td>
+                        <td class="py-2 px-2 text-right font-black ${pendColor}">${pendIcon}S/${pendiente.toFixed(2)}</td>
                     </tr>`;
                 }).join('')}
                 </tbody>
             </table>
            </div>`;
 
-    let comisionesSummaryHtml = totalComision > 0 ? `
-        <div class="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3 flex justify-between items-center">
-            <span class="text-xs font-black text-orange-700 uppercase">Total a pagar comisionados</span>
-            <span class="font-black text-orange-700 text-lg">S/ ${totalComision.toFixed(2)}</span>
+    let totalPendiente = Math.max(0, totalDebe - totalPagado);
+    let comisionesSummaryHtml = (totalDebe > 0 || totalPagado > 0) ? `
+        <div class="grid grid-cols-3 gap-2 mb-3">
+            <div class="bg-orange-50 border border-orange-200 rounded-xl p-2.5 text-center">
+                <p class="text-[8px] font-bold text-orange-600 uppercase tracking-wide">A pagar</p>
+                <p class="font-black text-orange-700 text-base">S/${totalDebe.toFixed(2)}</p>
+            </div>
+            <div class="bg-green-50 border border-green-200 rounded-xl p-2.5 text-center">
+                <p class="text-[8px] font-bold text-green-600 uppercase tracking-wide">Pagado</p>
+                <p class="font-black text-green-700 text-base">S/${totalPagado.toFixed(2)}</p>
+            </div>
+            <div class="bg-${totalPendiente>0?'red':'gray'}-50 border border-${totalPendiente>0?'red':'gray'}-200 rounded-xl p-2.5 text-center">
+                <p class="text-[8px] font-bold text-${totalPendiente>0?'red':'gray'}-600 uppercase tracking-wide">Pendiente</p>
+                <p class="font-black text-${totalPendiente>0?'red-600':'gray-500'} text-base">S/${totalPendiente.toFixed(2)}</p>
+            </div>
         </div>` : '';
 
     // ── Actualizar DOM ────────────────────────────────────────────────────
@@ -1408,11 +1485,29 @@ function confirmarCaja() {
     let galFile = document.getElementById('comprobante-foto-galeria').files[0];
     let fotoFile = camFile || galFile;
 
+    // ── Optimistic update ─────────────────────────────────────────────────
+    let tempId = 'temp-tx-' + Date.now();
+    let tempTx = {
+        id:           tempId,
+        id_operacion: idOp,
+        id_contacto:  idContacto,
+        categoria:    cat,
+        monto:        parseFloat(monto),
+        metodo_pago:  metodo,
+        comentarios:  comentario,
+        foto_url:     '',
+        operador:     myOpName,
+        timestamp:    new Date().toISOString(),
+        _syncing:     true
+    };
+    if (!window.cajaData) window.cajaData = [];
+    window.cajaData.unshift(tempTx);
+    renderCaja(window.cajaData);
+
     cerrarSubModal('modal-caja');
-    toggleSpinner(true);
 
     function enviar(foto_base64) {
-        fetchPost('registrar_transaccion', {
+        fetchPostBg('registrar_transaccion', {
             id_operacion: idOp,
             id_contacto:  idContacto,
             categoria:    cat,
@@ -1421,7 +1516,23 @@ function confirmarCaja() {
             comentarios:  comentario,
             foto_base64:  foto_base64 || '',
             operador:     myOpName
-        }).then(() => fetchDashboardData());
+        }).then(res => {
+            // Reemplazar temp con ID real si volvió, luego sync completo
+            let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
+            if (idx !== -1) {
+                if (res && res.id_transaccion) {
+                    window.cajaData[idx] = { ...window.cajaData[idx], id: res.id_transaccion, _syncing: false };
+                } else {
+                    window.cajaData.splice(idx, 1);
+                }
+            }
+            fetchDashboardDataBg();
+        }).catch(() => {
+            let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
+            if (idx !== -1) window.cajaData.splice(idx, 1);
+            renderCaja(window.cajaData);
+            mostrarToast('Error al registrar transacción.', 'error');
+        });
     }
 
     if (fotoFile) {
@@ -1832,132 +1943,249 @@ function generarCierreDelDia() {
     if(!confirm('¿Confirmas el CIERRE DEL DÍA? Se generará el reporte y se anularán las operaciones pendientes.')) return;
 
     let ops       = window.operacionesData || [];
-    let caja      = (window.cajaData || []).filter(c => esFechaHoy(c.timestamp));
-    let pases     = window.pasesExternosData || [];
-    let hoy       = new Date().toLocaleDateString('es-PE', {day:'2-digit', month:'long', year:'numeric'});
-    let horaCorte = new Date().toLocaleTimeString('es-PE', {hour:'2-digit', minute:'2-digit'});
+    let cajaAll   = (window.cajaData || []).filter(c => esFechaHoy(c.timestamp) && !c._syncing);
+    let pases     = (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp));
+    let contactos = window.contactosData || [];
+    let ahora     = new Date();
+    let hoy       = ahora.toLocaleDateString('es-PE', {day:'2-digit', month:'long', year:'numeric'});
+    let horaCorte = ahora.toLocaleTimeString('es-PE', {hour:'2-digit', minute:'2-digit'});
+    let caja      = cajaAll; // alias
 
-    // Calcular totales caja
-    let ingresos = 0, salidas = 0;
+    // ── Helpers inline ────────────────────────────────────────────────────
+    const S = x => `<b style="color:#56070c">S/</b> ${parseFloat(x||0).toFixed(2)}`;
+    const sec = t => `<h3 style="color:#56070c;font-size:12px;font-weight:900;text-transform:uppercase;margin:20px 0 8px;border-left:4px solid #56070c;padding-left:10px;letter-spacing:.06em;">${t}</h3>`;
+    const tbl = (head, body) => `<table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:11px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+        <thead><tr style="background:#fdf2f2;color:#56070c;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.05em;">${head}</tr></thead>
+        <tbody style="background:white;">${body}</tbody></table>`;
+    const th  = (t, a='left') => `<th style="padding:6px 8px;text-align:${a};">${t}</th>`;
+    const td  = (t, a='left', extra='') => `<td style="padding:5px 8px;text-align:${a};${extra}">${t}</td>`;
+    const row = (cells, bg='') => `<tr style="border-top:1px solid #f3f4f6;${bg}">${cells}</tr>`;
+    const resolveNombre = id => { let c = contactos.find(x => x.id===id||x.nombre===id); return c ? c.nombre : (id||'—'); };
+
+    // ── Totales globales ──────────────────────────────────────────────────
+    let ingresos = 0, salidas = 0, totalPaxGlobal = 0;
     caja.forEach(c => {
         let m = parseFloat(c.monto)||0;
-        let isPase = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
-        if(!isPase) { if(_esIngresoCaja(c)) ingresos += m; else salidas += m; }
+        let isPase = c.metodo_pago === 'Pase_Canje';
+        if (!isPase) { if (_esIngresoCaja(c)) ingresos += m; else salidas += m; }
     });
+    ops.forEach(op => { totalPaxGlobal += parseInt(op.ocupados)||0; });
 
-    // Resumen por operación
+    // ── 1. OPERACIONES DEL DÍA ────────────────────────────────────────────
     let opsHtml = ops.map(op => {
-        let totalOp = (op.manifiesto||[]).reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
-        let movHtml = (op.manifiesto||[]).map(m => {
+        let totalOp = (op.manifiesto||[]).reduce((s,m)=>s+(parseFloat(m.monto)||0), 0);
+        let movRows = (op.manifiesto||[]).map(m => {
             let nombre = m.nombreContacto || m.contacto || '—';
-            let tipo   = m.tipo || '—';
-            return `<tr>
-                <td style="padding:4px 8px;font-size:11px;">${nombre}</td>
-                <td style="padding:4px 8px;font-size:11px;text-align:center;">${tipo}</td>
-                <td style="padding:4px 8px;font-size:11px;text-align:center;">${m.pax}</td>
-                <td style="padding:4px 8px;font-size:11px;text-align:right;">S/ ${parseFloat(m.monto||0).toFixed(2)}</td>
-            </tr>`;
-        }).join('');
-        return `
-        <div style="margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-            <div style="background:#56070c;color:white;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
-                <span style="font-weight:900;font-size:13px;"><i class="fas fa-ship"></i> ${op.bote}</span>
-                <span style="font-size:11px;">${op.hora_salida||'S/H'} · ${op.ocupados}/${op.capacidad} PAX · ${op.estado}</span>
+            let tipoLabel = {'Aliado(PaseIn)':'Pase Entrada','Aliado(PaseOut)':'Pase Salida','Comisionado':'Comisionado','Agencia':'Agencia','Libre':'Libre','Directo':'Libre'}[m.tipo] || m.tipo;
+            let isAliado = m.tipo && m.tipo.includes('Aliado');
+            let montoStr = isAliado ? '<span style="color:#7c3aed;font-weight:900;">PASE</span>' : `S/ ${parseFloat(m.monto||0).toFixed(2)}`;
+            return row(td(nombre) + td(tipoLabel,'center') + td(m.pax||0,'center') + td(montoStr,'right'));
+        }).join('') || row(td('<i>Sin pasajeros</i>','left','color:#9ca3af;'));
+        return `<div style="margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            <div style="background:#56070c;color:white;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:900;font-size:13px;">⛵ ${op.bote}</span>
+                <span style="font-size:10px;opacity:.9;">${op.hora_salida||'—'} &nbsp;·&nbsp; ${op.ocupados}/${op.capacidad} PAX &nbsp;·&nbsp; Cap: ${op.capitan||'—'} &nbsp;·&nbsp; Guía: ${op.guia||'—'}</span>
             </div>
-            <table style="width:100%;border-collapse:collapse;">
-                <thead><tr style="background:#fdf2f2;font-size:10px;color:#56070c;font-weight:700;text-transform:uppercase;">
-                    <th style="padding:4px 8px;text-align:left;">Contacto</th>
-                    <th style="padding:4px 8px;text-align:center;">Tipo</th>
-                    <th style="padding:4px 8px;text-align:center;">PAX</th>
-                    <th style="padding:4px 8px;text-align:right;">Monto</th>
-                </tr></thead>
-                <tbody>${movHtml}</tbody>
-                <tfoot><tr style="background:#f9fafb;font-weight:900;">
-                    <td colspan="3" style="padding:5px 8px;font-size:11px;text-align:right;">Total operación:</td>
-                    <td style="padding:5px 8px;font-size:12px;text-align:right;color:#16a34a;">S/ ${totalOp.toFixed(2)}</td>
-                </tr></tfoot>
-            </table>
+            ${tbl(th('Contacto')+th('Tipo','center')+th('PAX','center')+th('Monto','right'), movRows)}
+            <div style="background:#f9fafb;padding:5px 10px;text-align:right;font-weight:900;font-size:11px;color:#16a34a;border-top:1px solid #e5e7eb;">Total: S/ ${totalOp.toFixed(2)}</div>
         </div>`;
-    }).join('') || '<p style="color:#9ca3af;font-size:12px;">Sin operaciones registradas hoy.</p>';
+    }).join('') || '<p style="color:#9ca3af;font-size:12px;">Sin operaciones.</p>';
 
-    // Resumen pases
-    let pasesHtmlPrint = pases.map(p => `
-        <tr>
-            <td style="padding:4px 8px;font-size:11px;">${p.nombreContacto||p.contacto||'—'}</td>
-            <td style="padding:4px 8px;font-size:11px;">${p.aliadoDestino||p.contacto||'—'}</td>
-            <td style="padding:4px 8px;font-size:11px;text-align:center;">${p.pax}</td>
-        </tr>`).join('') || '<tr><td colspan="3" style="padding:8px;text-align:center;color:#9ca3af;font-size:11px;">Sin pases del día.</td></tr>';
+    // ── 2. PASES DEL DÍA (por aliado) ────────────────────────────────────
+    let pasesAliado = {};
+    // PaseOut
+    pases.forEach(p => {
+        let k = resolveNombre(p.aliadoDestino || p.contacto);
+        if (!pasesAliado[k]) pasesAliado[k] = { out:[], in:[] };
+        pasesAliado[k].out.push({ pax: parseInt(p.pax)||0, origen: p.nombreContacto||'—', hora: p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—' });
+    });
+    // PaseIn
+    ops.forEach(op => (op.manifiesto||[]).forEach(m => {
+        if (m.tipo !== 'Aliado(PaseIn)' && m.tipo !== 'Aliado') return;
+        let k = resolveNombre(m.contacto) || resolveNombre(m.nombreContacto);
+        if (!pasesAliado[k]) pasesAliado[k] = { out:[], in:[] };
+        pasesAliado[k].in.push({ pax: parseInt(m.pax)||0, origen: m.nombreContacto||'—' });
+    }));
+    let totalPaxPaseOut = 0, totalPaxPaseIn = 0;
+    let pasesRows = Object.keys(pasesAliado).map(aliado => {
+        let d = pasesAliado[aliado];
+        let sumOut = d.out.reduce((s,x)=>s+x.pax,0);
+        let sumIn  = d.in.reduce((s,x)=>s+x.pax,0);
+        let saldo  = sumIn - sumOut;
+        totalPaxPaseOut += sumOut; totalPaxPaseIn += sumIn;
+        let detOut = d.out.map(x=>`↑ ${x.pax} pax enviados · de: ${x.origen} (${x.hora})`).join('<br>');
+        let detIn  = d.in.map(x=>`↓ ${x.pax} pax recibidos`).join('<br>');
+        let saldoColor = saldo > 0 ? '#16a34a' : saldo < 0 ? '#dc2626' : '#6b7280';
+        let saldoTxt   = saldo === 0 ? 'Tablas' : (saldo > 0 ? `+${saldo} a favor` : `${saldo} a deber`);
+        return row(
+            td(`<b>${aliado}</b>`) +
+            td(detOut || '—') +
+            td(detIn  || '—') +
+            td(`<b style="color:${saldoColor}">${saldoTxt}</b>`,'center')
+        );
+    }).join('') || row(td('<i>Sin pases del día.</i>','left','color:#9ca3af;'));
+    let pasesHtml = tbl(th('Aliado')+th('Enviados')+th('Recibidos')+th('Saldo','center'), pasesRows);
 
-    // Historial caja
-    let cajaHtmlPrint = caja.map(c => {
-        let m   = parseFloat(c.monto)||0;
+    // ── 3. COMISIONES ─────────────────────────────────────────────────────
+    let comMap = {};
+    ops.forEach(op => (op.manifiesto||[]).forEach(m => {
+        if (m.tipo !== 'Comisionado') return;
+        let pax      = parseInt(m.pax)||0; if (!pax) return;
+        let cobrado  = parseFloat(m.monto)||0;
+        let info     = contactos.find(c => c.id===m.contacto || c.nombre===(m.nombreContacto||m.contacto));
+        let base     = (info ? parseFloat(info.precio)||0 : 0) * pax;
+        let comision = Math.max(0, cobrado - base);
+        let key      = m.nombreContacto || m.contacto || '—';
+        if (!comMap[key]) comMap[key] = { pax:0, cobrado:0, base:0, comision:0, pagado:0 };
+        comMap[key].pax += pax; comMap[key].cobrado += cobrado; comMap[key].base += base; comMap[key].comision += comision;
+    }));
+    caja.filter(c=>c.categoria==='Pagos').forEach(c => {
+        let key = resolveNombre(c.id_contacto);
+        if (!comMap[key]) comMap[key] = { pax:0, cobrado:0, base:0, comision:0, pagado:0 };
+        comMap[key].pagado += parseFloat(c.monto)||0;
+    });
+    let totalComision=0, totalPagado=0;
+    let comRows = Object.keys(comMap).map(nombre => {
+        let d = comMap[nombre];
+        let pendiente = Math.max(0, d.comision - d.pagado);
+        totalComision += d.comision; totalPagado += d.pagado;
+        let pColor = pendiente > 0 ? '#dc2626' : '#16a34a';
+        return row(
+            td(`<b>${nombre}</b>`) +
+            td(d.pax,'center') +
+            td(`S/ ${d.cobrado.toFixed(2)}`,'right') +
+            td(`S/ ${d.base.toFixed(2)}`,'right','color:#6b7280') +
+            td(`<b>S/ ${d.comision.toFixed(2)}</b>`,'right','color:#d97706') +
+            td(`S/ ${d.pagado.toFixed(2)}`,'right','color:#16a34a') +
+            td(`<b style="color:${pColor}">S/ ${pendiente.toFixed(2)}</b>`,'right')
+        );
+    }).join('') || row(td('<i>Sin comisionados hoy.</i>','left','color:#9ca3af;'));
+    let comisionesHtml = tbl(th('Comisionado')+th('PAX','center')+th('Cobrado','right')+th('Base','right')+th('Comisión','right')+th('Pagado','right')+th('Pendiente','right'), comRows);
+
+    // ── 4. HISTORIAL CAJA (global) ────────────────────────────────────────
+    let cajaRows = caja.map(c => {
+        let m = parseFloat(c.monto)||0;
         let esI = _esIngresoCaja(c);
         let catLabel = c.categoria === 'Varios'
-            ? 'Varios · ' + (c.comentarios||'').replace(/^\[.\] ?/,'').substring(0,40)
+            ? 'Varios · ' + (c.comentarios||'').replace(/^\[.\] ?/,'').substring(0,35)
             : c.categoria.replace(/_/g,' ');
-        return `<tr>
-            <td style="padding:4px 8px;font-size:11px;">${catLabel}</td>
-            <td style="padding:4px 8px;font-size:11px;">${c.operador||'—'}</td>
-            <td style="padding:4px 8px;font-size:11px;">${c.metodo_pago||'Efectivo'}</td>
-            <td style="padding:4px 8px;font-size:11px;text-align:right;color:${esI?'#16a34a':'#dc2626'}">${esI?'+':'-'} S/ ${m.toFixed(2)}</td>
-        </tr>`;
-    }).join('') || '<tr><td colspan="4" style="padding:8px;text-align:center;color:#9ca3af;font-size:11px;">Sin movimientos de caja.</td></tr>';
+        let hora = c.timestamp ? new Date(c.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—';
+        return row(td(hora) + td(catLabel) + td(c.operador||'—') + td(c.metodo_pago||'Efectivo') +
+            td(`<b style="color:${esI?'#16a34a':'#dc2626'}">${esI?'+':'-'} S/ ${m.toFixed(2)}</b>`,'right'));
+    }).join('') || row(td('<i>Sin movimientos.</i>','left','color:#9ca3af;'));
+    let cajaHtml = tbl(th('Hora')+th('Categoría')+th('Operador')+th('Método')+th('Monto','right'), cajaRows);
 
+    // ── 5. POR OPERADOR ───────────────────────────────────────────────────
+    let operadores = [...new Set(caja.map(c => c.operador).filter(Boolean))];
+    let porOperadorHtml = operadores.map(op => {
+        let txsOp = caja.filter(c => c.operador === op);
+        let ingOp = 0, salOp = 0;
+        let rowsOp = txsOp.map(c => {
+            let m = parseFloat(c.monto)||0;
+            let esI = _esIngresoCaja(c);
+            if (esI) ingOp+=m; else salOp+=m;
+            let cat = c.categoria === 'Varios' ? 'Varios · '+(c.comentarios||'').replace(/^\[.\] ?/,'').substring(0,30) : c.categoria.replace(/_/g,' ');
+            let hora = c.timestamp ? new Date(c.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—';
+            return row(td(hora)+td(cat)+td(c.metodo_pago||'Efectivo')+td(`<b style="color:${esI?'#16a34a':'#dc2626'}">${esI?'+':'-'} S/ ${m.toFixed(2)}</b>`,'right'));
+        }).join('') || row(td('<i>Sin movimientos.</i>','left','color:#9ca3af;'));
+        return `<div style="margin-bottom:14px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            <div style="background:#1f2937;color:white;padding:7px 12px;display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:900;font-size:12px;">👤 ${op}</span>
+                <span style="font-size:10px;opacity:.85;">Ingresos: S/${ingOp.toFixed(2)} &nbsp;·&nbsp; Salidas: S/${salOp.toFixed(2)} &nbsp;·&nbsp; Saldo: S/${(ingOp-salOp).toFixed(2)}</span>
+            </div>
+            ${tbl(th('Hora')+th('Categoría')+th('Método')+th('Monto','right'), rowsOp)}
+        </div>`;
+    }).join('') || '<p style="color:#9ca3af;font-size:12px;">Sin operadores registrados.</p>';
+
+    // ── HTML COMPLETO ─────────────────────────────────────────────────────
+    let htmlCierre = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+    <title>Cierre del Día · ${hoy}</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; margin:0; padding:0; background:#f9fafb; color:#111827; }
+        .page { max-width:800px; margin:0 auto; padding:24px; background:white; }
+        @media print { body{background:white;} .no-print{display:none;} }
+    </style></head><body>
+    <div class="page">
+
+        <!-- CABECERA -->
+        <div style="text-align:center;padding-bottom:20px;border-bottom:3px solid #56070c;margin-bottom:20px;">
+            <div style="background:#56070c;color:white;display:inline-block;padding:10px 28px;border-radius:10px;font-weight:900;font-size:20px;letter-spacing:2px;margin-bottom:10px;">CIERRE DEL DÍA</div>
+            <p style="font-size:15px;font-weight:700;color:#374151;margin:4px 0;">${hoy}</p>
+            <p style="font-size:12px;color:#6b7280;margin:0;">Hora de corte: <b>${horaCorte}</b> &nbsp;·&nbsp; Generado por: <b>${myOpName||'Sistema'}</b></p>
+        </div>
+
+        <!-- RESUMEN EJECUTIVO -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;">
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;">
+                <p style="font-size:9px;font-weight:900;color:#15803d;text-transform:uppercase;margin:0 0 4px;">Ingresos</p>
+                <p style="font-size:18px;font-weight:900;color:#15803d;margin:0;">S/ ${ingresos.toFixed(2)}</p>
+            </div>
+            <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;text-align:center;">
+                <p style="font-size:9px;font-weight:900;color:#dc2626;text-transform:uppercase;margin:0 0 4px;">Salidas</p>
+                <p style="font-size:18px;font-weight:900;color:#dc2626;margin:0;">S/ ${salidas.toFixed(2)}</p>
+            </div>
+            <div style="background:#fdf2f2;border:2px solid #56070c;border-radius:8px;padding:10px;text-align:center;">
+                <p style="font-size:9px;font-weight:900;color:#56070c;text-transform:uppercase;margin:0 0 4px;">Saldo</p>
+                <p style="font-size:18px;font-weight:900;color:#56070c;margin:0;">S/ ${(ingresos-salidas).toFixed(2)}</p>
+            </div>
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;text-align:center;">
+                <p style="font-size:9px;font-weight:900;color:#1d4ed8;text-transform:uppercase;margin:0 0 4px;">PAX Total</p>
+                <p style="font-size:18px;font-weight:900;color:#1d4ed8;margin:0;">${totalPaxGlobal}</p>
+            </div>
+        </div>
+
+        ${sec('1. Operaciones del día')} ${opsHtml}
+        ${sec('2. Pases del día (por aliado)')} ${pasesHtml}
+        ${sec('3. Comisiones')} ${comisionesHtml}
+        ${sec('4. Historial de caja (global)')} ${cajaHtml}
+        ${sec('5. Detalle por operador')} ${porOperadorHtml}
+
+        <!-- PIE -->
+        <p style="font-size:10px;color:#9ca3af;text-align:center;margin-top:24px;border-top:1px solid #e5e7eb;padding-top:10px;">
+            OperacionesPS · Cierre generado el ${new Date().toLocaleString('es-PE')} · Todos los datos corresponden al día ${hoy}
+        </p>
+    </div>
+    </body></html>`;
+
+    // ── Mostrar en pantalla para imprimir + guardar en Drive ──────────────
     let printDiv = document.getElementById('print-cierre');
-    printDiv.innerHTML = `
-    <div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;">
-        <div style="text-align:center;margin-bottom:20px;border-bottom:3px solid #56070c;padding-bottom:16px;">
-            <div style="background:#56070c;color:white;display:inline-block;padding:8px 20px;border-radius:8px;font-weight:900;font-size:18px;letter-spacing:1px;margin-bottom:8px;">CIERRE DEL DÍA</div>
-            <p style="font-size:13px;color:#374151;font-weight:700;margin:4px 0;">${hoy} · Corte: ${horaCorte}</p>
-            <p style="font-size:12px;color:#6b7280;margin:0;">Operador: <b>${myOpName||'—'}</b></p>
-        </div>
+    printDiv.innerHTML = htmlCierre;
 
-        <h3 style="color:#56070c;font-size:13px;font-weight:900;text-transform:uppercase;margin:16px 0 8px;border-left:4px solid #56070c;padding-left:8px;">Operaciones del día</h3>
-        ${opsHtml}
-
-        <h3 style="color:#56070c;font-size:13px;font-weight:900;text-transform:uppercase;margin:16px 0 8px;border-left:4px solid #56070c;padding-left:8px;">Pases del día</h3>
-        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-            <thead><tr style="background:#fdf2f2;font-size:10px;color:#56070c;font-weight:700;text-transform:uppercase;">
-                <th style="padding:5px 8px;text-align:left;">Contacto origen</th>
-                <th style="padding:5px 8px;text-align:left;">Aliado destino</th>
-                <th style="padding:5px 8px;text-align:center;">PAX</th>
-            </tr></thead>
-            <tbody>${pasesHtmlPrint}</tbody>
-        </table>
-
-        <h3 style="color:#56070c;font-size:13px;font-weight:900;text-transform:uppercase;margin:16px 0 8px;border-left:4px solid #56070c;padding-left:8px;">Movimientos de caja</h3>
-        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-            <thead><tr style="background:#fdf2f2;font-size:10px;color:#56070c;font-weight:700;text-transform:uppercase;">
-                <th style="padding:5px 8px;text-align:left;">Categoría</th>
-                <th style="padding:5px 8px;text-align:left;">Operador</th>
-                <th style="padding:5px 8px;text-align:left;">Método</th>
-                <th style="padding:5px 8px;text-align:right;">Monto</th>
-            </tr></thead>
-            <tbody>${cajaHtmlPrint}</tbody>
-        </table>
-
-        <div style="background:#56070c;color:white;padding:16px;border-radius:12px;display:flex;justify-content:space-between;align-items:center;">
-            <div>
-                <p style="font-size:10px;opacity:.7;font-weight:700;text-transform:uppercase;margin:0 0 4px;">Total a entregar</p>
-                <p style="font-size:28px;font-weight:900;margin:0;">S/ ${(ingresos - salidas).toFixed(2)}</p>
-            </div>
-            <div style="text-align:right;font-size:11px;opacity:.8;">
-                <p style="margin:0;">+ S/${ingresos.toFixed(2)} entradas</p>
-                <p style="margin:0;">− S/${salidas.toFixed(2)} salidas</p>
-            </div>
-        </div>
-        <p style="font-size:10px;color:#9ca3af;text-align:center;margin-top:12px;">Generado por OperacionesPS · ${new Date().toLocaleString('es-PE')}</p>
-    </div>`;
-
-    // Anular ops pendientes en background
+    // Anular ops pendientes
     ops.filter(op => op.estado === 'Abierta').forEach(op => {
         fetchPostBg('cerrar_operacion', { id_operacion: op.id, creador: myOpName });
     });
 
-    setTimeout(() => {
-        window.print();
-        setTimeout(() => { printDiv.innerHTML = ''; fetchDashboardDataBg(); }, 2000);
-    }, 300);
+    // Nombre del archivo
+    let fechaFile = ahora.toLocaleDateString('es-PE',{year:'numeric',month:'2-digit',day:'2-digit'}).replace(/\//g,'-');
+    let horaFile  = horaCorte.replace(':','-');
+    let nombreCierre = `Cierre ${fechaFile} ${horaFile}`;
+
+    // Guardar en Drive y mostrar link
+    mostrarToast('⏳ Guardando cierre en Drive...', 'info');
+    fetchPostBg('guardar_cierre', { html: htmlCierre, nombre: nombreCierre }).then(res => {
+        if (res && res.url) {
+            mostrarToast('✅ Cierre guardado en Drive', 'success');
+            // Mostrar modal con link
+            let linkModal = document.createElement('div');
+            linkModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            linkModal.innerHTML = `<div style="background:white;border-radius:20px;padding:24px;max-width:320px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+                <div style="width:56px;height:56px;background:#f0fdf4;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:24px;">✅</div>
+                <h3 style="font-weight:900;font-size:16px;color:#111827;margin:0 0 6px;">Cierre guardado</h3>
+                <p style="font-size:12px;color:#6b7280;margin:0 0 16px;">${nombreCierre}</p>
+                <a href="${res.url}" target="_blank" style="display:block;background:#56070c;color:white;text-decoration:none;font-weight:900;padding:12px;border-radius:12px;font-size:13px;margin-bottom:10px;">📄 Abrir PDF en Drive</a>
+                <button onclick="window.print()" style="width:100%;background:#f9fafb;border:1px solid #e5e7eb;color:#374151;font-weight:700;padding:10px;border-radius:12px;font-size:12px;cursor:pointer;margin-bottom:8px;">🖨️ Imprimir / Guardar PDF</button>
+                <button onclick="this.closest('[style*=fixed]').remove();document.getElementById('print-cierre').innerHTML='';fetchDashboardDataBg();" style="width:100%;background:transparent;border:none;color:#9ca3af;font-size:12px;cursor:pointer;padding:6px;">Cerrar</button>
+            </div>`;
+            document.body.appendChild(linkModal);
+        } else {
+            mostrarToast('Error al guardar en Drive. Puedes imprimir desde aquí.', 'error');
+            setTimeout(() => window.print(), 300);
+        }
+    }).catch(() => {
+        mostrarToast('Error de conexión. Puedes imprimir directamente.', 'error');
+        setTimeout(() => window.print(), 300);
+    });
 }
 
 function verDetallePase(idx) {
@@ -2022,9 +2250,9 @@ function mostrarToast(msg, tipo = 'info') {
         toast.style.cssText = 'position:fixed;bottom:90px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 18px;border-radius:12px;font-size:12px;font-weight:700;max-width:90vw;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.15);transition:opacity 0.3s;';
         document.body.appendChild(toast);
     }
-    toast.style.background = tipo === 'error' ? '#fee2e2' : '#dbeafe';
-    toast.style.color = tipo === 'error' ? '#991b1b' : '#1e40af';
-    toast.style.border = tipo === 'error' ? '1px solid #fca5a5' : '1px solid #93c5fd';
+    toast.style.background = tipo==='error'?'#fee2e2':tipo==='success'?'#dcfce7':'#dbeafe';
+    toast.style.color      = tipo==='error'?'#991b1b':tipo==='success'?'#15803d':'#1e40af';
+    toast.style.border     = tipo==='error'?'1px solid #fca5a5':tipo==='success'?'1px solid #86efac':'1px solid #93c5fd';
     toast.style.opacity = '1';
     toast.innerText = msg;
     clearTimeout(toast._timer);

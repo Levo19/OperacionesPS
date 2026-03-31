@@ -37,6 +37,7 @@ function doPost(e) {
     else if (action === 'pase_desde_reserva')       { return jsonResponse(paseDesdeReserva(data.payload)); }
     else if (action === 'editar_operacion')         { return jsonResponse(editarOperacion(data.payload)); }
     else if (action === 'subir_foto_zarpe')         { return jsonResponse(subirFotoZarpe(data.payload)); }
+    else if (action === 'guardar_cierre')           { return jsonResponse(guardarCierre(data.payload)); }
     return jsonResponse({ error: 'Acción no requerida o desconocida' }, 400);
   } catch (error) {
     return jsonResponse({ error: error.toString() }, 500);
@@ -640,4 +641,21 @@ function editarOperacion(payload) {
     }
   }
   return { status: 'error', message: '❌ Operación no encontrada.' };
+}
+
+// Guardar reporte de cierre del día como archivo HTML en Drive/Cierres
+// payload: { html, nombre }  →  nombre ej: "Cierre 2026-03-31 14-30"
+function guardarCierre(payload) {
+  try {
+    if (!payload.html || !payload.nombre) return { status: 'error', message: 'Faltan datos.' };
+    let folder   = getOrCreateSubfolder('Cierres');
+    let filename = payload.nombre + '.html';
+    let blob     = Utilities.newBlob(payload.html, 'text/html', filename);
+    let file     = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    let url = 'https://drive.google.com/file/d/' + file.getId() + '/view';
+    return { url, nombre: payload.nombre };
+  } catch(e) {
+    return { status: 'error', message: e.toString() };
+  }
 }
