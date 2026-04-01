@@ -31,11 +31,49 @@ function cambiarOperador() {
     mostrarModalLogin(true);
 }
 
+// ── Cache local del dashboard (offline-first) ─────────────────────────────
+const _CACHE_KEY = 'sot_dashboard_cache';
+
+function _saveDashboardCache() {
+    try {
+        localStorage.setItem(_CACHE_KEY, JSON.stringify({
+            ts:          Date.now(),
+            operaciones: window.operacionesData   || [],
+            contactos:   window.contactosData     || [],
+            catalogos:   window.catalogosData     || {},
+            reservas:    window.reservasData      || [],
+            pases:       window.pasesExternosData || [],
+            caja:        window.cajaData          || [],
+        }));
+    } catch(e) {} // localStorage lleno — silenciar
+}
+
+function _loadDashboardCache() {
+    try {
+        let raw = localStorage.getItem(_CACHE_KEY);
+        if (!raw) return false;
+        let c = JSON.parse(raw);
+        window.operacionesData   = c.operaciones || [];
+        window.contactosData     = c.contactos   || [];
+        window.catalogosData     = c.catalogos   || {};
+        window.reservasData      = c.reservas    || [];
+        window.pasesExternosData = c.pases       || [];
+        window.cajaData          = c.caja        || [];
+        if (window.catalogosData) renderCatalogos(window.catalogosData);
+        renderOperaciones(window.operacionesData);
+        renderReservas(window.reservasData);
+        renderCaja(window.cajaData);
+        return true;
+    } catch(e) { return false; }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── Reset de sesión diario (1 AM) ─────────────────────────────────────────
 function resetSesion() {
-    // Limpiar operador y fecha de sesión
+    // Limpiar operador, fecha de sesión y caché del día
     localStorage.removeItem('sot_operador');
     localStorage.removeItem('sot_session_date');
+    localStorage.removeItem(_CACHE_KEY);
     myOpName = null;
 
     // Limpiar datos en memoria
@@ -136,11 +174,15 @@ document.addEventListener('DOMContentLoaded', () => {
     let sessionDate = localStorage.getItem('sot_session_date');
     let hoyStr      = new Date().toLocaleDateString('es-PE');
     if (sessionDate && sessionDate !== hoyStr) {
-        // Día distinto → limpiar operador, pedir de nuevo
+        // Día distinto → limpiar operador, caché y pedir de nuevo
         localStorage.removeItem('sot_operador');
         localStorage.removeItem('sot_session_date');
+        localStorage.removeItem(_CACHE_KEY);
         myOpName = null;
     }
+
+    // Cargar caché local inmediatamente para mostrar datos sin esperar la red
+    _loadDashboardCache();
 
     if (!myOpName) {
         mostrarModalLogin(false);
@@ -281,10 +323,16 @@ function fetchDashboardData() {
             renderReservas(window.reservasData);
             renderCaja(window.cajaData);
             actualizarModalSiAbierto();
+            _saveDashboardCache(); // guardar para uso offline
         })
-        .catch(err => {
+        .catch(() => {
             toggleSpinner(false);
-            console.error("Hubo un error cargando los datos:", err);
+            // Si hay caché, los datos ya se mostraron al inicio — solo avisar
+            let hayCaché = !!localStorage.getItem(_CACHE_KEY);
+            mostrarToast(
+                hayCaché ? '📴 Sin conexión — mostrando datos guardados' : '❌ Sin conexión y sin datos previos',
+                'error'
+            );
         });
 }
 
@@ -542,6 +590,7 @@ function fetchDashboardDataBg() {
             renderOperaciones(window.operacionesData);
             renderReservas(window.reservasData);
             renderCaja(window.cajaData);
+            _saveDashboardCache(); // mantener caché actualizada
             // El modal de gestión bote NO se toca en BG refresh para no interrumpir al operador
         })
         .catch(err => {
