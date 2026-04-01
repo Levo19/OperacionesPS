@@ -2,6 +2,31 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbzi5aD18Xj0ikbQJZkiMSjZ
 
 let myOpName = localStorage.getItem('sot_operador') || null;
 
+// ── PWA Install prompt ────────────────────────────────────────────────────
+let _pwaPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    _pwaPrompt = e;
+    let btn = document.getElementById('btn-instalar-pwa');
+    if (btn) btn.classList.remove('hidden');
+});
+window.addEventListener('appinstalled', () => {
+    _pwaPrompt = null;
+    let btn = document.getElementById('btn-instalar-pwa');
+    if (btn) btn.classList.add('hidden');
+    mostrarToast('✅ App instalada correctamente.', 'success');
+});
+function instalarPWA() {
+    if (!_pwaPrompt) return;
+    _pwaPrompt.prompt();
+    _pwaPrompt.userChoice.then(r => {
+        if (r.outcome === 'accepted') mostrarToast('✅ Instalando OPS...', 'success');
+        _pwaPrompt = null;
+        let btn = document.getElementById('btn-instalar-pwa');
+        if (btn) btn.classList.add('hidden');
+    });
+}
+
 function cambiarOperador() {
     mostrarModalLogin(true);
 }

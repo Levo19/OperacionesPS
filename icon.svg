@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#56070c"/>
+  <!-- Ola del mar -->
+  <path d="M80 340 Q130 310 180 340 Q230 370 280 340 Q330 310 380 340 Q430 370 432 360 L432 420 Q430 430 80 420 Z" fill="#ffffff" opacity="0.15"/>
+  <!-- Casco del bote -->
+  <path d="M156 280 L356 280 L326 320 L186 320 Z" fill="#ffffff"/>
+  <!-- Cuerpo del bote -->
+  <rect x="186" y="220" width="140" height="62" rx="6" fill="#ffffff"/>
+  <!-- Mástil -->
+  <rect x="250" y="140" width="8" height="82" fill="#ffffff" opacity="0.9"/>
+  <!-- Vela -->
+  <path d="M258 148 L310 200 L258 200 Z" fill="#ffffff" opacity="0.85"/>
+  <!-- Texto OPS -->
+  <text x="256" y="400" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="72" fill="#ffffff" text-anchor="middle" letter-spacing="6">OPS</text>
+</svg>

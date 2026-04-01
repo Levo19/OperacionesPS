@@ -1,0 +1,44 @@
+{
+  "name": "Operaciones PS",
+  "short_name": "OPS",
+  "description": "Sistema de gestión de operaciones turísticas — El Muelle",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#56070c",
+  "theme_color": "#56070c",
+  "lang": "es-PE",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "El Muelle",
+      "short_name": "Muelle",
+      "description": "Ver operaciones del día",
+      "url": "./index.html#muelle",
+      "icons": [{ "src": "icon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Finanzas",
+      "short_name": "Caja",
+      "description": "Ver movimientos de caja",
+      "url": "./index.html#caja",
+      "icons": [{ "src": "icon.svg", "sizes": "any" }]
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "screenshots": []
+}
