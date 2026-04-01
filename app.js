@@ -152,7 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     fetchDashboardData();
-    setInterval(fetchDashboardDataBg, 15000);
+    setInterval(fetchDashboardDataBg, 30000);
     programarResetDiario();
     iniciarCountdownTimer();
     // Procesar cola offline si hay items pendientes del turno anterior
@@ -344,8 +344,6 @@ function syncManifestBg() {
                 }
             }
 
-            renderOperaciones(window.operacionesData);
-            renderReservas(window.reservasData);
             actualizarModalSiAbierto();
         })
         .catch(() => {});
@@ -412,17 +410,11 @@ function filtrarManifiestoModal(q) {
 function fetchDashboardDataBg() {
     let spinner = document.getElementById('global-spinner');
     if(pendingPostRequests > 0 || !spinner.classList.contains('hidden')) return;
-    // No interrumpir si el modal de embarque está abierto y hay items pendientes de confirmar
-    let modalAbierto = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
-    if (modalAbierto) {
-        let opId = document.getElementById('hidden-gestion-op')?.value;
-        let op = (window.operacionesData || []).find(o => o.id === opId);
-        let hayTemps = (op?.manifiesto || []).some(m => m._syncing || (m.id && m.id.startsWith('temp-')));
-        if (hayTemps) return; // Esperar a que se resuelvan los POSTs activos
-    }
+    // No interrumpir si hay algún modal abierto (usuario activo) o si hay items pendientes
+    let anyModalOpen = !!document.querySelector('[id^="modal-"]:not(.hidden)');
+    if (anyModalOpen) return;
 
     let refreshIcon = document.querySelector('#btn-refresh i');
-    if(refreshIcon) refreshIcon.classList.add('fa-spin');
 
     // Snapshot pre-refresh para detectar cambios de otros operadores (Task #5)
     let _prevOpStates  = new Map((window.operacionesData || []).filter(o => o.id !== 'Creando...').map(o => [o.id, { estado: o.estado, pax: o.ocupados }]));
@@ -557,6 +549,170 @@ function fetchDashboardDataBg() {
         });
 }
 
+// ── Helpers para renderOperaciones (DOM diffing) ─────────────────────────────
+function _generarCardFP(op) {
+    let isViaje = op.estado === 'En_Viaje';
+    let endTs   = isViaje ? calcularEndTs(op) : 0;
+    let isExp   = endTs > 0 && (endTs - Date.now()) <= 0;
+    return `${op.id}|${op.estado}|${op.ocupados}|${op.capacidad}|${op.foto_zarpe||''}|${isExp?1:0}`;
+}
+
+function _generarCardHTML(op) {
+    let porcentaje = op.capacidad > 0 ? (op.ocupados / op.capacidad) * 100 : 0;
+    let isViaje = op.estado === 'En_Viaje';
+    let endTs   = isViaje ? calcularEndTs(op) : 0;
+    let remMs   = endTs > 0 ? endTs - Date.now() : -1;
+    let isExpired = endTs > 0 && remMs <= 0;
+    let fp = _generarCardFP(op);
+
+    let bgStyle, barColor, titleColor, gradientBar;
+    if (!isViaje) {
+        bgStyle = 'bg-white border-gray-100'; barColor = 'bg-green-500';
+        titleColor = 'text-blue-900'; gradientBar = 'from-green-400 to-green-500';
+    } else if (isExpired) {
+        bgStyle = 'bg-emerald-50 border-emerald-200 trip-done'; barColor = 'bg-emerald-500';
+        titleColor = 'text-emerald-900'; gradientBar = 'from-emerald-400 to-emerald-500';
+    } else {
+        bgStyle = 'bg-orange-50 border-orange-200'; barColor = 'bg-orange-500';
+        titleColor = 'text-orange-900'; gradientBar = 'from-orange-400 to-orange-500';
+    }
+
+    let tagEstado = '';
+    if (isViaje) {
+        if (isExpired) {
+            tagEstado = `<span class="trip-estado-tag absolute top-2 right-4 bg-emerald-200 text-emerald-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-emerald-300 z-10"><i class="fas fa-check-circle mr-1"></i>En Puerto</span>`;
+        } else {
+            tagEstado = `<span class="trip-estado-tag absolute top-2 right-4 bg-orange-200 text-orange-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-orange-300 z-10 animate-pulse"><i class="fas fa-water mr-1"></i>En Viaje</span>`;
+        }
+    }
+
+    let countdownBadge = '';
+    if (isViaje && endTs > 0) {
+        let cdText  = isExpired ? '¡En Puerto!' : (formatCountdown(remMs) || '—');
+        let cdClass = isExpired
+            ? 'inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full'
+            : remMs < 15 * 60 * 1000
+                ? 'inline-flex items-center gap-1 text-[9px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full animate-pulse'
+                : 'inline-flex items-center gap-1 text-[9px] font-black text-orange-700 bg-orange-100 border border-orange-300 px-2 py-0.5 rounded-full';
+        countdownBadge = `<span class="${cdClass}" data-end-ts="${endTs}"><i class="fas fa-hourglass-half text-[8px]"></i>${cdText}</span>`;
+    }
+
+    let fotoBtns = '';
+    if (isViaje) {
+        if (op.foto_zarpe) {
+            let fotoEsc = op.foto_zarpe.replace(/'/g, "\\'");
+            fotoBtns = `
+            <div class="flex gap-2">
+                <button class="flex-1 ${isExpired ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'} font-bold py-2 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="verFotoZarpe('${fotoEsc}')">
+                    <i class="fas fa-camera mr-1.5"></i> Ver Foto
+                </button>
+                <button class="bg-gray-50 text-gray-500 font-bold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs" title="Cambiar foto" onclick="abrirModalZarpeFoto('${op.id}', true)">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>`;
+        } else {
+            fotoBtns = `<button class="w-full bg-gray-50 text-gray-600 font-bold py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalZarpeFoto('${op.id}')">
+                <i class="fas fa-camera mr-1.5 text-gray-400"></i> Subir Foto de Zarpe
+            </button>`;
+        }
+    }
+
+    let html = `
+    <div class="${bgStyle} rounded-2xl shadow-sm p-4 mb-4 border relative overflow-hidden" data-op-id="${op.id}" data-card-fp="${fp}">
+        ${tagEstado}
+        <div class="trip-sidebar absolute top-0 left-0 w-2 h-full ${barColor}"></div>
+        <div class="flex justify-between items-center mb-1 pl-3">
+            <h3 class="font-extrabold text-lg flex-1 truncate ${titleColor}"><i class="fas fa-ship fa-sm mr-2 ${isViaje ? (isExpired ? 'text-emerald-400' : 'text-orange-400') : 'text-blue-400'} ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
+            <div class="flex items-center gap-1.5 shrink-0 ml-2">
+                ${op.id !== 'Creando...' ? `<button class="w-7 h-7 bg-white border border-gray-200 rounded-full text-gray-400 hover:text-blue-600 hover:border-blue-300 transition text-xs flex items-center justify-center shadow-sm" onclick="abrirModalEditarOp('${op.id}'); event.stopPropagation()"><i class="fas fa-pen"></i></button>` : ''}
+                <span class="bg-white border text-gray-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">${op.ocupados} / ${op.capacidad} PAX</span>
+            </div>
+        </div>
+        <div class="flex justify-between text-[10px] text-gray-400 font-bold mb-2 uppercase tracking-wider pl-3 pr-2 ml-6">
+            <span>CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
+            <div class="flex items-center gap-2">
+                ${op.hora_salida ? `<span class="${isViaje ? (isExpired ? 'text-emerald-600' : 'text-orange-500') : 'text-blue-500'} font-black"><i class="fas fa-clock mr-1"></i>${op.hora_salida}</span>` : ''}
+                ${countdownBadge}
+            </div>
+        </div>
+        <div class="w-full bg-gray-100 rounded-full h-2 mb-3">
+            <div class="bg-gradient-to-r ${gradientBar} h-2 rounded-full" style="width: ${porcentaje}%"></div>
+        </div>
+        <div class="text-[10px] text-gray-500 flex justify-between items-center mb-3 font-medium px-2 py-1.5 bg-white border border-gray-200 rounded-lg shadow-inner">
+            <span class="truncate"><i class="fas fa-user-tie ${isViaje ? (isExpired ? 'text-emerald-400' : 'text-orange-400') : 'text-blue-400'} mr-1"></i><b class="text-gray-700">${op.capitan}</b></span>
+            <span class="truncate text-right"><i class="fas fa-user-tag text-green-400 mr-1"></i><b class="text-gray-700">${op.guia}</b></span>
+        </div>
+        ${!isViaje ? `
+        <div class="flex space-x-2 mt-2">
+            <button class="flex-[2] bg-blue-50 text-blue-700 font-bold py-2.5 rounded-xl border border-blue-200 hover:bg-blue-100 shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
+                <i class="fas fa-users mr-1.5"></i> Gest. PAX
+            </button>
+            <button class="flex-1 bg-green-500 text-white font-bold py-2.5 rounded-xl border border-green-600 shadow-md transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarZarpe('${op.id}')">
+                <i class="fas fa-anchor mr-1.5"></i> Zarpar
+            </button>
+        </div>
+        ` : `
+        <div class="mt-2 space-y-2">
+            ${isExpired ? `
+            <button class="w-full bg-emerald-500 text-white font-black py-3 rounded-xl border border-emerald-600 shadow-md shadow-emerald-500/30 transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarLlegada('${op.id}')">
+                <i class="fas fa-flag-checkered mr-1.5"></i> Confirmar Llegada
+            </button>` : ''}
+            <button class="w-full ${isExpired ? 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200' : 'bg-orange-100 text-orange-800 border-orange-200 hover:bg-orange-200'} font-bold py-2.5 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
+                <i class="fas fa-clipboard-list mr-1.5"></i> Ver Manifiesto
+            </button>
+            ${fotoBtns}
+        </div>
+        `}
+    </div>`;
+    return { fp, html };
+}
+
+function _generarPasesDiaHTML(pases) {
+    if (!pases || pases.length === 0) return '';
+    let totalPaxPases = pases.reduce((s, p) => s + (parseInt(p.pax)||0), 0);
+    let contactos = window.contactosData || [];
+    let filas = pases.map((p, idx) => {
+        let aliadoInfo   = contactos.find(c => c.id === p.aliadoId || c.nombre === p.aliadoId);
+        let aliadoNombre = aliadoInfo ? aliadoInfo.nombre : (p.aliadoId || '—');
+        let origen       = p.nombreOrigen || '';
+        let ts           = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
+        let paseId       = p.id || '';
+        let paseNombreEsc = origen.replace(/'/g,"\\'");
+        return `
+        <tr class="border-t border-gray-100 hover:bg-purple-50 transition">
+            <td class="py-2 px-2 cursor-pointer" onclick="verDetallePase(${idx})">
+                <span class="text-[9px] font-bold text-purple-400 uppercase tracking-wide block">Para:</span>
+                <span class="text-[11px] font-black text-purple-800 block uppercase leading-tight">${aliadoNombre}</span>
+                ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
+            </td>
+            <td class="py-2 px-2 text-center text-sm font-black text-blue-600 cursor-pointer" onclick="verDetallePase(${idx})">${p.pax}</td>
+            <td class="py-2 px-2 text-[9px] text-gray-400 text-right cursor-pointer" onclick="verDetallePase(${idx})">${ts}</td>
+            <td class="py-1.5 px-1.5 text-right">
+                <button class="bg-red-50 text-red-500 border border-red-200 text-[9px] font-black px-2 py-1 rounded-lg hover:bg-red-100 active:scale-95 transition" onclick="iniciarAnularPase('${paseId}','${p.pax}','${paseNombreEsc}'); event.stopPropagation();">
+                    <i class="fas fa-undo-alt mr-0.5"></i>Anular
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+    return `
+    <div class="mt-4 bg-purple-50 border border-purple-200 rounded-2xl shadow-sm overflow-hidden" data-section="pases">
+        <div class="px-4 py-2.5 bg-purple-100 border-b border-purple-200 flex items-center justify-between">
+            <span class="text-[11px] font-black text-purple-800 uppercase tracking-wider"><i class="fas fa-people-carry mr-1.5"></i>Pases del día</span>
+            <span class="text-[10px] bg-purple-200 text-purple-800 font-black px-2 py-0.5 rounded-full">${totalPaxPases} pax · ${pases.length} pases</span>
+        </div>
+        <table class="w-full">
+            <thead><tr class="text-[9px] text-purple-500 uppercase tracking-wider bg-purple-50">
+                <th class="py-1.5 px-2 text-left font-bold">Destino / Origen</th>
+                <th class="py-1.5 px-2 text-center font-bold">PAX</th>
+                <th class="py-1.5 px-2 text-right font-bold">Hora</th>
+                <th class="py-1.5 px-2"></th>
+            </tr></thead>
+            <tbody class="bg-white">${filas}</tbody>
+        </table>
+    </div>`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function renderOperaciones(operaciones) {
     const container = document.getElementById('operaciones-container');
     let hoy = getHoyLocal();
@@ -568,195 +724,58 @@ function renderOperaciones(operaciones) {
         return 0;
     });
 
-    // Skip re-render si nada cambió — incluye pases para detectar cambios de otro operador
-    let fp = JSON.stringify(opHoy.map(o => `${o.id}|${o.estado}|${o.ocupados}|${(o.manifiesto||[]).length}|${o.foto_zarpe||''}`))
-           + '|p' + (window.pasesExternosData || []).length;
+    // Container-level fingerprint — evita entrar si nada cambió
+    let fp = opHoy.map(o => _generarCardFP(o)).join(';') + '|p' + (window.pasesExternosData || []).length;
     if (container._fp === fp) return;
     container._fp = fp;
 
-    // Capturar IDs existentes antes de reemplazar el DOM
-    let prevIds = new Set([...container.querySelectorAll('[data-op-id]')].map(el => el.dataset.opId));
-
-    if(!opHoy || opHoy.length === 0) {
+    if (!opHoy || opHoy.length === 0) {
         container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> No hay lanchas programadas<br>para el día de HOY.</div>`;
         return;
     }
-    
-    // Tabla de pases del día (al final) — movimientos donde Id_contactoPase tiene valor
-    let pasesDiaHTML = '';
-    let pases = window.pasesExternosData || [];
-    if(pases.length > 0) {
-        let totalPaxPases = pases.reduce((s, p) => s + (parseInt(p.pax)||0), 0);
-        let contactos = window.contactosData || [];
-        let filas = pases.map((p, idx) => {
-            // Resolver nombre del aliado destino (Id_contactoPase)
-            let aliadoInfo  = contactos.find(c => c.id === p.aliadoId || c.nombre === p.aliadoId);
-            let aliadoNombre= aliadoInfo ? aliadoInfo.nombre : (p.aliadoId || '—');
-            // Origen: nombre del pasajero/agencia que generó el pase
-            let origen      = p.nombreOrigen || '';
-            let ts          = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
-            let paseId      = p.id || '';
-            let paseNombreEsc = origen.replace(/'/g,"\\'");
-            return `
-            <tr class="border-t border-gray-100 hover:bg-purple-50 transition">
-                <td class="py-2 px-2 cursor-pointer" onclick="verDetallePase(${idx})">
-                    <span class="text-[9px] font-bold text-purple-400 uppercase tracking-wide block">Para:</span>
-                    <span class="text-[11px] font-black text-purple-800 block uppercase leading-tight">${aliadoNombre}</span>
-                    ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
-                </td>
-                <td class="py-2 px-2 text-center text-sm font-black text-blue-600 cursor-pointer" onclick="verDetallePase(${idx})">${p.pax}</td>
-                <td class="py-2 px-2 text-[9px] text-gray-400 text-right cursor-pointer" onclick="verDetallePase(${idx})">${ts}</td>
-                <td class="py-1.5 px-1.5 text-right">
-                    <button class="bg-red-50 text-red-500 border border-red-200 text-[9px] font-black px-2 py-1 rounded-lg hover:bg-red-100 active:scale-95 transition" onclick="iniciarAnularPase('${paseId}','${p.pax}','${paseNombreEsc}'); event.stopPropagation();">
-                        <i class="fas fa-undo-alt mr-0.5"></i>Anular
-                    </button>
-                </td>
-            </tr>`;
-        }).join('');
-        pasesDiaHTML = `
-        <div class="mt-4 bg-purple-50 border border-purple-200 rounded-2xl shadow-sm overflow-hidden">
-            <div class="px-4 py-2.5 bg-purple-100 border-b border-purple-200 flex items-center justify-between">
-                <span class="text-[11px] font-black text-purple-800 uppercase tracking-wider"><i class="fas fa-people-carry mr-1.5"></i>Pases del día</span>
-                <span class="text-[10px] bg-purple-200 text-purple-800 font-black px-2 py-0.5 rounded-full">${totalPaxPases} pax · ${pases.length} pases</span>
-            </div>
-            <table class="w-full">
-                <thead><tr class="text-[9px] text-purple-500 uppercase tracking-wider bg-purple-50">
-                    <th class="py-1.5 px-2 text-left font-bold">Destino / Origen</th>
-                    <th class="py-1.5 px-2 text-center font-bold">PAX</th>
-                    <th class="py-1.5 px-2 text-right font-bold">Hora</th>
-                    <th class="py-1.5 px-2"></th>
-                </tr></thead>
-                <tbody class="bg-white">${filas}</tbody>
-            </table>
-        </div>`;
-    }
 
-    container.innerHTML = opHoy.map(op => {
-        let porcentaje = op.capacidad > 0 ? (op.ocupados / op.capacidad) * 100 : 0;
-        let isViaje = op.estado === 'En_Viaje';
+    // Recopilar cards existentes en el DOM
+    let existingCards = new Map();
+    container.querySelectorAll('[data-op-id]').forEach(el => existingCards.set(el.dataset.opId, el));
 
-        // Calcular countdown para En_Viaje
-        let endTs   = isViaje ? calcularEndTs(op) : 0;
-        let remMs   = endTs > 0 ? endTs - Date.now() : -1;
-        let isExpired = endTs > 0 && remMs <= 0;
+    // Eliminar cards que ya no están en opHoy
+    let newIds = new Set(opHoy.map(o => o.id));
+    existingCards.forEach((el, id) => { if (!newIds.has(id)) el.remove(); });
 
-        // Colores según estado
-        let bgStyle, barColor, titleColor, gradientBar;
-        if (!isViaje) {
-            bgStyle = 'bg-white border-gray-100';
-            barColor = 'bg-green-500';
-            titleColor = 'text-blue-900';
-            gradientBar = 'from-green-400 to-green-500';
-        } else if (isExpired) {
-            bgStyle = 'bg-emerald-50 border-emerald-200 trip-done';
-            barColor = 'bg-emerald-500';
-            titleColor = 'text-emerald-900';
-            gradientBar = 'from-emerald-400 to-emerald-500';
+    // Actualizar o crear cada card (sin tocar las que no cambiaron)
+    opHoy.forEach(op => {
+        let { fp: cardFp, html } = _generarCardHTML(op);
+        let existing = existingCards.get(op.id);
+        if (existing) {
+            if (existing.dataset.cardFp !== cardFp) {
+                let tmp = document.createElement('div');
+                tmp.innerHTML = html.trim();
+                let newEl = tmp.firstElementChild;
+                existing.replaceWith(newEl);
+                existingCards.set(op.id, newEl);
+            }
         } else {
-            bgStyle = 'bg-orange-50 border-orange-200';
-            barColor = 'bg-orange-500';
-            titleColor = 'text-orange-900';
-            gradientBar = 'from-orange-400 to-orange-500';
+            let tmp = document.createElement('div');
+            tmp.innerHTML = html.trim();
+            let newEl = tmp.firstElementChild;
+            newEl.classList.add('card-enter');
+            existingCards.set(op.id, newEl);
         }
-
-        // Tag estado + countdown badge
-        let tagEstado = '';
-        if (isViaje) {
-            if (isExpired) {
-                tagEstado = `<span class="trip-estado-tag absolute top-2 right-4 bg-emerald-200 text-emerald-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-emerald-300 z-10"><i class="fas fa-check-circle mr-1"></i>En Puerto</span>`;
-            } else {
-                tagEstado = `<span class="trip-estado-tag absolute top-2 right-4 bg-orange-200 text-orange-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-orange-300 z-10 animate-pulse"><i class="fas fa-water mr-1"></i>En Viaje</span>`;
-            }
-        }
-
-        // Countdown badge (solo En_Viaje con hora_salida conocida)
-        let countdownBadge = '';
-        if (isViaje && endTs > 0) {
-            let cdText  = isExpired ? '¡En Puerto!' : (formatCountdown(remMs) || '—');
-            let cdClass = isExpired
-                ? 'inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full'
-                : remMs < 15 * 60 * 1000
-                    ? 'inline-flex items-center gap-1 text-[9px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full animate-pulse'
-                    : 'inline-flex items-center gap-1 text-[9px] font-black text-orange-700 bg-orange-100 border border-orange-300 px-2 py-0.5 rounded-full';
-            countdownBadge = `<span class="${cdClass}" data-end-ts="${endTs}"><i class="fas fa-hourglass-half text-[8px]"></i>${cdText}</span>`;
-        }
-
-        // Botón foto de zarpe (En_Viaje y expirado)
-        let fotoBtns = '';
-        if (isViaje) {
-            if (op.foto_zarpe) {
-                let fotoEsc = op.foto_zarpe.replace(/'/g, "\\'");
-                fotoBtns = `
-                <div class="flex gap-2">
-                    <button class="flex-1 ${isExpired ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'} font-bold py-2 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="verFotoZarpe('${fotoEsc}')">
-                        <i class="fas fa-camera mr-1.5"></i> Ver Foto
-                    </button>
-                    <button class="bg-gray-50 text-gray-500 font-bold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs" title="Cambiar foto" onclick="abrirModalZarpeFoto('${op.id}', true)">
-                        <i class="fas fa-sync-alt"></i>
-                    </button>
-                </div>`;
-            } else {
-                fotoBtns = `<button class="w-full bg-gray-50 text-gray-600 font-bold py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalZarpeFoto('${op.id}')">
-                    <i class="fas fa-camera mr-1.5 text-gray-400"></i> Subir Foto de Zarpe
-                </button>`;
-            }
-        }
-
-        return `
-        <div class="${bgStyle} rounded-2xl shadow-sm p-4 mb-4 border relative overflow-hidden" data-op-id="${op.id}">
-            ${tagEstado}
-            <div class="trip-sidebar absolute top-0 left-0 w-2 h-full ${barColor}"></div>
-            <div class="flex justify-between items-center mb-1 pl-3">
-                <h3 class="font-extrabold text-lg flex-1 truncate ${titleColor}"><i class="fas fa-ship fa-sm mr-2 ${isViaje ? (isExpired ? 'text-emerald-400' : 'text-orange-400') : 'text-blue-400'} ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
-                <div class="flex items-center gap-1.5 shrink-0 ml-2">
-                    ${op.id !== 'Creando...' ? `<button class="w-7 h-7 bg-white border border-gray-200 rounded-full text-gray-400 hover:text-blue-600 hover:border-blue-300 transition text-xs flex items-center justify-center shadow-sm" onclick="abrirModalEditarOp('${op.id}'); event.stopPropagation()"><i class="fas fa-pen"></i></button>` : ''}
-                    <span class="bg-white border text-gray-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">${op.ocupados} / ${op.capacidad} PAX</span>
-                </div>
-            </div>
-            <div class="flex justify-between text-[10px] text-gray-400 font-bold mb-2 uppercase tracking-wider pl-3 pr-2 ml-6">
-                <span>CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
-                <div class="flex items-center gap-2">
-                    ${op.hora_salida ? `<span class="${isViaje ? (isExpired ? 'text-emerald-600' : 'text-orange-500') : 'text-blue-500'} font-black"><i class="fas fa-clock mr-1"></i>${op.hora_salida}</span>` : ''}
-                    ${countdownBadge}
-                </div>
-            </div>
-
-            <div class="w-full bg-gray-100 rounded-full h-2 mb-3">
-                <div class="bg-gradient-to-r ${gradientBar} h-2 rounded-full" style="width: ${porcentaje}%"></div>
-            </div>
-            <div class="text-[10px] text-gray-500 flex justify-between items-center mb-3 font-medium px-2 py-1.5 bg-white border border-gray-200 rounded-lg shadow-inner">
-                <span class="truncate"><i class="fas fa-user-tie ${isViaje ? (isExpired ? 'text-emerald-400' : 'text-orange-400') : 'text-blue-400'} mr-1"></i><b class="text-gray-700">${op.capitan}</b></span>
-                <span class="truncate text-right"><i class="fas fa-user-tag text-green-400 mr-1"></i><b class="text-gray-700">${op.guia}</b></span>
-            </div>
-            ${!isViaje ? `
-            <div class="flex space-x-2 mt-2">
-                <button class="flex-[2] bg-blue-50 text-blue-700 font-bold py-2.5 rounded-xl border border-blue-200 hover:bg-blue-100 shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
-                    <i class="fas fa-users mr-1.5"></i> Gest. PAX
-                </button>
-                <button class="flex-1 bg-green-500 text-white font-bold py-2.5 rounded-xl border border-green-600 shadow-md transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarZarpe('${op.id}')">
-                    <i class="fas fa-anchor mr-1.5"></i> Zarpar
-                </button>
-            </div>
-            ` : `
-            <div class="mt-2 space-y-2">
-                ${isExpired ? `
-                <button class="w-full bg-emerald-500 text-white font-black py-3 rounded-xl border border-emerald-600 shadow-md shadow-emerald-500/30 transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarLlegada('${op.id}')">
-                    <i class="fas fa-flag-checkered mr-1.5"></i> Confirmar Llegada
-                </button>` : ''}
-                <button class="w-full ${isExpired ? 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200' : 'bg-orange-100 text-orange-800 border-orange-200 hover:bg-orange-200'} font-bold py-2.5 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
-                    <i class="fas fa-clipboard-list mr-1.5"></i> Ver Manifiesto
-                </button>
-                ${fotoBtns}
-            </div>
-            `}
-        </div>
-        `;
-    }).join('') + pasesDiaHTML;
-
-    // Animar solo los cards genuinamente nuevos
-    container.querySelectorAll('[data-op-id]').forEach(el => {
-        if (!prevIds.has(el.dataset.opId)) el.classList.add('card-enter');
     });
+
+    // Re-ordenar: sacar sección de pases, appendear cards en orden correcto
+    let pasesSectionEl = container.querySelector('[data-section="pases"]');
+    if (pasesSectionEl) pasesSectionEl.remove();
+
+    opHoy.forEach(op => container.appendChild(existingCards.get(op.id)));
+
+    // Actualizar sección de pases
+    let pasesDiaHTML = _generarPasesDiaHTML(window.pasesExternosData || []);
+    if (pasesDiaHTML) {
+        let tmp = document.createElement('div');
+        tmp.innerHTML = pasesDiaHTML.trim();
+        container.appendChild(tmp.firstElementChild);
+    }
 }
 
 function renderReservas(reservas) {
