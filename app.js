@@ -194,7 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     fetchDashboardData();
-    setInterval(fetchDashboardDataBg, 30000);
+    setInterval(fetchDashboardDataBg, 10000);
     programarResetDiario();
     iniciarCountdownTimer();
     // Procesar cola offline si hay items pendientes del turno anterior
