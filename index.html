@@ -87,18 +87,38 @@
     <div id="modal-login" class="fixed inset-0 bg-gradient-to-br from-blue-950 to-blue-800 z-[100] flex flex-col items-center justify-center p-6 hidden">
         <button id="login-close-btn" onclick="document.getElementById('modal-login').classList.add('hidden')" class="hidden absolute top-5 right-5 text-blue-300 hover:text-white text-2xl w-9 h-9 flex items-center justify-center rounded-full hover:bg-blue-700 transition"><i class="fas fa-times"></i></button>
         <div class="w-full max-w-xs">
-            <div class="text-center mb-10">
+            <div class="text-center mb-8">
                 <i class="fas fa-ship text-white text-5xl mb-4 block opacity-80 drop-shadow-lg"></i>
                 <h1 class="text-white font-black text-2xl tracking-tight">SOT Operaciones</h1>
                 <p class="text-blue-300 text-sm mt-1">Ingresa parte de tu nombre para continuar</p>
             </div>
-            <div class="flex space-x-2">
-                <input id="login-input" type="text" autocomplete="off" class="flex-1 bg-blue-900/80 border-2 border-blue-600 text-white placeholder-blue-400 rounded-xl p-3.5 text-base font-bold outline-none focus:border-white transition" placeholder="Ej: gomez, luis..." onkeydown="if(event.key==='Enter')confirmarLoginManual()">
-                <button onclick="confirmarLoginManual()" class="bg-white text-blue-900 font-black px-5 rounded-xl hover:bg-blue-100 transition active:scale-95 shadow-lg text-sm">OK</button>
+
+            <!-- Estado: cargando operadores -->
+            <div id="login-loading" class="text-center py-4 hidden">
+                <i class="fas fa-circle-notch fa-spin text-blue-300 text-2xl mb-2 block"></i>
+                <p class="text-blue-300 text-sm font-bold">Conectando con el servidor...</p>
+                <p class="text-blue-400 text-xs mt-1 opacity-70">Esto puede tardar unos segundos</p>
             </div>
-            <p id="login-error" class="text-red-300 text-xs mt-3 hidden text-center font-bold"></p>
-            <!-- Zona de desambiguación si hay más de 1 match -->
-            <div id="login-matches" class="mt-4 space-y-2 hidden"></div>
+
+            <!-- Estado: sin red -->
+            <div id="login-offline" class="text-center py-4 hidden">
+                <i class="fas fa-wifi text-red-400 text-2xl mb-2 block opacity-70"></i>
+                <p class="text-red-300 text-sm font-bold mb-3">Sin conexión con el servidor</p>
+                <button onclick="fetchPersonalRapido()" class="w-full py-3 bg-white/10 border border-white/20 text-white font-black rounded-xl active:scale-95 transition text-sm">
+                    <i class="fas fa-redo mr-2"></i>Reintentar conexión
+                </button>
+            </div>
+
+            <!-- Estado: listo para ingresar -->
+            <div id="login-form" class="hidden">
+                <div class="flex space-x-2">
+                    <input id="login-input" type="text" autocomplete="off" class="flex-1 bg-blue-900/80 border-2 border-blue-600 text-white placeholder-blue-400 rounded-xl p-3.5 text-base font-bold outline-none focus:border-white transition" placeholder="Ej: gomez, luis..." onkeydown="if(event.key==='Enter')confirmarLoginManual()">
+                    <button onclick="confirmarLoginManual()" class="bg-white text-blue-900 font-black px-5 rounded-xl hover:bg-blue-100 transition active:scale-95 shadow-lg text-sm">OK</button>
+                </div>
+                <p id="login-error" class="text-red-300 text-xs mt-3 hidden text-center font-bold"></p>
+                <!-- Zona de desambiguación si hay más de 1 match -->
+                <div id="login-matches" class="mt-4 space-y-2 hidden"></div>
+            </div>
         </div>
     </div>
 

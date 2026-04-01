@@ -227,28 +227,45 @@ function checkForUpdates() {
 }
 
 // ── Precarga ultraligera de operadores (solo hoja Personal) ──────────────────
-// Se llama al inicio ANTES de getDashboardData para que el login funcione
-// incluso en dispositivos nuevos sin caché local.
-function fetchPersonalRapido() {
-    // Si ya tenemos operadores en memoria (caché local), no necesitamos esto
-    let ops = window.catalogosData?.operadores || [];
-    if (ops.length > 0) return;
+function _loginEstado(estado) {
+    // estado: 'cargando' | 'listo' | 'offline'
+    let loading = document.getElementById('login-loading');
+    let form    = document.getElementById('login-form');
+    let offline = document.getElementById('login-offline');
+    if (!loading) return; // modal no visible aún
+    loading.classList.toggle('hidden', estado !== 'cargando');
+    form.classList.toggle('hidden',    estado !== 'listo');
+    offline.classList.toggle('hidden', estado !== 'offline');
+    if (estado === 'listo') setTimeout(() => document.getElementById('login-input')?.focus(), 100);
+}
 
-    fetch(GAS_URL + '?action=getPersonal', { cache: 'no-store' })
-        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+function fetchPersonalRapido() {
+    // Si ya tenemos operadores en memoria, mostrar form directamente
+    let ops = window.catalogosData?.operadores || [];
+    if (ops.length > 0) { _loginEstado('listo'); return; }
+
+    // Mostrar spinner de carga en el modal si está abierto
+    let modalOpen = !document.getElementById('modal-login')?.classList.contains('hidden');
+    if (modalOpen) _loginEstado('cargando');
+
+    let ctrl = new AbortController();
+    let timer = setTimeout(() => ctrl.abort(), 12000); // 12s timeout
+
+    fetch(GAS_URL + '?action=getPersonal', { signal: ctrl.signal, cache: 'no-store' })
+        .then(r => { clearTimeout(timer); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(data => {
-            if (data.status !== 'success' || !data.operadores) return;
-            // Inyectar solo operadores en catalogosData sin pisar el resto de datos
+            if (!data.operadores || !data.operadores.length) throw new Error('Sin datos');
             if (!window.catalogosData) window.catalogosData = {};
-            if (!window.catalogosData.operadores || window.catalogosData.operadores.length === 0) {
-                window.catalogosData.operadores = data.operadores;
-            }
-            // También precargar personal en contactosData si aún no hay nada
-            if ((!window.contactosData || window.contactosData.length === 0) && data.personal) {
-                // No sobreescribir contactosData real — solo marcar que los operadores ya están disponibles
-            }
+            window.catalogosData.operadores = data.operadores;
+            _loginEstado('listo');
         })
-        .catch(() => {}); // silenciar — getDashboardData lo reintentará
+        .catch(() => {
+            clearTimeout(timer);
+            // Si el dashboard completo ya cargó mientras tanto, usar esos operadores
+            let opsAhora = window.catalogosData?.operadores || [];
+            if (opsAhora.length > 0) { _loginEstado('listo'); return; }
+            _loginEstado('offline');
+        });
 }
 
 // =============================
@@ -262,10 +279,12 @@ function mostrarModalLogin(closeable) {
     let modal = document.getElementById('modal-login');
     modal.classList.remove('hidden');
     document.getElementById('login-close-btn').classList.toggle('hidden', !closeable);
-    document.getElementById('login-error').classList.add('hidden');
-    document.getElementById('login-matches').classList.add('hidden');
-    document.getElementById('login-input').value = '';
-    setTimeout(() => document.getElementById('login-input').focus(), 100);
+    document.getElementById('login-error')?.classList.add('hidden');
+    document.getElementById('login-matches')?.classList.add('hidden');
+    document.getElementById('login-input') && (document.getElementById('login-input').value = '');
+    // Mostrar estado según si ya hay operadores o no
+    let ops = window.catalogosData?.operadores || [];
+    _loginEstado(ops.length > 0 ? 'listo' : 'cargando');
 }
 
 function confirmarLoginManual() {
@@ -404,6 +423,8 @@ function fetchDashboardData() {
             try { renderReservas(window.reservasData); } catch(e) { console.error('renderReservas:', e); }
             try { renderCaja(window.cajaData); } catch(e) { console.error('renderCaja:', e); }
             try { actualizarModalSiAbierto(); } catch(e) { console.error('actualizarModal:', e); }
+            // Si el login estaba esperando operadores, ahora ya los tiene
+            try { _loginEstado('listo'); } catch(e) {}
             _saveDashboardCache();
         })
         .catch(err => {
