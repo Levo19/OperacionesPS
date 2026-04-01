@@ -1777,14 +1777,14 @@ function cambiarTipoCRM() {
 
     } else if(tipo === 'Agencia') {
         let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('agencia'));
-        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre} (S/${c.precio}/pax)</option>`).join('');
+        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre} (S/${c.precio}/pax)</option>`).join('');
         container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Agencia</label>
             <select id="input-crm-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefectoCRM()">
                 <option value="">Seleccionar...</option>${opts}</select>`;
 
     } else if(tipo === 'Aliado') {
         let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('aliado'));
-        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre}</option>`).join('');
         container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado</label>
             <select id="input-crm-contacto-select" class="${_selectInputClass()}">
                 <option value="">Seleccionar...</option>${opts}</select>`;
@@ -1794,7 +1794,7 @@ function cambiarTipoCRM() {
 
     } else if(tipo === 'Comisionado') {
         let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('comision'));
-        let opts = filtered.map(c => `<option value="${c.nombre}">${c.nombre}</option>`).join('');
+        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre}</option>`).join('');
         container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Comisionado</label>
             <select id="input-crm-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefectoCRM()">
                 <option value="">Seleccionar...</option>${opts}</select>`;
@@ -1838,24 +1838,31 @@ function confirmarNuevaReserva() {
     let tipo = document.getElementById('input-crm-tipo').value;
     let pax = document.getElementById('input-crm-pax').value.trim();
     let precio = document.getElementById('input-crm-precio').value.trim();
-    let contacto = tipo === 'Libre'
-        ? (document.getElementById('input-crm-contacto-text')?.value.trim().toUpperCase() || '')
-        : (document.getElementById('input-crm-contacto-select')?.value || '');
-    
-    if(!fecha || !contacto || !pax || !precio) return alert("❌ Fecha, Cliente, PAX y Total son obligatorios.");
-    
-    let resTemp = { 
-        id: 'Creando...', fecha: fecha, hora: hora, cliente: contacto, 
-        contacto: contacto, pax: pax, monto: parseFloat(precio).toFixed(2), 
-        creado_por: myOpName 
+    let nombreCliente, id_contacto;
+    if (tipo === 'Libre') {
+        nombreCliente = (document.getElementById('input-crm-contacto-text')?.value.trim().toUpperCase() || '');
+        id_contacto   = 'CON-00';
+    } else {
+        let sel = document.getElementById('input-crm-contacto-select');
+        nombreCliente = sel?.value || '';
+        let opt = sel?.options[sel.selectedIndex];
+        id_contacto   = opt?.dataset?.id || nombreCliente;
+    }
+
+    if(!fecha || !nombreCliente || !pax || !precio) { mostrarToast('❌ Fecha, Cliente, PAX y Total son obligatorios.', 'error'); return; }
+
+    let resTemp = {
+        id: 'Creando...', fecha: fecha, hora: hora, cliente: nombreCliente,
+        contacto: id_contacto, pax: pax, monto: parseFloat(precio).toFixed(2),
+        creado_por: myOpName
     };
     window.reservasData.unshift(resTemp);
     renderReservas(window.reservasData);
     cerrarModales();
-    
+
     fetchPostBg('nueva_reserva', {
         fecha: fecha, hora: hora, tipo: tipo,
-        id_contacto: contacto, cliente: contacto, cant_pax: pax, monto: parseFloat(precio).toFixed(2),
+        id_contacto: id_contacto, cliente: nombreCliente, cant_pax: pax, monto: parseFloat(precio).toFixed(2),
         creador: myOpName
     }).then(() => {
         document.getElementById('input-crm-pax').value = ''; document.getElementById('input-crm-precio').value = '';
