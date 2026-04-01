@@ -3,20 +3,74 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbzi5aD18Xj0ikbQJZkiMSjZ
 let myOpName = localStorage.getItem('sot_operador') || null;
 
 function cambiarOperador() {
-    mostrarModalLogin(true); // closeable = true (ya hay un operador activo)
+    mostrarModalLogin(true);
+}
+
+// ── Reset de sesión diario (1 AM) ─────────────────────────────────────────
+function resetSesion() {
+    // Limpiar operador y fecha de sesión
+    localStorage.removeItem('sot_operador');
+    localStorage.removeItem('sot_session_date');
+    myOpName = null;
+
+    // Limpiar datos en memoria
+    window.operacionesData   = [];
+    window.cajaData          = [];
+    window.pasesExternosData = [];
+    window.reservasData      = [];
+    window.contactosData     = [];
+    window.catalogosData     = null;
+    window.editandoMovId     = null;
+
+    // Re-renderizar vacío
+    let cont = document.getElementById('operaciones-container');
+    if (cont) cont.innerHTML = '';
+    let hPanel = document.getElementById('caja-historial-container');
+    if (hPanel) hPanel.innerHTML = '';
+
+    mostrarToast('🌅 Nuevo día — ingresa tu nombre de operador.', 'info');
+    mostrarModalLogin(false);
+}
+
+function programarResetDiario() {
+    let ahora   = new Date();
+    let reset1am = new Date(ahora);
+    reset1am.setHours(1, 0, 0, 0);
+    // Si ya pasó la 1 AM de hoy, apuntar a mañana a la 1 AM
+    if (ahora >= reset1am) reset1am.setDate(reset1am.getDate() + 1);
+    let msHasta1am = reset1am - ahora;
+    setTimeout(() => {
+        resetSesion();
+        // Reprogramar para el siguiente día
+        setInterval(resetSesion, 24 * 60 * 60 * 1000);
+    }, msHasta1am);
 }
 
 let pendingPostRequests = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
-    if(!myOpName) {
+    // Detectar si el día cambió desde la última sesión
+    let sessionDate = localStorage.getItem('sot_session_date');
+    let hoyStr      = new Date().toLocaleDateString('es-PE');
+    if (sessionDate && sessionDate !== hoyStr) {
+        // Día distinto → limpiar operador, pedir de nuevo
+        localStorage.removeItem('sot_operador');
+        localStorage.removeItem('sot_session_date');
+        myOpName = null;
+    }
+
+    if (!myOpName) {
         mostrarModalLogin(false);
     } else {
         let el = document.getElementById('label-operador-actual');
-        if(el) el.innerText = myOpName;
+        if (el) el.innerText = myOpName;
+        // Guardar fecha de sesión si no existe
+        if (!sessionDate) localStorage.setItem('sot_session_date', hoyStr);
     }
+
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 15000);
+    programarResetDiario();
 });
 
 // =============================
@@ -81,6 +135,7 @@ function confirmarLoginManual() {
 function seleccionarOperador(nombre) {
     myOpName = nombre;
     localStorage.setItem('sot_operador', myOpName);
+    localStorage.setItem('sot_session_date', new Date().toLocaleDateString('es-PE'));
     document.getElementById('modal-login').classList.add('hidden');
     let el = document.getElementById('label-operador-actual');
     if(el) el.innerText = myOpName;
