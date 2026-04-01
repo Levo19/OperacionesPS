@@ -199,7 +199,31 @@ document.addEventListener('DOMContentLoaded', () => {
     iniciarCountdownTimer();
     // Procesar cola offline si hay items pendientes del turno anterior
     if (navigator.onLine) setTimeout(_processOfflineQueue, 5000);
+    // Detector de nueva versión: chequea cada 5 minutos
+    setTimeout(checkForUpdates, 60000); // primera vez al minuto (GH Pages puede tardar en propagar)
+    setInterval(checkForUpdates, 5 * 60 * 1000);
 });
+
+// ── Detector de actualizaciones ───────────────────────────────────────────────
+let _pageEtag = null;
+
+function checkForUpdates() {
+    // Solo en producción (GitHub Pages), no en localhost/Live Server
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') return;
+    fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+        .then(r => {
+            let fingerprint = r.headers.get('ETag') || r.headers.get('Last-Modified');
+            if (!fingerprint) return;
+            if (!_pageEtag) {
+                _pageEtag = fingerprint; // guardar valor inicial
+            } else if (_pageEtag !== fingerprint) {
+                // Nueva versión detectada — bloquear UI y forzar recarga
+                let overlay = document.getElementById('modal-update');
+                if (overlay) overlay.classList.remove('hidden');
+            }
+        })
+        .catch(() => {}); // silenciar si no hay red
+}
 
 // =============================
 // LOGIN / IDENTIFICACIÓN OPERADOR
