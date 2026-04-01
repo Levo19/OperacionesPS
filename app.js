@@ -73,6 +73,64 @@ function programarResetDiario() {
 
 let pendingPostRequests = 0;
 
+const TRIP_DURATION_MS = 105 * 60 * 1000; // 1h 45min en ms
+
+function calcularEndTs(op) {
+    if (!op.hora_salida || !op.fecha) return 0;
+    try {
+        let parts = op.fecha.split('-').map(Number);
+        let y = parts[0], m = parts[1], d = parts[2];
+        let hs = (op.hora_salida || '').toString();
+        let match = hs.match(/(\d{1,2}):(\d{2})/);
+        if (!match) return 0;
+        let zarpe = new Date(y, m - 1, d, parseInt(match[1]), parseInt(match[2]), 0);
+        return zarpe.getTime() + TRIP_DURATION_MS;
+    } catch(e) { return 0; }
+}
+
+function formatCountdown(ms) {
+    if (ms <= 0) return null;
+    let h = Math.floor(ms / 3600000);
+    let m = Math.floor((ms % 3600000) / 60000);
+    let s = Math.floor((ms % 60000) / 1000);
+    return h > 0 ? `${h}h ${String(m).padStart(2,'0')}m` : `${m}m ${String(s).padStart(2,'0')}s`;
+}
+
+function iniciarCountdownTimer() {
+    if (window._countdownInterval) clearInterval(window._countdownInterval);
+    window._countdownInterval = setInterval(() => {
+        let ahora = Date.now();
+        document.querySelectorAll('[data-end-ts]').forEach(el => {
+            let endTs = parseInt(el.dataset.endTs) || 0;
+            if (!endTs) return;
+            let rem = endTs - ahora;
+            let card = el.closest('[data-op-id]');
+            if (rem <= 0) {
+                // Timer expiró: estado "En Puerto"
+                el.textContent = '¡En Puerto!';
+                el.className = 'inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full';
+                if (card && !card.classList.contains('trip-done')) {
+                    card.classList.add('trip-done');
+                    card.classList.remove('bg-orange-50', 'border-orange-200');
+                    card.classList.add('bg-emerald-50', 'border-emerald-200');
+                    let sidebar = card.querySelector('.trip-sidebar');
+                    if (sidebar) { sidebar.classList.remove('bg-orange-500'); sidebar.classList.add('bg-emerald-500'); }
+                    let tag = card.querySelector('.trip-estado-tag');
+                    if (tag) { tag.innerHTML = '<i class="fas fa-check-circle mr-1"></i>En Puerto'; tag.className = 'trip-estado-tag absolute top-2 right-4 bg-emerald-200 text-emerald-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-emerald-300 z-10'; }
+                }
+            } else {
+                // Countdown activo
+                let texto = formatCountdown(rem);
+                el.textContent = texto || '—';
+                let colorClass = rem < 15 * 60 * 1000
+                    ? 'inline-flex items-center gap-1 text-[9px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full animate-pulse'
+                    : 'inline-flex items-center gap-1 text-[9px] font-black text-orange-700 bg-orange-100 border border-orange-300 px-2 py-0.5 rounded-full';
+                el.className = colorClass;
+            }
+        });
+    }, 1000);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Detectar si el día cambió desde la última sesión
     let sessionDate = localStorage.getItem('sot_session_date');
@@ -96,6 +154,9 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 15000);
     programarResetDiario();
+    iniciarCountdownTimer();
+    // Procesar cola offline si hay items pendientes del turno anterior
+    if (navigator.onLine) setTimeout(_processOfflineQueue, 5000);
 });
 
 // =============================
@@ -174,8 +235,16 @@ function getHoyLocal() {
 
 function esFechaHoy(ts) {
     if(!ts) return false;
-    // Soporta "YYYY-MM-DD" y "YYYY-MM-DDTHH:mm:ss..." tomando solo la parte de fecha
-    return String(ts).split('T')[0] === getHoyLocal();
+    try {
+        let d = new Date(ts);
+        if(isNaN(d.getTime())) {
+            // Fallback para fechas sin hora (YYYY-MM-DD o DD/MM/YYYY)
+            return String(ts).split('T')[0] === getHoyLocal();
+        }
+        // Usar fecha LOCAL del navegador — d.getDate() etc. respetan el timezone del browser
+        let localStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        return localStr === getHoyLocal();
+    } catch(e) { return false; }
 }
 
 function switchTab(tabId, title, btnElement) {
@@ -244,15 +313,25 @@ function syncManifestBg() {
             window.reservasData      = data.sala_de_espera || [];
             window.cajaData          = data.movimientos_dia || [];
 
+            // Filtrar items eliminados localmente que GAS aún no procesó
+            let _delIds = window._deletedMovIds || new Set();
+            if (_delIds.size > 0) {
+                (window.operacionesData || []).forEach(op => {
+                    let before = op.manifiesto.length;
+                    op.manifiesto = op.manifiesto.filter(m => !_delIds.has(m.id));
+                    let removed = before - op.manifiesto.length;
+                    if (removed > 0) op.ocupados = Math.max(0, op.ocupados - removed);
+                });
+            }
+
             // Re-inyectar temps que el servidor aún no confirmó (sin duplicar)
             if(localTemps.length > 0) {
                 let newOp = window.operacionesData.find(o => o.id === opId);
                 if(newOp) {
                     let stillPending = localTemps.filter(t =>
                         !newOp.manifiesto.some(s =>
-                            s.contacto === t.contacto &&
-                            String(s.pax) === String(t.pax) &&
-                            s.tipo === t.tipo
+                            (t.id && !t.id.startsWith('temp-') && s.id === t.id) ||
+                            (s.contacto === t.contacto && String(s.pax) === String(t.pax) && s.tipo === t.tipo && (s.nombreContacto || '') === (t.nombreContacto || ''))
                         )
                     );
                     if(stillPending.length > 0) {
@@ -289,15 +368,68 @@ function actualizarModalSiAbierto() {
     let labelEl = document.getElementById('label-cupos');
     if(barEl) { barEl.style.width = pct + '%'; barEl.className = `h-full rounded-full transition-all duration-500 ${barColor}`; }
     if(labelEl) labelEl.innerText = libres > 0 ? `${libres} cupo${libres !== 1 ? 's' : ''} libre${libres !== 1 ? 's' : ''}` : '¡LLENO!';
-    document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
+    actualizarListaManifiestoSuave(op.manifiesto);
+}
+
+// Actualiza la lista del manifiesto sin flash: preserva scroll, anima solo items nuevos
+function actualizarListaManifiestoSuave(manifiesto) {
+    let lista = document.getElementById('gestion-manifiesto-lista');
+    if (!lista) return;
+    // Filtrar items eliminados localmente que el servidor aún puede devolver
+    let _delIds = window._deletedMovIds || new Set();
+    let filtered = _delIds.size > 0 ? manifiesto.filter(m => !_delIds.has(m.id)) : manifiesto;
+    // Aplicar filtro de búsqueda si hay texto
+    let q = (window._manifestSearch || '').trim().toLowerCase();
+    if (q) {
+        filtered = filtered.filter(m => {
+            let nombre = (m.nombreContacto || m.contacto || '').toLowerCase();
+            let tipo   = (m.tipo || '').toLowerCase();
+            return nombre.includes(q) || tipo.includes(q);
+        });
+    }
+
+    // Fingerprint rápido: si no cambió nada visible, saltar el re-render (evita reflow)
+    let fp = filtered.map(m => `${m.id}|${m._syncing ? 1 : 0}|${m.pax}|${m.monto}|${window.editandoMovId === m.id ? 'sel' : ''}`).join(';');
+    if (lista._fp === fp) return;
+    lista._fp = fp;
+
+    let scrollTop = lista.scrollTop;
+    let prevIds = new Set([...lista.querySelectorAll('[data-mov-id]')].map(el => el.dataset.movId));
+    lista.innerHTML = generarListaHTML(filtered);
+    lista.querySelectorAll('[data-mov-id]').forEach(el => {
+        if (!prevIds.has(el.dataset.movId)) el.classList.add('row-enter');
+    });
+    lista.scrollTop = scrollTop;
+}
+
+function filtrarManifiestoModal(q) {
+    window._manifestSearch = q;
+    let opId = document.getElementById('hidden-gestion-op')?.value;
+    let op = (window.operacionesData || []).find(o => o.id === opId);
+    if (op) actualizarListaManifiestoSuave(op.manifiesto);
 }
 
 function fetchDashboardDataBg() {
     let spinner = document.getElementById('global-spinner');
     if(pendingPostRequests > 0 || !spinner.classList.contains('hidden')) return;
+    // No interrumpir si el modal de embarque está abierto y hay items pendientes de confirmar
+    let modalAbierto = !document.getElementById('modal-gestion-bote').classList.contains('hidden');
+    if (modalAbierto) {
+        let opId = document.getElementById('hidden-gestion-op')?.value;
+        let op = (window.operacionesData || []).find(o => o.id === opId);
+        let hayTemps = (op?.manifiesto || []).some(m => m._syncing || (m.id && m.id.startsWith('temp-')));
+        if (hayTemps) return; // Esperar a que se resuelvan los POSTs activos
+    }
 
     let refreshIcon = document.querySelector('#btn-refresh i');
     if(refreshIcon) refreshIcon.classList.add('fa-spin');
+
+    // Snapshot pre-refresh para detectar cambios de otros operadores (Task #5)
+    let _prevOpStates  = new Map((window.operacionesData || []).filter(o => o.id !== 'Creando...').map(o => [o.id, { estado: o.estado, pax: o.ocupados }]));
+    let _prevCajaCount = (window.cajaData || []).filter(c => !c._syncing).length;
+    let _prevPaxTotal  = (window.operacionesData || []).reduce((s, o) => s + (o.ocupados || 0), 0);
+    let _isFirstLoad   = !window._bgRefreshDone;
+    window._bgRefreshDone = true;
 
     fetch(GAS_URL + "?action=getDashboardData")
         .then(res => res.json())
@@ -305,12 +437,101 @@ function fetchDashboardDataBg() {
             if(refreshIcon) refreshIcon.classList.remove('fa-spin');
             if(data.status === 'error') return;
 
+            // Preservar temps locales antes de sobrescribir
+            let tempOps   = (window.operacionesData || []).filter(o => o.id === 'Creando...');
+            let tempRes   = (window.reservasData || []).filter(r => r.id === 'Creando...');
+            let tempCaja  = (window.cajaData || []).filter(c => c._syncing);
+            let tempPases = (window.pasesExternosData || []).filter(p => p._syncing);
+
+            // Preservar items del manifiesto aún no confirmados por GAS
+            let manifestTemps = {};
+            (window.operacionesData || []).forEach(op => {
+                let temps = (op.manifiesto || []).filter(m => m._syncing || (m.id && m.id.startsWith('temp-')));
+                if (temps.length > 0) manifestTemps[op.id] = temps;
+            });
+
             window.operacionesData   = data.operaciones_abiertas || [];
             window.contactosData     = data.catalogos ? data.catalogos.contactos : [];
             window.catalogosData     = data.catalogos || {};
             window.reservasData      = data.sala_de_espera || [];
             window.pasesExternosData = data.pases_externos || [];
             window.cajaData          = data.movimientos_dia || [];
+
+            // Filtrar items eliminados localmente que GAS aún no procesó
+            let _delIds = window._deletedMovIds || new Set();
+            if (_delIds.size > 0) {
+                (window.operacionesData || []).forEach(op => {
+                    let before = op.manifiesto.length;
+                    op.manifiesto = op.manifiesto.filter(m => !_delIds.has(m.id));
+                    let removed = before - op.manifiesto.length;
+                    if (removed > 0) op.ocupados = Math.max(0, op.ocupados - removed);
+                });
+            }
+
+            // Re-inyectar temps de manifiesto no confirmados aún
+            Object.keys(manifestTemps).forEach(opId => {
+                let newOp = window.operacionesData.find(o => o.id === opId);
+                if (!newOp) return;
+                let temps = manifestTemps[opId];
+                let stillPending = temps.filter(t =>
+                    !newOp.manifiesto.some(s =>
+                        (t.id && !t.id.startsWith('temp-') && s.id === t.id) ||
+                        (s.contacto === t.contacto && String(s.pax) === String(t.pax) && s.tipo === t.tipo && (s.nombreContacto || '') === (t.nombreContacto || ''))
+                    )
+                );
+                if (stillPending.length > 0) {
+                    newOp.manifiesto = [...stillPending, ...newOp.manifiesto];
+                    newOp.ocupados += stillPending.reduce((sum, m) => sum + (parseInt(m.pax) || 0), 0);
+                }
+            });
+
+            // Re-inyectar temps no confirmados aún por el servidor
+            tempOps.forEach(t => {
+                if (!window.operacionesData.some(o => o.bote === t.bote && o.capitan === t.capitan))
+                    window.operacionesData.unshift(t);
+            });
+            tempRes.forEach(t => {
+                if (!window.reservasData.some(r => r.cliente === t.cliente && String(r.pax) === String(t.pax) && r.fecha === t.fecha))
+                    window.reservasData.unshift(t);
+            });
+            tempCaja.forEach(t => {
+                if (!window.cajaData.some(c => c.id === t.id))
+                    window.cajaData.unshift(t);
+            });
+            tempPases.forEach(t => {
+                if (!window.pasesExternosData.some(p => p.id === t.id))
+                    window.pasesExternosData.unshift(t);
+            });
+
+            // ── Notificaciones de cambios por otro operador (Task #5) ──────────
+            if (!_isFirstLoad) {
+                let hoy = getHoyLocal();
+                (window.operacionesData || []).forEach(op => {
+                    if (op.id === 'Creando...' || op.fecha !== hoy) return;
+                    let prev = _prevOpStates.get(op.id);
+                    if (!prev) {
+                        mostrarToast(`🆕 Nueva lancha: ${op.bote} (${op.ocupados} PAX)`, 'info');
+                    } else if (prev.estado === 'Abierta' && op.estado === 'En_Viaje') {
+                        mostrarToast(`⚓ ${op.bote} ha zarpado`, 'info');
+                    } else if (prev.pax !== op.ocupados && op.estado === 'Abierta') {
+                        let diff = op.ocupados - prev.pax;
+                        if (diff > 0) mostrarToast(`👤 +${diff} PAX en ${op.bote}`, 'info');
+                    }
+                });
+                // Op que desapareció (cerrada por otro operador)
+                _prevOpStates.forEach((prev, id) => {
+                    if (!(window.operacionesData || []).some(o => o.id === id)) {
+                        if (prev.estado === 'En_Viaje') mostrarToast(`🏁 Una lancha confirmó llegada`, 'info');
+                    }
+                });
+                // Nuevos movimientos de caja
+                let newCajaCount = (window.cajaData || []).filter(c => !c._syncing).length;
+                if (newCajaCount > _prevCajaCount) {
+                    let diff = newCajaCount - _prevCajaCount;
+                    mostrarToast(`💰 ${diff} nuevo${diff > 1 ? 's' : ''} movimiento${diff > 1 ? 's' : ''} de caja`, 'info');
+                }
+            }
+            // ─────────────────────────────────────────────────────────────────
 
             // Modal Abrir Bote: preservar selecciones del usuario
             let modalAbrirOpen = !document.getElementById('modal-abrir-bote').classList.contains('hidden');
@@ -339,42 +560,57 @@ function fetchDashboardDataBg() {
 function renderOperaciones(operaciones) {
     const container = document.getElementById('operaciones-container');
     let hoy = getHoyLocal();
-    let opHoy = operaciones.filter(op => op.fecha === hoy || !op.fecha);
+    let opHoy = operaciones.filter(op => op.fecha === hoy || op.id === 'Creando...');
 
     opHoy.sort((a, b) => {
         if (a.estado === 'Abierta' && b.estado !== 'Abierta') return -1;
         if (a.estado !== 'Abierta' && b.estado === 'Abierta') return 1;
-        return 0; 
+        return 0;
     });
+
+    // Skip re-render si nada cambió — incluye pases para detectar cambios de otro operador
+    let fp = JSON.stringify(opHoy.map(o => `${o.id}|${o.estado}|${o.ocupados}|${(o.manifiesto||[]).length}|${o.foto_zarpe||''}`))
+           + '|p' + (window.pasesExternosData || []).length;
+    if (container._fp === fp) return;
+    container._fp = fp;
+
+    // Capturar IDs existentes antes de reemplazar el DOM
+    let prevIds = new Set([...container.querySelectorAll('[data-op-id]')].map(el => el.dataset.opId));
 
     if(!opHoy || opHoy.length === 0) {
         container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> No hay lanchas programadas<br>para el día de HOY.</div>`;
         return;
     }
     
-    // Tabla de pases del día (al final)
+    // Tabla de pases del día (al final) — movimientos donde Id_contactoPase tiene valor
     let pasesDiaHTML = '';
     let pases = window.pasesExternosData || [];
     if(pases.length > 0) {
         let totalPaxPases = pases.reduce((s, p) => s + (parseInt(p.pax)||0), 0);
+        let contactos = window.contactosData || [];
         let filas = pases.map((p, idx) => {
-            // Resolver nombre real del aliado destino desde contactosData
-            let contactos   = window.contactosData || [];
-            let aliadoId    = p.aliadoDestino || p.contacto || '';
-            let aliadoInfo  = contactos.find(c => c.id === aliadoId || c.nombre === aliadoId);
-            let aliadoNombre= aliadoInfo ? aliadoInfo.nombre : aliadoId;
-            // Origen: nombre del contacto original que generó el pase
-            let origen      = p.nombreContacto || '';
+            // Resolver nombre del aliado destino (Id_contactoPase)
+            let aliadoInfo  = contactos.find(c => c.id === p.aliadoId || c.nombre === p.aliadoId);
+            let aliadoNombre= aliadoInfo ? aliadoInfo.nombre : (p.aliadoId || '—');
+            // Origen: nombre del pasajero/agencia que generó el pase
+            let origen      = p.nombreOrigen || '';
             let ts          = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
+            let paseId      = p.id || '';
+            let paseNombreEsc = origen.replace(/'/g,"\\'");
             return `
-            <tr class="border-t border-gray-100 cursor-pointer hover:bg-purple-50 transition" onclick="verDetallePase(${idx})">
-                <td class="py-2 px-2">
+            <tr class="border-t border-gray-100 hover:bg-purple-50 transition">
+                <td class="py-2 px-2 cursor-pointer" onclick="verDetallePase(${idx})">
                     <span class="text-[9px] font-bold text-purple-400 uppercase tracking-wide block">Para:</span>
                     <span class="text-[11px] font-black text-purple-800 block uppercase leading-tight">${aliadoNombre}</span>
                     ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
                 </td>
-                <td class="py-2 px-2 text-center text-sm font-black text-blue-600">${p.pax}</td>
-                <td class="py-2 px-2 text-[9px] text-gray-400 text-right">${ts}</td>
+                <td class="py-2 px-2 text-center text-sm font-black text-blue-600 cursor-pointer" onclick="verDetallePase(${idx})">${p.pax}</td>
+                <td class="py-2 px-2 text-[9px] text-gray-400 text-right cursor-pointer" onclick="verDetallePase(${idx})">${ts}</td>
+                <td class="py-1.5 px-1.5 text-right">
+                    <button class="bg-red-50 text-red-500 border border-red-200 text-[9px] font-black px-2 py-1 rounded-lg hover:bg-red-100 active:scale-95 transition" onclick="iniciarAnularPase('${paseId}','${p.pax}','${paseNombreEsc}'); event.stopPropagation();">
+                        <i class="fas fa-undo-alt mr-0.5"></i>Anular
+                    </button>
+                </td>
             </tr>`;
         }).join('');
         pasesDiaHTML = `
@@ -388,6 +624,7 @@ function renderOperaciones(operaciones) {
                     <th class="py-1.5 px-2 text-left font-bold">Destino / Origen</th>
                     <th class="py-1.5 px-2 text-center font-bold">PAX</th>
                     <th class="py-1.5 px-2 text-right font-bold">Hora</th>
+                    <th class="py-1.5 px-2"></th>
                 </tr></thead>
                 <tbody class="bg-white">${filas}</tbody>
             </table>
@@ -397,32 +634,98 @@ function renderOperaciones(operaciones) {
     container.innerHTML = opHoy.map(op => {
         let porcentaje = op.capacidad > 0 ? (op.ocupados / op.capacidad) * 100 : 0;
         let isViaje = op.estado === 'En_Viaje';
-        let barColor = isViaje ? 'bg-orange-500' : 'bg-green-500';
-        let titleColor = isViaje ? 'text-orange-900' : 'text-blue-900';
-        let bgStyle = isViaje ? 'bg-orange-50 border-orange-200' : 'bg-white border-gray-100';
-        let tagEstado = isViaje ? `<span class="absolute top-2 right-4 bg-orange-200 text-orange-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-orange-300 z-10 animate-pulse"><i class="fas fa-water mr-1"></i>En Viaje</span>` : '';
+
+        // Calcular countdown para En_Viaje
+        let endTs   = isViaje ? calcularEndTs(op) : 0;
+        let remMs   = endTs > 0 ? endTs - Date.now() : -1;
+        let isExpired = endTs > 0 && remMs <= 0;
+
+        // Colores según estado
+        let bgStyle, barColor, titleColor, gradientBar;
+        if (!isViaje) {
+            bgStyle = 'bg-white border-gray-100';
+            barColor = 'bg-green-500';
+            titleColor = 'text-blue-900';
+            gradientBar = 'from-green-400 to-green-500';
+        } else if (isExpired) {
+            bgStyle = 'bg-emerald-50 border-emerald-200 trip-done';
+            barColor = 'bg-emerald-500';
+            titleColor = 'text-emerald-900';
+            gradientBar = 'from-emerald-400 to-emerald-500';
+        } else {
+            bgStyle = 'bg-orange-50 border-orange-200';
+            barColor = 'bg-orange-500';
+            titleColor = 'text-orange-900';
+            gradientBar = 'from-orange-400 to-orange-500';
+        }
+
+        // Tag estado + countdown badge
+        let tagEstado = '';
+        if (isViaje) {
+            if (isExpired) {
+                tagEstado = `<span class="trip-estado-tag absolute top-2 right-4 bg-emerald-200 text-emerald-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-emerald-300 z-10"><i class="fas fa-check-circle mr-1"></i>En Puerto</span>`;
+            } else {
+                tagEstado = `<span class="trip-estado-tag absolute top-2 right-4 bg-orange-200 text-orange-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-orange-300 z-10 animate-pulse"><i class="fas fa-water mr-1"></i>En Viaje</span>`;
+            }
+        }
+
+        // Countdown badge (solo En_Viaje con hora_salida conocida)
+        let countdownBadge = '';
+        if (isViaje && endTs > 0) {
+            let cdText  = isExpired ? '¡En Puerto!' : (formatCountdown(remMs) || '—');
+            let cdClass = isExpired
+                ? 'inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full'
+                : remMs < 15 * 60 * 1000
+                    ? 'inline-flex items-center gap-1 text-[9px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full animate-pulse'
+                    : 'inline-flex items-center gap-1 text-[9px] font-black text-orange-700 bg-orange-100 border border-orange-300 px-2 py-0.5 rounded-full';
+            countdownBadge = `<span class="${cdClass}" data-end-ts="${endTs}"><i class="fas fa-hourglass-half text-[8px]"></i>${cdText}</span>`;
+        }
+
+        // Botón foto de zarpe (En_Viaje y expirado)
+        let fotoBtns = '';
+        if (isViaje) {
+            if (op.foto_zarpe) {
+                let fotoEsc = op.foto_zarpe.replace(/'/g, "\\'");
+                fotoBtns = `
+                <div class="flex gap-2">
+                    <button class="flex-1 ${isExpired ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'} font-bold py-2 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="verFotoZarpe('${fotoEsc}')">
+                        <i class="fas fa-camera mr-1.5"></i> Ver Foto
+                    </button>
+                    <button class="bg-gray-50 text-gray-500 font-bold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs" title="Cambiar foto" onclick="abrirModalZarpeFoto('${op.id}', true)">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>`;
+            } else {
+                fotoBtns = `<button class="w-full bg-gray-50 text-gray-600 font-bold py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalZarpeFoto('${op.id}')">
+                    <i class="fas fa-camera mr-1.5 text-gray-400"></i> Subir Foto de Zarpe
+                </button>`;
+            }
+        }
 
         return `
-        <div class="${bgStyle} rounded-2xl shadow-sm p-4 mb-4 border relative overflow-hidden">
+        <div class="${bgStyle} rounded-2xl shadow-sm p-4 mb-4 border relative overflow-hidden" data-op-id="${op.id}">
             ${tagEstado}
-            <div class="absolute top-0 left-0 w-2 h-full ${barColor}"></div>
+            <div class="trip-sidebar absolute top-0 left-0 w-2 h-full ${barColor}"></div>
             <div class="flex justify-between items-center mb-1 pl-3">
-                <h3 class="font-extrabold text-lg flex-1 truncate ${titleColor}"><i class="fas fa-ship fa-sm mr-2 ${isViaje ? 'text-orange-400' : 'text-blue-400'} ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
+                <h3 class="font-extrabold text-lg flex-1 truncate ${titleColor}"><i class="fas fa-ship fa-sm mr-2 ${isViaje ? (isExpired ? 'text-emerald-400' : 'text-orange-400') : 'text-blue-400'} ${op.id === 'Creando...' ? 'fa-pulse text-yellow-500' : ''}"></i>${op.bote}</h3>
                 <div class="flex items-center gap-1.5 shrink-0 ml-2">
                     ${op.id !== 'Creando...' ? `<button class="w-7 h-7 bg-white border border-gray-200 rounded-full text-gray-400 hover:text-blue-600 hover:border-blue-300 transition text-xs flex items-center justify-center shadow-sm" onclick="abrirModalEditarOp('${op.id}'); event.stopPropagation()"><i class="fas fa-pen"></i></button>` : ''}
                     <span class="bg-white border text-gray-800 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">${op.ocupados} / ${op.capacidad} PAX</span>
                 </div>
             </div>
-            <div class="flex justify-between text-[10px] text-gray-400 font-bold mb-3 uppercase tracking-wider pl-3 pr-2 ml-6">
+            <div class="flex justify-between text-[10px] text-gray-400 font-bold mb-2 uppercase tracking-wider pl-3 pr-2 ml-6">
                 <span>CÓDIGO: <span class="${op.id === 'Creando...' ? 'text-yellow-500 animate-pulse' : 'text-gray-700'}">${op.id}</span></span>
-                ${op.hora_salida ? `<span class="${isViaje ? 'text-orange-500' : 'text-blue-500'} font-black"><i class="fas fa-clock mr-1"></i>${op.hora_salida}</span>` : ''}
+                <div class="flex items-center gap-2">
+                    ${op.hora_salida ? `<span class="${isViaje ? (isExpired ? 'text-emerald-600' : 'text-orange-500') : 'text-blue-500'} font-black"><i class="fas fa-clock mr-1"></i>${op.hora_salida}</span>` : ''}
+                    ${countdownBadge}
+                </div>
             </div>
-            
+
             <div class="w-full bg-gray-100 rounded-full h-2 mb-3">
-                <div class="bg-gradient-to-r ${isViaje ? 'from-orange-400 to-orange-500' : 'from-green-400 to-green-500'} h-2 rounded-full" style="width: ${porcentaje}%"></div>
+                <div class="bg-gradient-to-r ${gradientBar} h-2 rounded-full" style="width: ${porcentaje}%"></div>
             </div>
-            <div class="text-[10px] text-gray-500 flex justify-between items-center mb-4 font-medium px-2 py-1.5 bg-white border border-gray-200 rounded-lg shadow-inner">
-                <span class="truncate"><i class="fas fa-user-tie ${isViaje ? 'text-orange-400' : 'text-blue-400'} mr-1"></i><b class="text-gray-700">${op.capitan}</b></span>
+            <div class="text-[10px] text-gray-500 flex justify-between items-center mb-3 font-medium px-2 py-1.5 bg-white border border-gray-200 rounded-lg shadow-inner">
+                <span class="truncate"><i class="fas fa-user-tie ${isViaje ? (isExpired ? 'text-emerald-400' : 'text-orange-400') : 'text-blue-400'} mr-1"></i><b class="text-gray-700">${op.capitan}</b></span>
                 <span class="truncate text-right"><i class="fas fa-user-tag text-green-400 mr-1"></i><b class="text-gray-700">${op.guia}</b></span>
             </div>
             ${!isViaje ? `
@@ -436,17 +739,24 @@ function renderOperaciones(operaciones) {
             </div>
             ` : `
             <div class="mt-2 space-y-2">
-                <button class="w-full bg-orange-100 text-orange-800 font-bold py-2.5 rounded-xl border border-orange-200 hover:bg-orange-200 shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
+                ${isExpired ? `
+                <button class="w-full bg-emerald-500 text-white font-black py-3 rounded-xl border border-emerald-600 shadow-md shadow-emerald-500/30 transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarLlegada('${op.id}')">
+                    <i class="fas fa-flag-checkered mr-1.5"></i> Confirmar Llegada
+                </button>` : ''}
+                <button class="w-full ${isExpired ? 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200' : 'bg-orange-100 text-orange-800 border-orange-200 hover:bg-orange-200'} font-bold py-2.5 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
                     <i class="fas fa-clipboard-list mr-1.5"></i> Ver Manifiesto
                 </button>
-                <button class="w-full bg-gray-50 text-gray-600 font-bold py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalZarpeFoto('${op.id}')">
-                    <i class="fas fa-camera mr-1.5 text-gray-400"></i> Subir Foto de Zarpe
-                </button>
+                ${fotoBtns}
             </div>
             `}
         </div>
         `;
     }).join('') + pasesDiaHTML;
+
+    // Animar solo los cards genuinamente nuevos
+    container.querySelectorAll('[data-op-id]').forEach(el => {
+        if (!prevIds.has(el.dataset.opId)) el.classList.add('card-enter');
+    });
 }
 
 function renderReservas(reservas) {
@@ -454,7 +764,7 @@ function renderReservas(reservas) {
     let hoy = getHoyLocal();
     let hoyPartes = hoy.split('-');
     let formatLocal = `${hoyPartes[2]}/${hoyPartes[1]}/${hoyPartes[0]}`; // e.g., 26/03/2026
-    
+
     let resAMostrar = reservas.filter(r => {
         let isSyncing = r.id === 'Creando...';
         let f = String(r.fecha).trim();
@@ -462,6 +772,14 @@ function renderReservas(reservas) {
         let isMine = String(r.creado_por || '').trim().toLowerCase() === String(myOpName).trim().toLowerCase();
         return isHoy || isMine || isSyncing;
     });
+
+    // Skip re-render si nada cambió
+    let fp = JSON.stringify(resAMostrar.map(r => `${r.id}|${r._asignando||false}|${r.pax}|${r.cliente}`));
+    if (container._fp === fp) return;
+    container._fp = fp;
+
+    // Capturar IDs existentes
+    let prevIds = new Set([...container.querySelectorAll('[data-res-id]')].map(el => el.dataset.resId));
 
     if(!resAMostrar || resAMostrar.length === 0) {
         container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-clipboard-list text-4xl mb-3 opacity-20 block"></i> No hay pasajeros pendientes hoy.</div>`;
@@ -485,7 +803,7 @@ function renderReservas(reservas) {
         let tagFecha = isHoy ? `<span class="bg-green-100 text-green-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-green-200">HOY</span>` : `<span class="bg-yellow-100 text-yellow-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-yellow-200">${res.fecha}</span>`;
 
         return `
-        <div class="${cardClasses} rounded-2xl shadow-sm p-4 block mb-3 transition-all relative overflow-hidden">
+        <div class="${cardClasses} rounded-2xl shadow-sm p-4 block mb-3 transition-all relative overflow-hidden" data-res-id="${res.id}">
             ${isSyncing ? '<div class="absolute top-2 right-3 text-[10px] items-center text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i> Nube</div>' : ''}
             <div class="flex justify-between items-start relative z-10">
                 <div>
@@ -504,12 +822,23 @@ function renderReservas(reservas) {
         </div>
         `;
     }).join('');
+
+    // Animar solo los cards genuinamente nuevos
+    container.querySelectorAll('[data-res-id]').forEach(el => {
+        if (!prevIds.has(el.dataset.resId)) el.classList.add('card-enter');
+    });
 }
+
+function renderFinanzas() { renderCaja(window.cajaData); }
 
 function renderCaja(caja) {
     let txHoy = (caja || []).filter(c => esFechaHoy(c.timestamp));
     let ingresos = 0, salidas = 0;
     let comisionadosMap = {};
+
+    // Capturar IDs existentes del historial antes de re-renderizar
+    let hPanelPrev = document.getElementById('caja-historial-container');
+    let prevCajaIds = new Set([...(hPanelPrev ? hPanelPrev.querySelectorAll('[data-caja-id]') : [])].map(el => el.dataset.cajaId));
 
     // Categorías que son ingresos: Cobro, Varios-ingreso (modo ingreso), legacy
     let CATS_INGRESO = ['Cobro', 'Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'];
@@ -539,7 +868,7 @@ function renderCaja(caja) {
         let syncDot   = c._syncing ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1 align-middle"></span>` : '';
         let rowBg     = c._syncing ? 'bg-blue-50' : '';
         return `
-        <div class="flex justify-between items-center p-3.5 ${rowBg} cursor-pointer hover:bg-gray-50 transition active:scale-95" onclick="${c._syncing ? '' : `abrirDetalleCaja('${c.id}')`}">
+        <div class="flex justify-between items-center p-3.5 ${rowBg} cursor-pointer hover:bg-gray-50 transition active:scale-95" data-caja-id="${c.id}" onclick="${c._syncing ? '' : `abrirDetalleCaja('${c.id}')`}">
             <div class="flex-1 min-w-0 pr-2">
                 <span class="text-xs font-extrabold text-gray-800 block truncate"><i class="fas fa-circle text-[7px] ${dotColor} mr-1.5"></i>${catLabel} ${syncDot}</span>
                 <span class="text-[10px] text-gray-400 font-bold">${hora} · ${c.metodo_pago||'Efectivo'} · ${c.operador||''}</span>
@@ -550,8 +879,9 @@ function renderCaja(caja) {
 
     let saldo = ingresos - salidas;
 
-    // ── Panel Pases (solo hoy) ────────────────────────────────────────────
+    // ── Panel Pases (Hoy / Histórico) ────────────────────────────────────
     let contactos = window.contactosData || [];
+    let _pasesVerHistorico = window._pasesVerHistorico || false;
     function resolverNombreAliado(idONombre) {
         if (!idONombre) return '—';
         let info = contactos.find(c => c.id === idONombre || c.nombre === idONombre);
@@ -564,25 +894,34 @@ function renderCaja(caja) {
         return resumenPases[key];
     }
 
-    // PaseOut: pases que enviamos a aliados (desde pasesExternosData de hoy)
-    (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp)).forEach(p => {
-        let aliadoKey = resolverNombreAliado(p.aliadoDestino || p.contacto);
+    // PaseOut: filtrar por hoy o todo según toggle
+    let pasesPool = _pasesVerHistorico
+        ? (window.pasesExternosData || [])
+        : (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp));
+    pasesPool.forEach(p => {
+        let aliadoKey = resolverNombreAliado(p.aliadoId);
+        if (!aliadoKey || aliadoKey === '—') return;
         let d = _getAliado(aliadoKey);
         let pax = parseInt(p.pax) || 0;
         d.out += pax;
         let hora = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—';
-        d.txs.push({ dir: 'out', pax, hora, detalle: p.nombreContacto || '' });
+        let fechaLabel = p.timestamp ? new Date(p.timestamp).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit'}) : '';
+        d.txs.push({ dir: 'out', pax, hora: _pasesVerHistorico && fechaLabel ? fechaLabel : hora, detalle: p.nombreOrigen || '' });
     });
 
-    // PaseIn: pases que recibimos de aliados (desde manifiesto de operaciones de hoy)
-    (window.operacionesData || []).filter(op => op.fecha === getHoyLocal() || !op.fecha).forEach(op => {
+    // PaseIn: si es histórico incluimos todas las ops, si es hoy solo las de hoy
+    let opsPool = _pasesVerHistorico
+        ? (window.operacionesData || [])
+        : (window.operacionesData || []).filter(op => op.fecha === getHoyLocal() || !op.fecha);
+    opsPool.forEach(op => {
         (op.manifiesto || []).forEach(m => {
             if (m.tipo !== 'Aliado(PaseIn)' && m.tipo !== 'Aliado') return;
             let aliadoKey = resolverNombreAliado(m.contacto) || resolverNombreAliado(m.nombreContacto);
+            if (!aliadoKey || aliadoKey === '—') return;
             let d = _getAliado(aliadoKey);
             let pax = parseInt(m.pax) || 0;
             d.in += pax;
-            d.txs.push({ dir: 'in', pax, hora: '—', detalle: m.nombreContacto || '' });
+            d.txs.push({ dir: 'in', pax, hora: '—', detalle: m.nombreContacto || m.contacto || '' });
         });
     });
 
@@ -622,7 +961,7 @@ function renderCaja(caja) {
             </div>
             <div class="hidden px-3 pb-3 bg-gray-50">${detalleHtml}</div>
         </div>`;
-    }).join('') || '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin pases registrados hoy.</div>';
+    }).join('');
 
     let pasesSummaryHtml = (totalPaxIn || totalPaxOut) ? `
         <div class="grid grid-cols-2 gap-3 mb-4">
@@ -727,8 +1066,23 @@ function renderCaja(caja) {
         </div>` : '';
 
     // ── Actualizar DOM ────────────────────────────────────────────────────
+    // Toggle Hoy / Histórico para pases
+    let pasesToggleHtml = `
+    <div class="flex items-center justify-between mb-3">
+        <span class="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Panel de Pases</span>
+        <button onclick="window._pasesVerHistorico=!window._pasesVerHistorico;renderFinanzas()" class="flex items-center gap-1.5 text-[10px] font-black px-3 py-1.5 rounded-full border transition ${_pasesVerHistorico ? 'bg-purple-100 text-purple-700 border-purple-300' : 'bg-gray-100 text-gray-500 border-gray-200'}">
+            <i class="fas ${_pasesVerHistorico ? 'fa-history' : 'fa-calendar-day'}"></i>
+            ${_pasesVerHistorico ? 'Histórico' : 'Hoy'}
+        </button>
+    </div>`;
+
+    let noRegistrosMsg = _pasesVerHistorico
+        ? '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin pases históricos.</div>'
+        : '<div class="text-center py-6 text-gray-400 text-sm font-bold">Sin pases registrados hoy.</div>';
+    let pasesHtmlFinal = Object.keys(resumenPases).length > 0 ? pasesHtml : noRegistrosMsg;
+
     let pPanel = document.getElementById('fin-pases-content');
-    if(pPanel) pPanel.innerHTML = pasesSummaryHtml + pasesHtml;
+    if(pPanel) pPanel.innerHTML = pasesToggleHtml + pasesSummaryHtml + pasesHtmlFinal;
 
     let cPanel = document.getElementById('fin-comisionados-content');
     if(cPanel) cPanel.innerHTML = comisionesSummaryHtml + comisionesHtml;
@@ -745,6 +1099,11 @@ function renderCaja(caja) {
             </div>
         </div>
         <div class="divide-y divide-gray-100">${historialHtml}</div>`;
+
+        // Animar solo los items del historial genuinamente nuevos
+        hPanel.querySelectorAll('[data-caja-id]').forEach(el => {
+            if (!prevCajaIds.has(el.dataset.cajaId)) el.classList.add('row-enter');
+        });
     }
 }
 
@@ -828,6 +1187,10 @@ function abrirModal(id) {
 }
 
 function cerrarModales() {
+    window._manifestSearch = '';
+    window._ultimoTipoEmbarque = 'Libre'; // reset tipo al cerrar modal
+    let searchInput = document.getElementById('input-buscar-manifiesto');
+    if (searchInput) searchInput.value = '';
     document.querySelectorAll('.fixed').forEach(el => {
         if(el.id !== 'modal-backdrop' && el.id !== 'global-spinner' && el.id.startsWith('modal-')) {
             el.classList.add('hidden');
@@ -875,19 +1238,80 @@ function confirmarAbrirBote() {
     renderOperaciones(window.operacionesData);
     cerrarModales();
 
-    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, hora_salida, destino, creador: myOpName }).then(() => fetchDashboardDataBg());
+    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, hora_salida, destino, creador: myOpName }).then(() => setTimeout(fetchDashboardDataBg, 5000));
 }
 
 function confirmarZarpe(id_op) {
-    if(!confirm("¿Seguro que deseas ZARPAR esta lancha? Pasará a estado En Viaje.")) return;
+    let op = window.operacionesData.find(o => o.id === id_op);
+    if (!op) return;
+
+    let totalPax = (op.manifiesto || []).reduce((s, m) => s + (parseFloat(m.pax) || 0), 0);
+
+    document.getElementById('zarpe-confirm-subtitulo').textContent = `Operación ${id_op}`;
+    document.getElementById('zarpe-confirm-bote').textContent = op.nombre_bote || '–';
+    document.getElementById('zarpe-confirm-pax').textContent = `${totalPax} PAX`;
+    document.getElementById('zarpe-confirm-destino').textContent = op.destino || '–';
+    document.getElementById('zarpe-confirm-hora').textContent = op.hora_salida || '–';
+
+    let btnOk = document.getElementById('btn-zarpe-confirm-ok');
+    btnOk.onclick = function() {
+        cerrarSubModal('modal-zarpe-confirm');
+        ejecutarZarpe(id_op);
+    };
+
+    abrirModal('modal-zarpe-confirm');
+}
+
+function confirmarLlegada(id_op) {
+    let op = window.operacionesData.find(o => o.id === id_op);
+    if (!op) return;
+    let totalPax = (op.manifiesto || []).reduce((s, m) => s + (parseFloat(m.pax) || 0), 0);
+    // Mostrar bottom-sheet de confirmación
+    let bs = document.createElement('div');
+    bs.id = '_llegada-bs';
+    bs.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:flex-end;';
+    bs.innerHTML = `<div style="background:white;border-radius:24px 24px 0 0;padding:24px;width:100%;box-shadow:0 -20px 60px rgba(0,0,0,.2);">
+        <div style="width:40px;height:4px;background:#e5e7eb;border-radius:4px;margin:0 auto 20px;"></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+            <div style="width:48px;height:48px;background:#f0fdf4;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:22px;">🏁</div>
+            <div><strong style="font-size:17px;color:#111;">Confirmar Llegada</strong><br><span style="font-size:12px;color:#6b7280;">${op.bote} · ${totalPax} PAX</span></div>
+        </div>
+        <p style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:12px;padding:10px 14px;margin-bottom:16px;">
+            Al confirmar, la embarcación, capitán y guía quedarán <strong>disponibles</strong> para nuevas operaciones.
+        </p>
+        <div style="display:flex;gap:10px;">
+            <button onclick="document.getElementById('_llegada-bs').remove()" style="flex:1;background:#f3f4f6;color:#374151;font-weight:700;border:none;padding:14px;border-radius:14px;font-size:14px;cursor:pointer;">Cancelar</button>
+            <button onclick="document.getElementById('_llegada-bs').remove();_ejecutarConfirmarLlegada('${id_op}')" style="flex:2;background:#059669;color:white;font-weight:900;border:none;padding:14px;border-radius:14px;font-size:14px;cursor:pointer;">✅ Confirmar Llegada</button>
+        </div>
+    </div>`;
+    document.body.appendChild(bs);
+    bs.addEventListener('click', e => { if (e.target === bs) bs.remove(); });
+}
+
+function _ejecutarConfirmarLlegada(id_op) {
+    let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
+    if (opIndex !== -1) {
+        window.operacionesData.splice(opIndex, 1);
+        renderOperaciones(window.operacionesData);
+    }
+    fetchPostBg('confirmar_llegada', { id_operacion: id_op, creador: myOpName }).then(res => {
+        if (res.status === 'error') { mostrarToast(res.message, 'error'); fetchDashboardDataBg(); return; }
+        mostrarToast('✅ Llegada confirmada. Recursos liberados.', 'success');
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
+    });
+}
+
+function ejecutarZarpe(id_op) {
     // Optimistic: actualizar estado local inmediatamente
     let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
     if(opIndex !== -1) {
         window.operacionesData[opIndex].estado = 'En_Viaje';
+        window.operacionesData[opIndex].hora_salida = window.operacionesData[opIndex].hora_salida || new Date().toTimeString().slice(0,5);
         renderOperaciones(window.operacionesData);
     }
     fetchPostBg('zarpar_operacion', { id_operacion: id_op }).then(res => {
-        if(res.status === 'error') { alert(res.message); return; }
+        if(res.status === 'error') { alert(res.message); fetchDashboardDataBg(); return; }
         clearTimeout(window._syncTimer);
         window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
     });
@@ -903,17 +1327,28 @@ function generarListaHTML(manifiesto) {
         let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
         let isSelected = !isSyncing && window.editandoMovId === m.id;
 
-        let bgClass    = isSelected ? 'bg-orange-50 ring-2 ring-orange-400' : 'bg-white';
-        let iconoSinc  = isSyncing ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1 align-middle"></span>` : '';
+        let bgClass   = isSelected ? 'bg-orange-50 ring-2 ring-orange-400' : isSyncing ? 'bg-blue-50/60' : 'bg-white';
+        let iconoSinc = isSyncing
+            ? `<span class="inline-flex items-center gap-0.5 text-[9px] font-black text-blue-500 ml-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping inline-block"></span>guardando</span>`
+            : '';
         
         let isAliado       = m.tipo === 'Aliado' || m.tipo === 'Aliado(PaseIn)' || m.tipo === 'Aliado(PaseOut)' || m.tipo === 'Pase_Recibido';
         let isComisionado  = m.tipo === 'Comisionado';
 
         let isAgencia = m.tipo === 'Agencia';
+        // Pre-calcular adicionales para botón Cobrar y badge
+        let adicionalesSum = 0;
+        if (m.adicionales) {
+            adicionalesSum = (m.adicionales + '').split(',').reduce((acc, part) => {
+                let val = parseFloat((part.split(':')[1] || '').trim()) || 0;
+                return acc + val;
+            }, 0);
+        }
+
         // Botones: Cobrar (no aliado), Adicionales (solo agencia), Pasar (no pase out), X (todos)
         let subBtns = (isSelected && !isSyncing) ? `
         <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
-            ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('cobro_directo', { id_operacion: document.getElementById('hidden-gestion-op').value, id_contacto: '${m.contacto}', nombre_contacto: '${(m.nombreContacto||m.contacto||'').replace(/'/g,"\\'")}', monto: ${m.monto||0}, bloqueado: false }); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar</button>` : ''}
+            ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('cobro_directo', { id_operacion: document.getElementById('hidden-gestion-op').value, id_contacto: '${m.contacto}', nombre_contacto: '${(m.nombreContacto||m.contacto||'').replace(/'/g,"\\'")}', monto: ${m.monto||0}, monto_adicionales: ${adicionalesSum}, detalle_adicionales: '${(m.adicionales||'').replace(/'/g,"\\'")}', bloqueado: false }); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar${adicionalesSum > 0 ? ` <span class="bg-white/30 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full ml-1">+S/${adicionalesSum.toFixed(2)}</span>` : ''}</button>` : ''}
             ${isAgencia ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
             ${m.tipo !== 'Aliado(PaseOut)' ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
             <button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>
@@ -923,18 +1358,11 @@ function generarListaHTML(manifiesto) {
         let montoDisplay;
         if (isAliado) {
             montoDisplay = `<span class="text-[10px] font-black text-purple-500 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">PASE</span>`;
-        } else if (isAgencia && m.adicionales) {
-            // Parse "Item1:25.00, Item2:10.00" and sum the amounts
-            let adicionalesSum = (m.adicionales + '').split(',').reduce((acc, part) => {
-                let val = parseFloat((part.split(':')[1] || '').trim()) || 0;
-                return acc + val;
-            }, 0);
+        } else if (isAgencia && adicionalesSum > 0) {
             let montoBase = parseFloat(m.monto || 0);
-            if (adicionalesSum > 0) {
-                montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${montoBase.toFixed(2)} <span class="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 border border-amber-300 text-[9px] font-black px-1 py-0.5 rounded ml-0.5">+${adicionalesSum.toFixed(2)}</span></span>`;
-            } else {
-                montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${montoBase.toFixed(2)}</span>`;
-            }
+            let detalleAdics = (m.adicionales || '').replace(/'/g, "\\'");
+            let detalleTitle = (m.adicionales || '').replace(/, /g, ' | ');
+            montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${montoBase.toFixed(2)} <span class="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 border border-amber-300 text-[9px] font-black px-1 py-0.5 rounded ml-0.5 cursor-pointer active:bg-amber-200" title="${detalleTitle}" onclick="mostrarDetalleAdicionales('${detalleAdics}'); event.stopPropagation();">+${adicionalesSum.toFixed(2)} <i class='fas fa-info-circle text-[8px]'></i></span></span>`;
         } else {
             montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto||0).toFixed(2)}</span>`;
         }
@@ -946,13 +1374,13 @@ function generarListaHTML(manifiesto) {
         let nombreMostrar = m.nombreContacto || m.contacto || '';
 
         return `
-        <div class="flex flex-col ${bgClass} border ${isSyncing ? 'border-blue-200' : 'border-gray-200'} p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition shadow-sm mb-2" onclick="cargarParaEditar('${m.id}')">
+        <div class="flex flex-col ${bgClass} border ${isSyncing ? 'border-blue-200' : 'border-gray-200'} p-3 rounded-xl ${isSyncing ? 'cursor-default' : 'cursor-pointer hover:bg-blue-50'} transition shadow-sm mb-2" data-mov-id="${m.id}" ${isSyncing ? '' : `onclick="cargarParaEditar('${m.id}')"`}>
             <div class="flex justify-between items-center">
-                <div>
-                    <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block">${nombreMostrar} ${iconoSinc}</span>
+                <div class="flex-1 min-w-0 pr-2">
+                    <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block truncate">${nombreMostrar}${adicionalesSum > 0 ? ` <i class="fas fa-tag text-amber-500 text-[9px]" title="Tiene adicionales"></i>` : ''} ${iconoSinc}</span>
                     <span class="text-[10px] ${isAliado?'text-purple-500':isComisionado?'text-orange-500':'text-gray-500'} font-bold">${tipoLabel}</span>
                 </div>
-                <div class="text-right">
+                <div class="text-right shrink-0">
                     <span class="font-black text-blue-600 text-sm">${m.pax} PAX</span>
                     ${montoDisplay}
                 </div>
@@ -965,6 +1393,11 @@ function generarListaHTML(manifiesto) {
 function abrirModalGestionBote(id_op) {
     let op = window.operacionesData.find(o => o.id === id_op);
     if(!op || op.id === 'Creando...') return;
+
+    // Limpiar búsqueda al abrir
+    window._manifestSearch = '';
+    let searchInput = document.getElementById('input-buscar-manifiesto');
+    if (searchInput) searchInput.value = '';
 
     // Nombre del bote en el H3 (preserva el span hijo)
     let nodeH3 = document.getElementById('gestion-bote-nombre');
@@ -1054,7 +1487,9 @@ function actualizarPrecioDefecto() {
     let precioInput = document.getElementById('input-vd-precio');
 
     if(tipo === 'Libre') {
-        if(pax > 0) precioInput.value = (30 * pax).toFixed(2);
+        let varios = (window.contactosData || []).find(c => c.id === 'CON-00');
+        let precioVarios = varios ? parseFloat(varios.precio) || 30 : 30;
+        if(pax > 0) precioInput.value = (precioVarios * pax).toFixed(2);
 
     } else if(tipo === 'Agencia') {
         let sel = document.getElementById('input-vd-contacto-select');
@@ -1088,7 +1523,9 @@ function actualizarPrecioDefecto() {
 function resetFormularioVenta() {
     window.editandoMovId = null;
     document.getElementById('hidden-vd-idmov').value = '';
-    document.getElementById('input-vd-tipo').value = 'Libre';
+    // Recordar el tipo usado para agilizar embarques consecutivos del mismo tipo
+    let ultimoTipo = window._ultimoTipoEmbarque || 'Libre';
+    document.getElementById('input-vd-tipo').value = ultimoTipo;
     cambiarTipoVentaDirecta(); 
     document.getElementById('input-vd-pax').value = '';
     document.getElementById('input-vd-precio').value = '';
@@ -1108,9 +1545,16 @@ function resetFormularioVenta() {
     // Al cancelar, re-renderizar para quitar estado naranja de los items
     let currentDetailOpId = document.getElementById('hidden-gestion-op').value;
     let op = window.operacionesData.find(o => o.id === currentDetailOpId);
-    if(op) {
-        document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(op.manifiesto);
-    }
+    if(op) actualizarListaManifiestoSuave(op.manifiesto);
+
+    // Auto-focus inmediato al campo de nombre/contacto
+    setTimeout(() => {
+        let contactoInput = document.getElementById('input-vd-contacto-text') || document.getElementById('input-vd-contacto-select');
+        if (contactoInput && !document.getElementById('modal-gestion-bote').classList.contains('hidden')) {
+            contactoInput.focus();
+            if (contactoInput.tagName === 'INPUT') contactoInput.select();
+        }
+    }, 50);
 }
 
 function cargarParaEditar(id_mov) {
@@ -1168,10 +1612,8 @@ function cargarParaEditar(id_mov) {
     let box = document.getElementById('box-formulario-venta');
     box.classList.remove('border-blue-200', 'bg-blue-50'); box.classList.add('border-orange-300', 'bg-orange-50');
 
-    // Re-renderizar lista para colorear el item 
-    if(opData) {
-        document.getElementById('gestion-manifiesto-lista').innerHTML = generarListaHTML(opData.manifiesto);
-    }
+    // Re-renderizar lista para colorear el item
+    if(opData) actualizarListaManifiestoSuave(opData.manifiesto);
 }
 
 function confirmarVentaDirecta() {
@@ -1185,8 +1627,8 @@ function confirmarVentaDirecta() {
     let contacto, id_contacto_payload, nombre_contacto_payload;
     if(tipo === 'Libre') {
         contacto = (document.getElementById('input-vd-contacto-text')?.value.trim().toUpperCase() || '');
-        id_contacto_payload = contacto;
-        nombre_contacto_payload = contacto;
+        id_contacto_payload = 'CON-00';
+        nombre_contacto_payload = contacto ? 'VARIOS:' + contacto : 'VARIOS';
     } else {
         let sel = getContactoSeleccionado('input-vd-contacto-select');
         contacto = sel.nombre;
@@ -1194,10 +1636,9 @@ function confirmarVentaDirecta() {
         nombre_contacto_payload = sel.nombre;
     }
 
-    if(!contacto) return alert("❌ Ingresa el nombre o selecciona el contacto.");
-    if(!pax || parseFloat(pax) <= 0) return alert("❌ Cantidad de pasajeros inválida.");
-    // Aliado no requiere precio (es 0), los demás sí
-    if(tipo !== 'Aliado' && (!precio || parseFloat(precio) < 0)) return alert("❌ Ingresa el precio cobrado al pasajero.");
+    if(!contacto) { mostrarToast('❌ Ingresa el nombre o selecciona el contacto.', 'error'); return; }
+    if(!pax || parseFloat(pax) <= 0) { mostrarToast('❌ Cantidad de pasajeros inválida.', 'error'); return; }
+    if(tipo !== 'Aliado' && (!precio || parseFloat(precio) < 0)) { mostrarToast('❌ Ingresa el precio cobrado.', 'error'); return; }
 
     // Para Aliado forzar precio 0
     if(tipo === 'Aliado') precio = '0';
@@ -1215,34 +1656,43 @@ function confirmarVentaDirecta() {
     }
 
     let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
+    let newTempId = null; // para rollback en caso de error
+    let requestedDelta = 0;
+
     if(opIndex !== -1) {
         let currentOp = window.operacionesData[opIndex];
-        let requestedDelta = id_mov ? (parseInt(pax) - parseInt(currentOp.manifiesto.find(m => m.id === id_mov).pax)) : parseInt(pax);
-        if(currentOp.ocupados + requestedDelta > currentOp.capacidad) return alert(`❌ ¡El bote no tiene capacidad suficiente!`);
+        requestedDelta = id_mov ? (parseInt(pax) - parseInt(currentOp.manifiesto.find(m => m.id === id_mov)?.pax || 0)) : parseInt(pax);
 
-        // IMPORTANTE: usar tipoGAS para que el dedup en syncManifestBg coincida con lo que devuelve GAS
+        // Guardia local de capacidad (la definitiva la tiene GAS)
+        if(currentOp.ocupados + requestedDelta > currentOp.capacidad) {
+            mostrarToast(`❌ ¡Bote lleno! Solo quedan ${currentOp.capacidad - currentOp.ocupados} cupos.`, 'error');
+            return;
+        }
+
         let tipoOptimista = tipo === 'Aliado' ? 'Aliado(PaseIn)' : tipo;
         if(id_mov) {
             let movIndex = currentOp.manifiesto.findIndex(m => m.id === id_mov);
             if(movIndex !== -1) {
+                let movPrevio = currentOp.manifiesto[movIndex];
                 currentOp.ocupados += requestedDelta;
-                currentOp.manifiesto[movIndex] = { id: id_mov, tipo: tipoOptimista, contacto, nombreContacto: nombre_contacto_payload, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado', _syncing: true };
+                currentOp.manifiesto[movIndex] = { id: id_mov, tipo: tipoOptimista, contacto: id_contacto_payload, nombreContacto: nombre_contacto_payload, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado', adicionales: movPrevio.adicionales || '', _syncing: true };
             }
         } else {
+            newTempId = 'temp-' + Date.now();
             currentOp.ocupados += requestedDelta;
-            currentOp.manifiesto.unshift({ id: 'temp-' + Date.now(), tipo: tipoOptimista, contacto, nombreContacto: nombre_contacto_payload, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado', _syncing: true });
+            currentOp.manifiesto.unshift({ id: newTempId, tipo: tipoOptimista, contacto: id_contacto_payload, nombreContacto: nombre_contacto_payload, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado', _syncing: true });
         }
+        // Actualizar solo el modal (no re-render completo de ops durante embarque activo)
         actualizarModalSiAbierto();
-        renderOperaciones(window.operacionesData);
     }
-    
-    // Limpiar el formulario YA — no esperar al POST
+
+    // Recordar tipo para próximo embarque y limpiar formulario
+    window._ultimoTipoEmbarque = tipo;
     resetFormularioVenta();
 
     let endpoint = id_mov ? 'editar_movimiento_pax' : 'registrar_movimiento_pax';
     let paxNum = parseFloat(pax);
     let precioNum = parseFloat(precio);
-    // Mapear tipo UI → tipo GAS (Aliado en UI = PaseIn recibido por nosotros)
     let tipoGAS = tipo === 'Aliado' ? 'Aliado(PaseIn)' : tipo;
     let payload = {
         id_operacion: id_op, tipo: tipoGAS, contacto,
@@ -1257,11 +1707,55 @@ function confirmarVentaDirecta() {
     if(id_mov) payload.id_mov = id_mov;
 
     fetchPostBg(endpoint, payload).then(res => {
-        if(res.status === 'error') { alert(res.message); return; }
-        // Programa sincronización debounced: si ya hay una pendiente, cancela la anterior
-        // para que solo se dispare UNA vez luego del último POST completado
-        clearTimeout(window._syncTimer);
-        window._syncTimer = setTimeout(syncManifestBg, 2500);
+        if(res.status === 'error') {
+            // ROLLBACK: revertir el item optimista si GAS rechazó
+            let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
+            if(opIdx !== -1) {
+                let op = window.operacionesData[opIdx];
+                if(newTempId) {
+                    let tIdx = op.manifiesto.findIndex(m => m.id === newTempId);
+                    if(tIdx !== -1) { op.manifiesto.splice(tIdx, 1); op.ocupados -= requestedDelta; }
+                } else if(id_mov) {
+                    let mIdx = op.manifiesto.findIndex(m => m.id === id_mov);
+                    if(mIdx !== -1) op.manifiesto[mIdx]._syncing = false;
+                }
+                actualizarModalSiAbierto();
+            }
+            mostrarToast('❌ ' + (res.message || 'Error al registrar. Verifica el aforo.'), 'error');
+            return;
+        }
+
+        // ── Resolución inmediata del temp con el ID real de GAS ──────────────
+        // Esto elimina la necesidad del content-matching en syncManifestBg
+        if(newTempId && res.id_mov) {
+            let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
+            if(opIdx !== -1) {
+                let mIdx = window.operacionesData[opIdx].manifiesto.findIndex(m => m.id === newTempId);
+                if(mIdx !== -1) {
+                    window.operacionesData[opIdx].manifiesto[mIdx].id       = res.id_mov;
+                    window.operacionesData[opIdx].manifiesto[mIdx]._syncing = false;
+                    actualizarModalSiAbierto(); // actualiza el punto azul → nada (ya no pulsa)
+                }
+            }
+        } else if(id_mov) {
+            // Edición exitosa: limpiar _syncing del item editado
+            let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
+            if(opIdx !== -1) {
+                let mIdx = window.operacionesData[opIdx].manifiesto.findIndex(m => m.id === id_mov);
+                if(mIdx !== -1) {
+                    window.operacionesData[opIdx].manifiesto[mIdx]._syncing = false;
+                    actualizarModalSiAbierto();
+                }
+            }
+        }
+
+        // Sync diferido ligero: solo si quedan temps sin resolver (caso edge)
+        let opCheck = window.operacionesData.find(o => o.id === id_op);
+        let hayTempsRestantes = (opCheck?.manifiesto || []).some(m => m._syncing || (m.id && m.id.startsWith('temp-')));
+        if(hayTempsRestantes) {
+            clearTimeout(window._syncTimer);
+            window._syncTimer = setTimeout(syncManifestBg, 3000);
+        }
     });
 }
 
@@ -1271,6 +1765,11 @@ function confirmarVentaDirecta() {
 function cambiarTipoCRM() {
     let tipo = document.getElementById('input-crm-tipo').value;
     let container = document.getElementById('container-crm-contacto');
+    let precioInput = document.getElementById('input-crm-precio');
+
+    // Resetear estado del precio antes de aplicar tipo
+    precioInput.readOnly = false;
+    precioInput.classList.remove('bg-gray-100', 'opacity-50', 'cursor-not-allowed');
 
     if(tipo === 'Libre') {
         container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Apellido / Nombre</label>
@@ -1289,7 +1788,9 @@ function cambiarTipoCRM() {
         container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado</label>
             <select id="input-crm-contacto-select" class="${_selectInputClass()}">
                 <option value="">Seleccionar...</option>${opts}</select>`;
-        document.getElementById('input-crm-precio').value = '0';
+        precioInput.value = '0';
+        precioInput.readOnly = true;
+        precioInput.classList.add('bg-gray-100', 'opacity-50', 'cursor-not-allowed');
 
     } else if(tipo === 'Comisionado') {
         let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('comision'));
@@ -1318,6 +1819,8 @@ function actualizarPrecioDefectoCRM() {
 
     } else if(tipo === 'Aliado') {
         precioInput.value = '0';
+        precioInput.readOnly = true;
+        precioInput.classList.add('bg-gray-100', 'opacity-50', 'cursor-not-allowed');
 
     } else if(tipo === 'Comisionado' && pax > 0) {
         let sel = document.getElementById('input-crm-contacto-select');
@@ -1356,7 +1859,7 @@ function confirmarNuevaReserva() {
         creador: myOpName
     }).then(() => {
         document.getElementById('input-crm-pax').value = ''; document.getElementById('input-crm-precio').value = '';
-        fetchDashboardDataBg();
+        setTimeout(fetchDashboardDataBg, 5000);
     });
 }
 
@@ -1477,10 +1980,23 @@ function abrirModalCaja(modo, opts = {}) {
     } else {
         // cobro_directo: desde botón "Cobrar" en el manifiesto
         titulo.innerHTML = '<i class="fas fa-money-bill-wave text-green-500 mr-2"></i> Cobrar';
-        desc.textContent = opts.nombre_contacto ? `Cobro a ${opts.nombre_contacto}` : 'Registrar cobro.';
         btnOk.className  = btnOk.className.replace(/bg-\w+-\d+/g,'') + ' bg-green-500 hover:bg-green-600';
         catSel.innerHTML = `<option value="Cobro">💰 Cobro</option>`;
         catSel.setAttribute('disabled', 'true');
+
+        let baseNum  = parseFloat(opts.monto || 0);
+        let adicNum  = parseFloat(opts.monto_adicionales || 0);
+        let totalNum = baseNum + adicNum;
+
+        if (adicNum > 0) {
+            desc.innerHTML = opts.nombre_contacto
+                ? `Cobro a <strong>${opts.nombre_contacto}</strong><br><span class="text-[11px] text-gray-500">Base S/ ${baseNum.toFixed(2)} <span class="text-amber-600 font-black">+ Adicionales S/ ${adicNum.toFixed(2)}</span> = <span class="text-green-700 font-black">Total S/ ${totalNum.toFixed(2)}</span></span>`
+                : 'Registrar cobro.';
+            // Pre-llenar con el total combinado
+            document.getElementById('caja-monto').value = totalNum.toFixed(2);
+        } else {
+            desc.textContent = opts.nombre_contacto ? `Cobro a ${opts.nombre_contacto}` : 'Registrar cobro.';
+        }
     }
 
     onCajaCategoriaChange();
@@ -1577,7 +2093,7 @@ function confirmarCaja() {
         comentarios:  comentario,
         foto_url:     '',
         operador:     myOpName,
-        timestamp:    new Date().toISOString(),
+        timestamp:    new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString(),
         _syncing:     true
     };
     if (!window.cajaData) window.cajaData = [];
@@ -1601,12 +2117,13 @@ function confirmarCaja() {
             let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
             if (idx !== -1) {
                 if (res && res.id_transaccion) {
-                    window.cajaData[idx] = { ...window.cajaData[idx], id: res.id_transaccion, _syncing: false };
+                    window.cajaData[idx] = { ...window.cajaData[idx], id: res.id_transaccion, _syncing: true };
                 } else {
                     window.cajaData.splice(idx, 1);
                 }
             }
-            fetchDashboardDataBg();
+            renderCaja(window.cajaData);
+            setTimeout(fetchDashboardDataBg, 5000);
         }).catch(() => {
             let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
             if (idx !== -1) window.cajaData.splice(idx, 1);
@@ -1627,6 +2144,11 @@ function confirmarCaja() {
 function eliminarMovimiento(id_mov, pax) {
     if(!confirm(`¿Eliminar este movimiento (${pax} PAX)? Se marcará como Cancelado.`)) return;
     let id_op = document.getElementById('hidden-gestion-op').value;
+
+    // Registrar como eliminado localmente para prevenir re-aparición en refreshes de fondo
+    if (!window._deletedMovIds) window._deletedMovIds = new Set();
+    window._deletedMovIds.add(id_mov);
+
     // Optimistic: quitar de lista local
     let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
     if(opIdx !== -1) {
@@ -1640,8 +2162,11 @@ function eliminarMovimiento(id_mov, pax) {
         renderOperaciones(window.operacionesData);
     }
     window.editandoMovId = null;
+    resetFormularioVenta();
     fetchPostBg('eliminar_movimiento', { id_mov, creador: myOpName }).then(res => {
         if(res.status === 'error') { alert(res.message); fetchDashboardData(); }
+        // Limpiar del registro de eliminados cuando GAS confirma
+        if (window._deletedMovIds) window._deletedMovIds.delete(id_mov);
     });
 }
 
@@ -1650,23 +2175,48 @@ function abrirModalImpuestos(id_mov, contacto) {
     document.getElementById('impuestos-contacto').textContent = contacto;
     let lista = document.getElementById('impuestos-lista');
     let impuestos = (window.catalogosData && window.catalogosData.impuestos) || [];
+
+    // Leer adicionales actuales del movimiento para pre-cargar cantidades
+    let existingAdics = {};
+    for (let op of (window.operacionesData || [])) {
+        let mov = (op.manifiesto || []).find(m => m.id === id_mov);
+        if (mov && mov.adicionales) {
+            (mov.adicionales + '').split(',').forEach(part => {
+                let sep = part.indexOf(':');
+                if (sep === -1) return;
+                let nombre = part.substring(0, sep).trim();
+                let monto  = parseFloat(part.substring(sep + 1).trim()) || 0;
+                if (nombre) existingAdics[nombre] = monto;
+            });
+            break;
+        }
+    }
+
     if(!impuestos.length) {
         lista.innerHTML = '<p class="text-center text-gray-400 text-xs py-4">No hay impuestos configurados en la hoja Impuestos.</p>';
     } else {
-        lista.innerHTML = impuestos.map(imp => `
-        <div class="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl p-3">
+        lista.innerHTML = impuestos.map(imp => {
+            let existingMonto = existingAdics[imp.nombre] || 0;
+            let qty = (imp.monto > 0) ? Math.round(existingMonto / parseFloat(imp.monto)) : 0;
+            let hasQty = qty > 0;
+            return `
+        <div class="flex items-center justify-between ${hasQty ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-200'} border rounded-xl p-3 transition">
             <div>
                 <span class="text-sm font-bold text-gray-800">${imp.nombre}</span>
-                <span class="text-[11px] text-gray-500 block">S/ ${parseFloat(imp.monto).toFixed(2)} c/u</span>
+                <span class="text-[11px] text-gray-500 block">S/ ${parseFloat(imp.monto).toFixed(2)} c/u${hasQty ? ` · <span class="text-amber-600 font-black">S/ ${existingMonto.toFixed(2)} cargado</span>` : ''}</span>
             </div>
             <div class="flex items-center space-x-2">
                 <button onclick="cambiarQtyImpuesto('${imp.id}', -1)" class="w-8 h-8 rounded-full bg-gray-200 text-gray-700 font-black text-base hover:bg-red-100 hover:text-red-600 transition flex items-center justify-center">−</button>
-                <span id="qty-imp-${imp.id}" class="w-7 text-center font-black text-gray-800 text-sm" data-monto="${imp.monto}">0</span>
+                <span id="qty-imp-${imp.id}" class="w-7 text-center font-black text-gray-800 text-sm" data-monto="${imp.monto}">${qty}</span>
                 <button onclick="cambiarQtyImpuesto('${imp.id}', 1)" class="w-8 h-8 rounded-full bg-gray-200 text-gray-700 font-black text-base hover:bg-green-100 hover:text-green-600 transition flex items-center justify-center">+</button>
             </div>
-        </div>`).join('');
+        </div>`;
+        }).join('');
     }
-    document.getElementById('impuestos-total').textContent = 'S/ 0.00';
+
+    // Total inicial basado en adicionales existentes
+    let initialTotal = Object.values(existingAdics).reduce((sum, v) => sum + v, 0);
+    document.getElementById('impuestos-total').textContent = 'S/ ' + initialTotal.toFixed(2);
     abrirModal('modal-impuestos');
 }
 
@@ -1692,12 +2242,22 @@ function confirmarImpuestos() {
         let qty = parseInt(el ? el.textContent : 0) || 0;
         if(qty > 0) partes.push(`${imp.nombre}:${(qty * imp.monto).toFixed(2)}`);
     });
-    if(!partes.length) return alert('Agrega al menos un impuesto con cantidad mayor a 0.');
     let adicionales = partes.join(', ');
     cerrarSubModal('modal-impuestos');
+
+    // Optimistic: actualizar adicionales en local state inmediatamente
+    for (let op of (window.operacionesData || [])) {
+        let mov = (op.manifiesto || []).find(m => m.id === id_mov);
+        if (mov) { mov.adicionales = adicionales; break; }
+    }
+    let cont = document.getElementById('operaciones-container');
+    if (cont) cont._fp = null;
+    actualizarModalSiAbierto();
+    renderOperaciones(window.operacionesData);
+
     fetchPostBg('actualizar_adicionales', { id_mov, adicionales, creador: myOpName }).then(res => {
-        if(res.status === 'error') alert(res.message);
-        else mostrarToast('✅ Adicionales registrados: ' + adicionales);
+        if (res.status === 'error') alert(res.message);
+        else mostrarToast(adicionales ? '✅ Adicionales: ' + adicionales : '✅ Adicionales eliminados.');
     });
 }
 
@@ -1739,13 +2299,13 @@ function confirmarDerivacion() {
             window.pasesExternosData.unshift({
                 id: mov.id,
                 tipo: 'Aliado(PaseOut)',
-                contacto: aliado_id,
-                nombreContacto: mov.nombreContacto || mov.contacto,  // nombre original
+                aliadoId:     aliado_id,
+                nombreOrigen: mov.nombreContacto || mov.contacto,
                 pax: mov.pax,
                 monto: mov.monto,
                 estado: 'Pasado',
-                aliadoDestino: aliado,
-                timestamp: new Date().toISOString()
+                _syncing: true,
+                timestamp: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString()
             });
 
             op.manifiesto.splice(movIndex, 1);
@@ -1758,6 +2318,54 @@ function confirmarDerivacion() {
         if(res.status === 'error') { alert(res.message); return; }
         clearTimeout(window._syncTimer);
         window._syncTimer = setTimeout(syncManifestBg, 3000);
+    });
+}
+
+// ============================
+// ANULAR PASE
+// ============================
+function iniciarAnularPase(id_mov, pax, nombreContacto) {
+    document.getElementById('hidden-anular-idmov').value = id_mov;
+    document.getElementById('anular-pase-info').textContent = `${pax} PAX · ${nombreContacto}`;
+
+    // Poblar select con operaciones activas
+    let sel = document.getElementById('select-anular-op');
+    let hoy = getHoyLocal();
+    let ops = (window.operacionesData || []).filter(op => op.estado === 'Abierta' && (op.fecha === hoy || !op.fecha));
+    if(ops.length === 0) {
+        sel.innerHTML = '<option value="">No hay lanchas abiertas hoy</option>';
+    } else {
+        sel.innerHTML = '<option value="">- Selecciona lancha -</option>' +
+            ops.map(op => `<option value="${op.id}">${op.bote} · ${op.id} (${op.ocupados}/${op.capacidad} pax)</option>`).join('');
+    }
+    abrirModal('modal-anular-pase');
+}
+
+function confirmarAnularPase() {
+    let id_mov = document.getElementById('hidden-anular-idmov').value;
+    let id_op  = document.getElementById('select-anular-op').value;
+    if(!id_op) return alert('Selecciona una operación activa para reasignar el movimiento.');
+
+    cerrarSubModal('modal-anular-pase');
+
+    // Optimistic: quitar de pasesExternosData y reasignar en la op
+    let idx = (window.pasesExternosData || []).findIndex(p => p.id === id_mov);
+    if(idx !== -1) {
+        let pase = window.pasesExternosData.splice(idx, 1)[0];
+        let op = window.operacionesData.find(o => o.id === id_op);
+        if(op) {
+            let paxNum = parseInt(pase.pax) || 0;
+            op.manifiesto.unshift({ id: id_mov, tipo: 'Libre', contacto: pase.nombreOrigen, nombreContacto: pase.nombreOrigen, pax: pase.pax, monto: pase.monto, estado: 'Embarcado' });
+            op.ocupados += paxNum;
+        }
+        renderOperaciones(window.operacionesData);
+    }
+
+    fetchPostBg('anular_pase', { id_mov, id_operacion_nueva: id_op, operador: myOpName }).then(res => {
+        if(res.status === 'error') { alert(res.message); return; }
+        mostrarToast('✅ Pase anulado. Movimiento reasignado.', 'success');
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(syncManifestBg, 2000);
     });
 }
 
@@ -1827,6 +2435,38 @@ function actualizarHoraSugeridaCRM() {
 }
 
 function fetchPost(action, payload) { return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(res => res.json()).then(data => { if(data.message) alert(data.message); return data; }).catch(err => { return { status: 'error', message: 'Fallo red' }; }); }
+// ── Cola offline ─────────────────────────────────────────────────────────────
+const _OFFLINE_Q_KEY = 'sot_offline_queue';
+function _enqueueOffline(action, payload) {
+    try {
+        let q = JSON.parse(localStorage.getItem(_OFFLINE_Q_KEY) || '[]');
+        q.push({ action, payload, ts: Date.now() });
+        localStorage.setItem(_OFFLINE_Q_KEY, JSON.stringify(q));
+    } catch(e) {}
+}
+async function _processOfflineQueue() {
+    let q;
+    try { q = JSON.parse(localStorage.getItem(_OFFLINE_Q_KEY) || '[]'); } catch(e) { q = []; }
+    if (!q.length) return;
+    mostrarToast(`🔄 Enviando ${q.length} acción(es) pendiente(s)...`, 'info');
+    let failed = [];
+    for (let item of q) {
+        try {
+            let res = await fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: item.action, payload: item.payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} }).then(r => r.json());
+            if (res.status === 'error') failed.push(item);
+        } catch(e) { failed.push(item); }
+    }
+    localStorage.setItem(_OFFLINE_Q_KEY, JSON.stringify(failed));
+    if (!failed.length) {
+        mostrarToast('✅ Acciones pendientes enviadas.', 'success');
+        fetchDashboardDataBg();
+    } else {
+        mostrarToast(`⚠️ ${failed.length} acción(es) no se pudieron enviar aún.`, 'error');
+    }
+}
+window.addEventListener('online',  () => { mostrarToast('📶 Conexión restaurada.', 'success'); _processOfflineQueue(); });
+window.addEventListener('offline', () => { mostrarToast('📶 Sin conexión. Las acciones se guardarán para reenviar.', 'error'); });
+
 function fetchPostBg(action, payload) {
     pendingPostRequests++;
     let refreshIcon = document.querySelector('#btn-refresh i'); if(refreshIcon) refreshIcon.classList.add('fa-spin', 'text-yellow-400');
@@ -1840,7 +2480,8 @@ function fetchPostBg(action, payload) {
         .catch(err => {
             pendingPostRequests--;
             if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400');
-            mostrarToast('⚠️ Sin conexión. El dato puede no haberse guardado. Recarga para verificar.', 'error');
+            _enqueueOffline(action, payload);
+            mostrarToast('📶 Sin conexión. La acción se reintentará al reconectar.', 'error');
             return { status: 'error', message: 'Error de conexión' };
         });
 }
@@ -1881,13 +2522,13 @@ function confirmarPaseDesdeReserva() {
     window.pasesExternosData.unshift({
         id: 'temp-pase-' + Date.now(),
         tipo: 'Aliado(PaseOut)',
-        contacto: sel.id || sel.nombre,
-        nombreContacto: contacto,
-        aliadoDestino: sel.nombre,
+        aliadoId:     sel.id || sel.nombre,
+        nombreOrigen: contacto,
         pax: pax,
         monto: '0',
         estado: 'Pasado',
-        timestamp: new Date().toISOString()
+        _syncing: true,
+        timestamp: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString()
     });
     renderOperaciones(window.operacionesData);
 
@@ -1898,6 +2539,7 @@ function confirmarPaseDesdeReserva() {
         cant_pax: pax,
         aliado: sel.nombre,
         aliado_id: sel.id || sel.nombre,
+        id_contacto_original: contacto,
         nombre_contacto_original: contacto,
         creador: myOpName
     }).then(res => {
@@ -1966,7 +2608,25 @@ function confirmarEditarOp() {
 // ==========================
 // FOTO DE ZARPE
 // ==========================
-function abrirModalZarpeFoto(id_op) {
+function verFotoZarpe(url) {
+    let existing = document.getElementById('lightbox-zarpe');
+    if (existing) existing.remove();
+    let div = document.createElement('div');
+    div.id = 'lightbox-zarpe';
+    div.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.88);display:flex;align-items:center;justify-content:center;animation:fadeIn .2s ease;';
+    div.innerHTML = `
+        <div class="relative max-w-sm w-full mx-4">
+            <img src="${url}" class="w-full rounded-2xl shadow-2xl object-contain max-h-[80vh]" onerror="this.src='';this.parentElement.innerHTML='<p class=\\'text-white text-center p-8\\'>No se pudo cargar la foto.</p>'">
+            <button onclick="document.getElementById('lightbox-zarpe').remove()"
+                class="absolute -top-3 -right-3 w-9 h-9 bg-white rounded-full shadow-xl text-gray-700 font-black text-sm flex items-center justify-center hover:bg-red-50 active:scale-90 transition">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>`;
+    document.body.appendChild(div);
+    div.addEventListener('click', e => { if (e.target === div) div.remove(); });
+}
+
+function abrirModalZarpeFoto(id_op, esReemplazo) {
     let op = window.operacionesData.find(o => o.id === id_op);
     document.getElementById('hidden-zarpe-op-id').value     = id_op;
     document.getElementById('hidden-zarpe-hora').value      = op ? (op.hora_salida || '') : '';
@@ -1974,7 +2634,16 @@ function abrirModalZarpeFoto(id_op) {
     document.getElementById('zarpe-foto-nombre').classList.add('hidden');
     document.getElementById('zarpe-foto-camara').value  = '';
     document.getElementById('zarpe-foto-galeria').value = '';
-    document.getElementById('zarpe-foto-preview').innerHTML = '<span class="text-sm text-gray-400 font-bold">Sin foto seleccionada</span>';
+
+    if (esReemplazo && op && op.foto_zarpe) {
+        document.getElementById('zarpe-foto-preview').innerHTML =
+            `<div class="space-y-1">
+                <p class="text-[10px] text-amber-600 font-bold"><i class="fas fa-exclamation-triangle mr-1"></i>Esta foto será reemplazada:</p>
+                <img src="${op.foto_zarpe}" class="w-full max-h-28 object-cover rounded-xl opacity-60">
+             </div>`;
+    } else {
+        document.getElementById('zarpe-foto-preview').innerHTML = '<span class="text-sm text-gray-400 font-bold">Sin foto seleccionada</span>';
+    }
     abrirModal('modal-zarpe-foto');
 }
 
@@ -2009,8 +2678,19 @@ function confirmarFotoZarpe() {
     reader.onload = e => {
         fetchPostBg('subir_foto_zarpe', { id_operacion: id_op, hora_salida: hora, foto_base64: e.target.result, creador: myOpName })
             .then(res => {
-                if(res.status === 'error') mostrarToast('Error al subir foto.', 'error');
-                else mostrarToast('✅ Foto de zarpe guardada.');
+                if (res.status === 'error') {
+                    mostrarToast('Error al subir foto.', 'error');
+                } else {
+                    mostrarToast('✅ Foto de zarpe guardada.');
+                    // Actualizar local state para que el botón cambie a "Ver Foto"
+                    let opLocal = window.operacionesData.find(o => o.id === id_op);
+                    if (opLocal && res.foto_url) {
+                        opLocal.foto_zarpe = res.foto_url;
+                        let cont = document.getElementById('operaciones-container');
+                        if (cont) cont._fp = null; // invalidar fingerprint
+                        renderOperaciones(window.operacionesData);
+                    }
+                }
             });
     };
     reader.readAsDataURL(file);
@@ -2054,6 +2734,10 @@ function generarCierreDelDia() {
     // ── 1. OPERACIONES DEL DÍA ────────────────────────────────────────────
     let opsHtml = ops.map(op => {
         let totalOp = (op.manifiesto||[]).reduce((s,m)=>s+(parseFloat(m.monto)||0), 0);
+        // Estado de cierre: En_Viaje → Finalizado, Abierta → Cancelada (no zarpó)
+        let estadoCierre = op.estado === 'En_Viaje' ? '✅ FINALIZADO' : '❌ CANCELADO (no zarpó)';
+        let estadoColor  = op.estado === 'En_Viaje' ? '#16a34a' : '#dc2626';
+        let headerBg     = op.estado === 'En_Viaje' ? '#56070c' : '#6b7280';
         let movRows = (op.manifiesto||[]).map(m => {
             let nombre = m.nombreContacto || m.contacto || '—';
             let tipoLabel = {'Aliado(PaseIn)':'Pase Entrada','Aliado(PaseOut)':'Pase Salida','Comisionado':'Comisionado','Agencia':'Agencia','Libre':'Libre','Directo':'Libre'}[m.tipo] || m.tipo;
@@ -2062,12 +2746,15 @@ function generarCierreDelDia() {
             return row(td(nombre) + td(tipoLabel,'center') + td(m.pax||0,'center') + td(montoStr,'right'));
         }).join('') || row(td('<i>Sin pasajeros</i>','left','color:#9ca3af;'));
         return `<div style="margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-            <div style="background:#56070c;color:white;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="background:${headerBg};color:white;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;">
                 <span style="font-weight:900;font-size:13px;">⛵ ${op.bote}</span>
                 <span style="font-size:10px;opacity:.9;">${op.hora_salida||'—'} &nbsp;·&nbsp; ${op.ocupados}/${op.capacidad} PAX &nbsp;·&nbsp; Cap: ${op.capitan||'—'} &nbsp;·&nbsp; Guía: ${op.guia||'—'}</span>
             </div>
             ${tbl(th('Contacto')+th('Tipo','center')+th('PAX','center')+th('Monto','right'), movRows)}
-            <div style="background:#f9fafb;padding:5px 10px;text-align:right;font-weight:900;font-size:11px;color:#16a34a;border-top:1px solid #e5e7eb;">Total: S/ ${totalOp.toFixed(2)}</div>
+            <div style="background:#f9fafb;padding:5px 10px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #e5e7eb;">
+                <span style="font-size:9px;font-weight:900;color:${estadoColor};">${estadoCierre}</span>
+                <span style="font-weight:900;font-size:11px;color:#16a34a;">Total: S/ ${totalOp.toFixed(2)}</span>
+            </div>
         </div>`;
     }).join('') || '<p style="color:#9ca3af;font-size:12px;">Sin operaciones.</p>';
 
@@ -2075,9 +2762,9 @@ function generarCierreDelDia() {
     let pasesAliado = {};
     // PaseOut
     pases.forEach(p => {
-        let k = resolveNombre(p.aliadoDestino || p.contacto);
+        let k = resolveNombre(p.aliadoId || p.aliadoDestino || p.contacto);
         if (!pasesAliado[k]) pasesAliado[k] = { out:[], in:[] };
-        pasesAliado[k].out.push({ pax: parseInt(p.pax)||0, origen: p.nombreContacto||'—', hora: p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—' });
+        pasesAliado[k].out.push({ pax: parseInt(p.pax)||0, origen: p.nombreOrigen || p.nombreContacto || '—', hora: p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—' });
     });
     // PaseIn
     ops.forEach(op => (op.manifiesto||[]).forEach(m => {
@@ -2108,8 +2795,11 @@ function generarCierreDelDia() {
 
     // ── 3. COMISIONES ─────────────────────────────────────────────────────
     let comMap = {};
+    let _seenMovIds = new Set();
     ops.forEach(op => (op.manifiesto||[]).forEach(m => {
         if (m.tipo !== 'Comisionado') return;
+        if (m.id && _seenMovIds.has(m.id)) return; // evitar duplicados por race condition
+        if (m.id) _seenMovIds.add(m.id);
         let pax      = parseInt(m.pax)||0; if (!pax) return;
         let cobrado  = parseFloat(m.monto)||0;
         let info     = contactos.find(c => c.id===m.contacto || c.nombre===(m.nombreContacto||m.contacto));
@@ -2268,11 +2958,49 @@ function generarCierreDelDia() {
     });
 }
 
+function mostrarDetalleAdicionales(adicionales) {
+    let lineas = (adicionales || '').split(',').map(p => {
+        let sep = p.indexOf(':');
+        if (sep === -1) return p.trim();
+        let nombre = p.substring(0, sep).trim();
+        let monto  = parseFloat(p.substring(sep + 1).trim()) || 0;
+        return `${nombre}: S/ ${monto.toFixed(2)}`;
+    }).filter(Boolean);
+
+    let existing = document.getElementById('popover-adicionales');
+    if (existing) existing.remove();
+
+    let div = document.createElement('div');
+    div.id = 'popover-adicionales';
+    div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;width:80%;max-width:280px;';
+    div.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-2xl border border-amber-200 overflow-hidden">
+            <div class="bg-amber-50 px-4 py-3 flex justify-between items-center border-b border-amber-200">
+                <span class="font-black text-amber-700 text-sm uppercase tracking-wider"><i class="fas fa-tag mr-2"></i>Adicionales</span>
+                <button onclick="document.getElementById('popover-adicionales').remove()" class="w-7 h-7 bg-amber-100 hover:bg-amber-200 rounded-full text-amber-700 text-xs font-bold transition"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-4 space-y-2">
+                ${lineas.map(l => `<div class="flex justify-between text-xs font-bold text-gray-700 py-1 border-b border-gray-100 last:border-0"><span>${l.split(':')[0]}</span><span class="text-amber-600">${l.split(':').slice(1).join(':').trim()}</span></div>`).join('')}
+                <div class="flex justify-between text-sm font-black text-gray-900 pt-2 border-t-2 border-amber-300 mt-1">
+                    <span>Total adicionales</span>
+                    <span class="text-amber-600">S/ ${(adicionales||'').split(',').reduce((sum, p) => { let sep = p.indexOf(':'); return sum + (sep !== -1 ? parseFloat(p.substring(sep+1).trim())||0 : 0); }, 0).toFixed(2)}</span>
+                </div>
+            </div>
+        </div>`;
+    document.body.appendChild(div);
+    // Cerrar al tocar fuera
+    setTimeout(() => document.addEventListener('click', function _close(e) {
+        if (!div.contains(e.target)) { div.remove(); document.removeEventListener('click', _close); }
+    }), 100);
+}
+
 function verDetallePase(idx) {
     let p = (window.pasesExternosData || [])[idx];
     if(!p) return;
-    let nombre   = p.nombreContacto || p.contacto || '—';
-    let destino  = p.aliadoDestino || p.contacto || '—';
+    let contactos = window.contactosData || [];
+    let nombre   = p.nombreOrigen || '—';
+    let aliadoInfo = contactos.find(c => c.id === p.aliadoId || c.nombre === p.aliadoId);
+    let destino  = aliadoInfo ? aliadoInfo.nombre : (p.aliadoId || '—');
     let pax      = p.pax || '—';
     let monto    = p.monto ? 'S/ ' + parseFloat(p.monto).toFixed(2) : '—';
     let ts       = p.timestamp ? new Date(p.timestamp).toLocaleString('es-PE') : '—';

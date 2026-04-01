@@ -32,12 +32,14 @@ function doPost(e) {
     else if (action === 'zarpar_operacion')         { return jsonResponse(zarparOperacion(data.payload)); }
     else if (action === 'registrar_caja_v2')        { return jsonResponse(registrarCajaV2(data.payload)); }
     else if (action === 'derivar_pase')             { return jsonResponse(derivarPase(data.payload)); }
+    else if (action === 'anular_pase')              { return jsonResponse(anularPase(data.payload)); }
     else if (action === 'eliminar_movimiento')      { return jsonResponse(eliminarMovimiento(data.payload)); }
     else if (action === 'actualizar_adicionales')   { return jsonResponse(actualizarAdicionales(data.payload)); }
     else if (action === 'pase_desde_reserva')       { return jsonResponse(paseDesdeReserva(data.payload)); }
     else if (action === 'editar_operacion')         { return jsonResponse(editarOperacion(data.payload)); }
     else if (action === 'subir_foto_zarpe')         { return jsonResponse(subirFotoZarpe(data.payload)); }
     else if (action === 'guardar_cierre')           { return jsonResponse(guardarCierre(data.payload)); }
+    else if (action === 'confirmar_llegada')        { return jsonResponse(confirmarLlegada(data.payload)); }
     return jsonResponse({ error: 'Acción no requerida o desconocida' }, 400);
   } catch (error) {
     return jsonResponse({ error: error.toString() }, 500);
@@ -103,10 +105,18 @@ function getDashboardData() {
   todoPersonal.forEach(p => { personalMap[p.id_empleado] = p.nombre; });
 
   const operacionesActivasRef = todasOperaciones.filter(op => op.estado === 'Abierta' || op.estado === 'En_Viaje');
-  const operacionesAbiertas   = todasOperaciones.filter(op => op.estado === 'Abierta');
-  const botesOcupados    = operacionesAbiertas.map(op => op.id_bote);
+
+  // Recursos (bote/capitán/guía) solo se bloquean por operaciones Abiertas del día de HOY.
+  // Operaciones de días anteriores que quedaron sin cerrar NO bloquean recursos al día siguiente.
+  const hoyISO = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const operacionesAbiertas = todasOperaciones.filter(op => {
+    if (op.estado !== 'Abierta') return false;
+    let fechaOp = parseDateForJS(op.fecha);
+    return fechaOp === hoyISO;
+  });
+  const botesOcupados     = operacionesAbiertas.map(op => op.id_bote);
   const capitanesOcupados = operacionesAbiertas.map(op => op.id_capitan);
-  const guiasOcupados    = operacionesAbiertas.map(op => op.id_guia);
+  const guiasOcupados     = operacionesAbiertas.map(op => op.id_guia);
 
   const operaciones = operacionesActivasRef.map(op => {
     let bData = botesMap[op.id_bote] || { nombre: 'Lancha ('+op.id_bote+')', capacidad: 0 };
@@ -132,6 +142,7 @@ function getDashboardData() {
       hora_salida: op.hora_salida,
       destino: op.Destino || '',
       fecha: parseDateForJS(op.fecha),
+      foto_zarpe: op.foto_zarpe_url || '',
       manifiesto: movsActivos.map(m => ({
         id: m.id_mov,
         tipo: m.tipo_movimiento,
@@ -139,7 +150,9 @@ function getDashboardData() {
         nombreContacto: m.nombreContacto || m.id_contacto,
         pax: m.cant_pax,
         monto: m.monto_total_cobrar,
-        estado: m.estado_movimiento
+        estado: m.estado_movimiento,
+        id_contactoPase: m.Id_contactoPase || '',
+        adicionales: m.adicionales || ''
       }))
     };
   });
@@ -196,27 +209,20 @@ function getDashboardData() {
     };
   });
 
-  // Pases del día: movimientos con estado 'Pasado' del día de hoy
-  const hoy = new Date();
-  const hoyStr = hoy.toLocaleDateString('en-GB'); // dd/mm/yyyy
+  // Pases: todos los movimientos con aliado destino (Id_contactoPase con valor).
+  // El frontend filtra por esFechaHoy() para la vista "Hoy" y muestra todo en "Histórico".
   const pasesExternos = todosMovimientos
-    .filter(m => {
-      if ((m.estado_movimiento || '').toLowerCase() !== 'pasado') return false;
-      let ts = m.timestamp_registro;
-      if (!ts) return false; // sin timestamp = no incluir
-      let d = (ts instanceof Date) ? ts : new Date(ts);
-      if (isNaN(d.getTime())) return false; // fecha inválida = no incluir
-      return d.toLocaleDateString('en-GB') === hoyStr;
-    })
+    .filter(m => (m.Id_contactoPase || '').toString().trim() !== '')
     .map(m => ({
-      id: m.id_mov,
-      tipo: m.tipo_movimiento,
-      contacto: m.id_contacto,
-      nombreContacto: m.nombreContacto || m.id_contacto,  // nombre original, no tocado
-      pax: m.cant_pax,
-      monto: m.monto_total_cobrar,
-      estado: m.estado_movimiento,
-      timestamp: formatTimestamp(m.timestamp_registro)
+      id:            m.id_mov,
+      tipo:          m.tipo_movimiento,
+      aliadoId:      (m.Id_contactoPase || '').toString().trim(),   // ID del aliado destino (col 13)
+      origenId:      (m.id_contacto     || '').toString().trim(),   // contacto original (col 4)
+      nombreOrigen:  (m.nombreContacto  || m.id_contacto || '').toString(), // nombre del pasajero/agencia
+      pax:           m.cant_pax,
+      monto:         m.monto_total_cobrar,
+      estado:        m.estado_movimiento,
+      timestamp:     formatTimestamp(m.timestamp_registro)
     }));
 
   return {
@@ -265,12 +271,27 @@ function CheckCapacidadDisponible(ss, id_operacion, ignore_mov_id = null) {
 // Endpoints POST
 // =============================================
 
-// FIX #2: orden correcto de columnas + estado_movimiento incluido
 // Columnas Movimientos: id_mov(1) | id_operacion(2) | tipo_movimiento(3) | id_contacto(4) |
-//   cant_pax(5) | precio_unitario_aplicado(6) | monto_total_cobrar(7) | adicionales(8) |
-//   operador_registro(9) | timestamp_registro(10) | estado_movimiento(11)
+//   nombreContacto(5) | cant_pax(6) | precio_unitario_aplicado(7) | monto_total_cobrar(8) |
+//   adicionales(9) | operador_registro(10) | timestamp_registro(11) | estado_movimiento(12) |
+//   Id_contactoPase(13) ← ID del aliado destino cuando se hace un pase (col 4 conserva el contacto original)
 function registrarMovimientoPax(payload) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+  // Validar que la operación exista y esté en estado Abierta
+  const opsSheet = ss.getSheetByName('Operaciones');
+  const opsData  = opsSheet.getDataRange().getValues();
+  let opEstado = null;
+  for (let i = 1; i < opsData.length; i++) {
+    if (String(opsData[i][0]) === String(payload.id_operacion)) {
+      opEstado = (opsData[i][6] || '').toString().trim();
+      break;
+    }
+  }
+  if (!opEstado || opEstado !== 'Abierta') {
+    return { status: 'error', message: '❌ No se puede embarcar: la lancha ya zarpó o está cerrada.' };
+  }
+
   const check = CheckCapacidadDisponible(ss, payload.id_operacion);
   if (check.ocupados + parseInt(payload.pax) > check.capacidad) {
     return { status: 'error', message: `❌ ¡Alerta de Cruce! Operador simultáneo. Quedan ${check.capacidad - check.ocupados} cupos.` };
@@ -282,17 +303,18 @@ function registrarMovimientoPax(payload) {
     payload.id_operacion,                          // col 2  id_operacion
     payload.tipo,                                  // col 3  tipo_movimiento
     payload.id_contacto || payload.contacto,       // col 4  id_contacto
-    payload.nombre_contacto || payload.contacto,   // col 5  nombreContacto ← NEW
+    payload.nombre_contacto || payload.contacto,   // col 5  nombreContacto
     payload.pax,                                   // col 6  cant_pax
     payload.precio_unitario,                       // col 7  precio_unitario_aplicado
     payload.monto_total,                           // col 8  monto_total_cobrar
     '',                                            // col 9  adicionales
     payload.creador || 'App',                      // col 10 operador_registro
     new Date(),                                    // col 11 timestamp_registro
-    'Embarcado'                                    // col 12 estado_movimiento
+    'Embarcado',                                   // col 12 estado_movimiento
+    ''                                             // col 13 Id_contactoPase (vacío al crear)
   ]);
   SpreadsheetApp.flush();
-  return { message: '✅ Abordaje directo registrado en Manifiesto.' };
+  return { message: '✅ Abordaje directo registrado en Manifiesto.', id_mov: newId };
 }
 
 function editarMovimientoPax(payload) {
@@ -387,14 +409,15 @@ function asignarReserva(payload) {
     payload.id_operacion,                                 // col 2  id_operacion
     payload.tipo || 'Agencia',                            // col 3  tipo_movimiento
     payload.id_contacto,                                  // col 4  id_contacto
-    payload.nombre_contacto || payload.id_contacto,       // col 5  nombreContacto ← NEW
+    payload.nombre_contacto || payload.id_contacto,       // col 5  nombreContacto
     payload.cant_pax,                                     // col 6  cant_pax
     parseFloat(payload.precio_unitario) || 0,             // col 7  precio_unitario_aplicado
     parseFloat(payload.monto_total) || 0,                 // col 8  monto_total_cobrar
     '',                                                   // col 9  adicionales
     payload.creador || 'App',                             // col 10 operador_registro
     new Date(),                                           // col 11 timestamp_registro
-    'Embarcado'                                           // col 12 estado_movimiento
+    'Embarcado',                                          // col 12 estado_movimiento
+    ''                                                    // col 13 Id_contactoPase (vacío al crear)
   ]);
   SpreadsheetApp.flush();
   return { message: '✅ Pasajeros asignados al Bote.' };
@@ -453,13 +476,12 @@ function derivarPase(payload) {
   const movData  = sheetMov.getDataRange().getValues();
   for (let i = 1; i < movData.length; i++) {
     if (movData[i][0] === payload.id_mov) {
-      // Mantener id_operacion real pero marcar con sufijo -EXT para lectura posterior
-      let idOpOriginal = movData[i][1];
-      sheetMov.getRange(i+1, 2).setValue(idOpOriginal);                          // mantener id_op original
+      // col 2 (id_operacion) y col 4 (id_contacto) se conservan — no se sobreescriben
       sheetMov.getRange(i+1, 3).setValue('Aliado(PaseOut)');                     // tipo_movimiento
-      sheetMov.getRange(i+1, 4).setValue(payload.aliado_id || payload.aliado);   // id_contacto = ID del aliado destino
-      // col 5 (nombreContacto) NO se toca: conserva el nombre original del pasajero/contacto
-      sheetMov.getRange(i+1, 12).setValue('Pasado');                             // estado simple para filtrar
+      // col 4 (id_contacto): conserva el contacto/agencia original del pasajero
+      // col 5 (nombreContacto): conserva el nombre original — NO se toca
+      sheetMov.getRange(i+1, 12).setValue('Pasado');                             // estado_movimiento
+      sheetMov.getRange(i+1, 13).setValue(payload.aliado_id || payload.aliado);  // Id_contactoPase = aliado destino
       SpreadsheetApp.flush();
       return { message: '✅ Pasajeros transferidos a ' + payload.aliado + '.' };
     }
@@ -508,6 +530,24 @@ function zarparOperacion(payload) {
     }
   }
   return { status: 'error', message: 'Operación no encontrada.' };
+}
+
+// Confirmar llegada de una lancha En_Viaje → la cierra y registra hora de llegada
+function confirmarLlegada(payload) {
+  if (!payload || !payload.id_operacion) return { status: 'error', message: '❌ Se requiere id_operacion.' };
+  const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('Operaciones');
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === payload.id_operacion) {
+      sheet.getRange(i+1, 7).setValue('Cerrada');
+      // Col 11 = hora_llegada si existe, si no se ignora
+      try { sheet.getRange(i+1, 11).setValue(new Date()); } catch(e) {}
+      SpreadsheetApp.flush();
+      return { message: '✅ Llegada confirmada. Recursos liberados.' };
+    }
+  }
+  return { status: 'error', message: '❌ Operación no encontrada.' };
 }
 
 // FIX #4: implementación real de cerrarOperacion (antes era un stub)
@@ -611,15 +651,16 @@ function paseDesdeReserva(payload) {
     newMovId,                                          // col 1  id_mov
     'PASE_DIRECTO',                                   // col 2  id_operacion (no ligado a lancha)
     'Aliado(PaseOut)',                                // col 3  tipo_movimiento
-    payload.aliado_id || payload.aliado,              // col 4  id_contacto = aliado destino
-    payload.nombre_contacto_original,                 // col 5  nombreContacto = contacto CRM original
+    payload.id_contacto_original || '',               // col 4  id_contacto = contacto CRM original
+    payload.nombre_contacto_original,                 // col 5  nombreContacto = nombre CRM original
     payload.cant_pax,                                 // col 6  cant_pax
     0,                                                // col 7  precio_unitario
     0,                                                // col 8  monto_total
     '',                                               // col 9  adicionales
     payload.creador || 'App',                         // col 10 operador_registro
     new Date(),                                       // col 11 timestamp_registro
-    'Pasado'                                          // col 12 estado_movimiento
+    'Pasado',                                         // col 12 estado_movimiento
+    payload.aliado_id || payload.aliado               // col 13 Id_contactoPase = aliado destino
   ]);
   SpreadsheetApp.flush();
   return { message: '✅ Pase registrado correctamente.' };
@@ -658,4 +699,26 @@ function guardarCierre(payload) {
   } catch(e) {
     return { status: 'error', message: e.toString() };
   }
+}
+
+// Anular un pase: limpia Id_contactoPase, reasigna id_operacion y restaura estado a Embarcado
+// payload: { id_mov, id_operacion_nueva }
+function anularPase(payload) {
+  if (!payload.id_mov || !payload.id_operacion_nueva) {
+    return { status: 'error', message: 'Faltan id_mov o id_operacion_nueva.' };
+  }
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheetMov = ss.getSheetByName('Movimientos');
+  const movData  = sheetMov.getDataRange().getValues();
+  for (let i = 1; i < movData.length; i++) {
+    if (movData[i][0] === payload.id_mov) {
+      sheetMov.getRange(i+1, 2).setValue(payload.id_operacion_nueva);  // col 2  id_operacion
+      sheetMov.getRange(i+1, 3).setValue('Libre');                     // col 3  tipo_movimiento (reset a Libre)
+      sheetMov.getRange(i+1, 12).setValue('Embarcado');                // col 12 estado_movimiento
+      sheetMov.getRange(i+1, 13).setValue('');                         // col 13 Id_contactoPase → vaciar
+      SpreadsheetApp.flush();
+      return { message: '✅ Pase anulado. Movimiento reasignado a ' + payload.id_operacion_nueva + '.' };
+    }
+  }
+  return { status: 'error', message: 'Movimiento no encontrado.' };
 }
