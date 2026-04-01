@@ -11,10 +11,33 @@ function doGet(e) {
     if (!action || action === 'getDashboardData') {
       return jsonResponse(getDashboardData());
     }
+    if (action === 'getPersonal') {
+      return jsonResponse(getPersonal());
+    }
     return jsonResponse({ error: 'Acción no válida' }, 400);
   } catch (error) {
     return jsonResponse({ error: error.toString() }, 500);
   }
+}
+
+// Carga ultraligera: solo la hoja Personal — para tener operadores disponibles al login
+function getPersonal() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('Personal');
+  if (!sheet) return { operadores: [], personal: [] };
+  const rows = sheet.getDataRange().getDisplayValues();
+  if (rows.length < 2) return { operadores: [], personal: [] };
+  const keys = rows[0];
+  const personal = rows.slice(1).map(r => {
+    let obj = {};
+    keys.forEach((k, i) => obj[k] = r[i]);
+    return obj;
+  });
+  const normalizeStr = s => (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const operadores = personal
+    .filter(p => p.id_empleado && normalizeStr(p.rol).includes('operador'))
+    .map(p => ({ id: p.id_empleado, nombre: p.nombre }));
+  return { operadores, personal };
 }
 
 function doPost(e) {

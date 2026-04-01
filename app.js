@@ -193,6 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!sessionDate) localStorage.setItem('sot_session_date', hoyStr);
     }
 
+    fetchPersonalRapido(); // precarga operadores para que el login funcione de inmediato
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 30000);
     programarResetDiario();
@@ -223,6 +224,31 @@ function checkForUpdates() {
             }
         })
         .catch(() => {}); // silenciar si no hay red
+}
+
+// ── Precarga ultraligera de operadores (solo hoja Personal) ──────────────────
+// Se llama al inicio ANTES de getDashboardData para que el login funcione
+// incluso en dispositivos nuevos sin caché local.
+function fetchPersonalRapido() {
+    // Si ya tenemos operadores en memoria (caché local), no necesitamos esto
+    let ops = window.catalogosData?.operadores || [];
+    if (ops.length > 0) return;
+
+    fetch(GAS_URL + '?action=getPersonal', { cache: 'no-store' })
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(data => {
+            if (data.status !== 'success' || !data.operadores) return;
+            // Inyectar solo operadores en catalogosData sin pisar el resto de datos
+            if (!window.catalogosData) window.catalogosData = {};
+            if (!window.catalogosData.operadores || window.catalogosData.operadores.length === 0) {
+                window.catalogosData.operadores = data.operadores;
+            }
+            // También precargar personal en contactosData si aún no hay nada
+            if ((!window.contactosData || window.contactosData.length === 0) && data.personal) {
+                // No sobreescribir contactosData real — solo marcar que los operadores ya están disponibles
+            }
+        })
+        .catch(() => {}); // silenciar — getDashboardData lo reintentará
 }
 
 // =============================
