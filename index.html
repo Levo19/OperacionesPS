@@ -584,13 +584,19 @@
     </div>
 
     <!-- MAIN APP STRUCTURE -->
-    <header class="bg-blue-600 text-white shadow-md sticky top-0 z-10 w-full">
+    <header class="bg-blue-600 text-white shadow-md sticky top-0 z-10 w-full" id="main-header">
         <div class="px-5 py-3.5 flex justify-between items-center max-w-md mx-auto">
             <h1 class="text-xl font-bold tracking-tight" id="app-title">Operaciones</h1>
-            <!-- Loading Indicator para API Calls -->
-            <div id="global-spinner" class="hidden"><i class="fas fa-sync-alt fa-spin text-xl"></i></div>
-            <div id="btn-refresh" class="flex space-x-4 text-xl"><i class="fas fa-sync-alt cursor-pointer" onclick="fetchDashboardData()"></i></div>
+            <!-- Indicador de sync elegante — reemplaza el botón invasivo -->
+            <div id="global-spinner" class="hidden"><i class="fas fa-circle-notch fa-spin text-base text-white/70"></i></div>
+            <button id="btn-refresh" onclick="fetchDashboardData()" title="Toca para sincronizar ahora"
+                class="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 active:scale-95 transition-all rounded-full px-3 py-1 border border-white/15">
+                <span id="sync-dot" class="w-2 h-2 rounded-full bg-emerald-300 animate-pulse"></span>
+                <span class="text-[10px] font-black text-white/75 uppercase tracking-widest">En vivo</span>
+            </button>
         </div>
+        <!-- Banner de notificación — desliza desde el header, no tapa el teclado -->
+        <div id="header-toast" style="max-height:0;overflow:hidden;transition:max-height 0.25s ease-out,opacity 0.25s;opacity:0;" class="w-full"></div>
     </header>
 
     <main class="w-full max-w-md mx-auto p-4 relative">

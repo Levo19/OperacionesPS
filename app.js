@@ -1,4 +1,4 @@
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzi5aD18Xj0ikbQJZkiMSjZPkMg3HVFneL6XTEirRVg2MISZyDN-tTc-0OuUkakGXYWHw/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbxkdyhxdZnySKaVN1MfMU-4VzJvGWC-hLiSYSQdph5G5MYHOLfHO62Cdl-SuFoCnvOqyA/exec';
 
 let myOpName = localStorage.getItem('sot_operador') || null;
 
@@ -194,7 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     fetchDashboardData();
-    setInterval(fetchDashboardDataBg, 10000);
+    setInterval(fetchDashboardDataBg, 30000);
     programarResetDiario();
     iniciarCountdownTimer();
     // Procesar cola offline si hay items pendientes del turno anterior
@@ -304,13 +304,44 @@ function switchFinanzas(seccion, btnEl) {
     if(btnEl) btnEl.classList.add('active');
 }
 
+function _forceRenderEmpty() {
+    // Limpia el estado de carga incondicionalmente (sin fingerprint check)
+    const oc = document.getElementById('operaciones-container');
+    if (oc && oc.querySelector('.fa-spinner')) {
+        oc.innerHTML = `<div class="text-center py-8 text-gray-400"><i class="fas fa-wifi-slash text-4xl mb-3 opacity-30 block"></i><p class="text-sm">Sin conexión con el servidor.</p><button onclick="fetchDashboardData()" class="mt-3 px-4 py-1.5 bg-blue-500 text-white text-xs rounded-full">Reintentar</button></div>`;
+    }
+    const rc = document.getElementById('reservas-container');
+    if (rc && rc.querySelector('.fa-spinner')) {
+        rc.innerHTML = `<p class="text-center text-xs text-gray-400 py-6">Sin conexión.</p>`;
+    }
+}
+
 function fetchDashboardData() {
     toggleSpinner(true);
-    fetch(GAS_URL + "?action=getDashboardData")
-        .then(res => res.json())
+    // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
+    let safetyTimer = setTimeout(() => {
+        toggleSpinner(false);
+        _forceRenderEmpty();
+        console.warn('[SOT] fetchDashboardData timeout — forzando limpieza de UI');
+    }, 35000);
+
+    let ctrl = new AbortController();
+    let abortTimer = setTimeout(() => ctrl.abort(), 30000);
+
+    fetch(GAS_URL + "?action=getDashboardData", { signal: ctrl.signal })
+        .then(res => {
+            clearTimeout(abortTimer);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+        })
         .then(data => {
+            clearTimeout(safetyTimer);
             toggleSpinner(false);
-            if(data.status === 'error') return console.error("Error backend:", data.error);
+            if(data.status === 'error') {
+                console.error("Error backend:", data.error);
+                _forceRenderEmpty();
+                return;
+            }
             window.operacionesData   = data.operaciones_abiertas || [];
             window.contactosData     = data.catalogos ? data.catalogos.contactos : [];
             window.catalogosData     = data.catalogos || {};
@@ -318,16 +349,22 @@ function fetchDashboardData() {
             window.pasesExternosData = data.pases_externos || [];
             window.cajaData          = data.movimientos_dia || [];
 
-            renderCatalogos(data.catalogos);
-            renderOperaciones(window.operacionesData);
-            renderReservas(window.reservasData);
-            renderCaja(window.cajaData);
-            actualizarModalSiAbierto();
-            _saveDashboardCache(); // guardar para uso offline
+            try { renderCatalogos(data.catalogos); } catch(e) { console.error('renderCatalogos:', e); }
+            try { renderOperaciones(window.operacionesData); } catch(e) { console.error('renderOperaciones:', e); }
+            try { renderReservas(window.reservasData); } catch(e) { console.error('renderReservas:', e); }
+            try { renderCaja(window.cajaData); } catch(e) { console.error('renderCaja:', e); }
+            try { actualizarModalSiAbierto(); } catch(e) { console.error('actualizarModal:', e); }
+            _saveDashboardCache();
         })
-        .catch(() => {
+        .catch(err => {
+            clearTimeout(safetyTimer);
+            clearTimeout(abortTimer);
             toggleSpinner(false);
-            // Si hay caché, los datos ya se mostraron al inicio — solo avisar
+            console.warn('[SOT] fetchDashboardData error:', err.message);
+            _forceRenderEmpty();
+            // También intentar renderizar con datos de caché si existen
+            try { renderOperaciones(window.operacionesData || []); } catch(e) {}
+            try { renderReservas(window.reservasData || []); } catch(e) {}
             let hayCaché = !!localStorage.getItem(_CACHE_KEY);
             mostrarToast(
                 hayCaché ? '📴 Sin conexión — mostrando datos guardados' : '❌ Sin conexión y sin datos previos',
@@ -376,11 +413,9 @@ function syncManifestBg() {
             if(localTemps.length > 0) {
                 let newOp = window.operacionesData.find(o => o.id === opId);
                 if(newOp) {
+                    // Solo excluir temps que ya tienen un ID real en los datos de GAS (nunca por contenido)
                     let stillPending = localTemps.filter(t =>
-                        !newOp.manifiesto.some(s =>
-                            (t.id && !t.id.startsWith('temp-') && s.id === t.id) ||
-                            (s.contacto === t.contacto && String(s.pax) === String(t.pax) && s.tipo === t.tipo && (s.nombreContacto || '') === (t.nombreContacto || ''))
-                        )
+                        !newOp.manifiesto.some(s => s.id === t.id)
                     );
                     if(stillPending.length > 0) {
                         newOp.manifiesto  = [...stillPending, ...newOp.manifiesto];
@@ -417,34 +452,64 @@ function actualizarModalSiAbierto() {
     actualizarListaManifiestoSuave(op.manifiesto);
 }
 
-// Actualiza la lista del manifiesto sin flash: preserva scroll, anima solo items nuevos
+// Actualiza la lista del manifiesto con DOM diffing por-item: sin flash, sin reflow innecesario
 function actualizarListaManifiestoSuave(manifiesto) {
     let lista = document.getElementById('gestion-manifiesto-lista');
     if (!lista) return;
-    // Filtrar items eliminados localmente que el servidor aún puede devolver
+
     let _delIds = window._deletedMovIds || new Set();
     let filtered = _delIds.size > 0 ? manifiesto.filter(m => !_delIds.has(m.id)) : manifiesto;
-    // Aplicar filtro de búsqueda si hay texto
     let q = (window._manifestSearch || '').trim().toLowerCase();
-    if (q) {
-        filtered = filtered.filter(m => {
-            let nombre = (m.nombreContacto || m.contacto || '').toLowerCase();
-            let tipo   = (m.tipo || '').toLowerCase();
-            return nombre.includes(q) || tipo.includes(q);
-        });
-    }
+    if (q) filtered = filtered.filter(m => {
+        let nombre = (m.nombreContacto || m.contacto || '').toLowerCase();
+        return nombre.includes(q) || (m.tipo || '').toLowerCase().includes(q);
+    });
 
-    // Fingerprint rápido: si no cambió nada visible, saltar el re-render (evita reflow)
-    let fp = filtered.map(m => `${m.id}|${m._syncing ? 1 : 0}|${m.pax}|${m.monto}|${window.editandoMovId === m.id ? 'sel' : ''}`).join(';');
+    // Container FP: si nada cambió, salir
+    let fp = filtered.map(m => _itemManifiestoFP(m)).join(';');
     if (lista._fp === fp) return;
     lista._fp = fp;
 
+    // Estado vacío
+    if (!filtered || filtered.length === 0) {
+        lista.innerHTML = '<div class="text-center p-6 bg-white border-2 border-dashed border-gray-200 rounded-2xl text-gray-400 font-bold"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> Lancha vacía.<br><span class="text-[10px] font-normal">Agrega pasajeros usando el formulario superior.</span></div>';
+        return;
+    }
+
     let scrollTop = lista.scrollTop;
-    let prevIds = new Set([...lista.querySelectorAll('[data-mov-id]')].map(el => el.dataset.movId));
-    lista.innerHTML = generarListaHTML(filtered);
-    lista.querySelectorAll('[data-mov-id]').forEach(el => {
-        if (!prevIds.has(el.dataset.movId)) el.classList.add('row-enter');
+
+    // Recopilar items existentes
+    let existing = new Map();
+    lista.querySelectorAll('[data-mov-id]').forEach(el => existing.set(el.dataset.movId, el));
+
+    // Eliminar items que ya no están
+    let newIds = new Set(filtered.map(m => m.id));
+    existing.forEach((el, id) => { if (!newIds.has(id)) el.remove(); });
+
+    // Actualizar o crear cada item (solo los que cambiaron)
+    filtered.forEach(m => {
+        let itemFp   = _itemManifiestoFP(m);
+        let existEl  = existing.get(m.id);
+        if (existEl) {
+            if (existEl.dataset.itemFp !== itemFp) {
+                let tmp = document.createElement('div');
+                tmp.innerHTML = _itemManifiestoHTML(m);
+                let newEl = tmp.firstElementChild;
+                existEl.replaceWith(newEl);
+                existing.set(m.id, newEl);
+            }
+        } else {
+            let tmp = document.createElement('div');
+            tmp.innerHTML = _itemManifiestoHTML(m);
+            let newEl = tmp.firstElementChild;
+            newEl.classList.add('row-enter');
+            existing.set(m.id, newEl);
+        }
     });
+
+    // Re-ordenar sin recrear nodos
+    filtered.forEach(m => lista.appendChild(existing.get(m.id)));
+
     lista.scrollTop = scrollTop;
 }
 
@@ -455,14 +520,21 @@ function filtrarManifiestoModal(q) {
     if (op) actualizarListaManifiestoSuave(op.manifiesto);
 }
 
+let _bgFetchInProgress = false;
+
 function fetchDashboardDataBg() {
     let spinner = document.getElementById('global-spinner');
     if(pendingPostRequests > 0 || !spinner.classList.contains('hidden')) return;
+    if(_bgFetchInProgress) return; // evitar fetches concurrentes
     // No interrumpir si hay algún modal abierto (usuario activo) o si hay items pendientes
     let anyModalOpen = !!document.querySelector('[id^="modal-"]:not(.hidden)');
     if (anyModalOpen) return;
 
-    let refreshIcon = document.querySelector('#btn-refresh i');
+    _bgFetchInProgress = true;
+
+    // Dot ámbar suave mientras sincroniza en background
+    let dot = document.getElementById('sync-dot');
+    if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-300 animate-pulse';
 
     // Snapshot pre-refresh para detectar cambios de otros operadores (Task #5)
     let _prevOpStates  = new Map((window.operacionesData || []).filter(o => o.id !== 'Creando...').map(o => [o.id, { estado: o.estado, pax: o.ocupados }]));
@@ -472,9 +544,10 @@ function fetchDashboardDataBg() {
     window._bgRefreshDone = true;
 
     fetch(GAS_URL + "?action=getDashboardData")
-        .then(res => res.json())
+        .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
         .then(data => {
-            if(refreshIcon) refreshIcon.classList.remove('fa-spin');
+            _bgFetchInProgress = false;
+            if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse';
             if(data.status === 'error') return;
 
             // Preservar temps locales antes de sobrescribir
@@ -514,10 +587,7 @@ function fetchDashboardDataBg() {
                 if (!newOp) return;
                 let temps = manifestTemps[opId];
                 let stillPending = temps.filter(t =>
-                    !newOp.manifiesto.some(s =>
-                        (t.id && !t.id.startsWith('temp-') && s.id === t.id) ||
-                        (s.contacto === t.contacto && String(s.pax) === String(t.pax) && s.tipo === t.tipo && (s.nombreContacto || '') === (t.nombreContacto || ''))
-                    )
+                    !newOp.manifiesto.some(s => s.id === t.id)
                 );
                 if (stillPending.length > 0) {
                     newOp.manifiesto = [...stillPending, ...newOp.manifiesto];
@@ -593,8 +663,13 @@ function fetchDashboardDataBg() {
             _saveDashboardCache(); // mantener caché actualizada
             // El modal de gestión bote NO se toca en BG refresh para no interrumpir al operador
         })
-        .catch(err => {
-            if(refreshIcon) refreshIcon.classList.remove('fa-spin');
+        .catch(() => {
+            _bgFetchInProgress = false;
+            if (dot) dot.className = 'w-2 h-2 rounded-full bg-red-400';
+            // Restaurar a verde después de 3s
+            setTimeout(() => {
+                if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse';
+            }, 3000);
         });
 }
 
@@ -721,8 +796,14 @@ function _generarPasesDiaHTML(pases) {
     let totalPaxPases = pases.reduce((s, p) => s + (parseInt(p.pax)||0), 0);
     let contactos = window.contactosData || [];
     let filas = pases.map((p, idx) => {
-        let aliadoInfo   = contactos.find(c => c.id === p.aliadoId || c.nombre === p.aliadoId);
-        let aliadoNombre = aliadoInfo ? aliadoInfo.nombre : (p.aliadoId || '—');
+        let aid = (p.aliadoId || '').toString().trim();
+        let aliadoInfo   = contactos.find(c =>
+            c.id === aid ||
+            c.nombre === aid ||
+            (c.id || '').toLowerCase() === aid.toLowerCase() ||
+            (c.nombre || '').toLowerCase() === aid.toLowerCase()
+        );
+        let aliadoNombre = aliadoInfo ? aliadoInfo.nombre : (aid || '—');
         let origen       = p.nombreOrigen || '';
         let ts           = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
         let paseId       = p.id || '';
@@ -773,8 +854,9 @@ function renderOperaciones(operaciones) {
         return 0;
     });
 
-    // Container-level fingerprint — evita entrar si nada cambió
-    let fp = opHoy.map(o => _generarCardFP(o)).join(';') + '|p' + (window.pasesExternosData || []).length;
+    // Container-level fingerprint — incluye contenido de pases para detectar cambios de aliado/nombre
+    let fp = opHoy.map(o => _generarCardFP(o)).join(';')
+           + '|p:' + (window.pasesExternosData || []).map(p => `${p.id}|${p.aliadoId}|${p.pax}`).join(',');
     if (container._fp === fp) return;
     container._fp = fp;
 
@@ -782,6 +864,9 @@ function renderOperaciones(operaciones) {
         container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> No hay lanchas programadas<br>para el día de HOY.</div>`;
         return;
     }
+
+    // Eliminar cualquier elemento que no sea una card (spinner inicial, mensajes de error, etc.)
+    container.querySelectorAll(':scope > :not([data-op-id])').forEach(el => el.remove());
 
     // Recopilar cards existentes en el DOM
     let existingCards = new Map();
@@ -827,74 +912,119 @@ function renderOperaciones(operaciones) {
     }
 }
 
+// ── Helpers DOM-diffing reservas ─────────────────────────────────────────────
+function _resCardFP(res, hoy, formatLocal) {
+    let f = String(res.fecha || '').trim();
+    let isHoy = f === hoy || f === formatLocal || !res.fecha;
+    return `${res.id}|${res._asignando?1:0}|${res.pax}|${res.cliente}|${res.hora||''}|${isHoy?1:0}`;
+}
+
+function _resCardHTML(res, hoy, formatLocal) {
+    let fp         = _resCardFP(res, hoy, formatLocal);
+    let isSyncing  = res.id === 'Creando...';
+    let isAsignando = !!res._asignando;
+    let f          = String(res.fecha || '').trim();
+    let isHoy      = f === hoy || f === formatLocal || !res.fecha;
+    let isFuture   = !isHoy && !isSyncing && !isAsignando;
+
+    let cardClasses = isAsignando
+        ? 'bg-green-50 border-green-400 border-l-[4px] opacity-80 animate-pulse border-y border-r'
+        : isSyncing
+            ? 'bg-yellow-50 border-yellow-300 border-l-[4px] opacity-90 animate-pulse border-y border-r'
+            : isFuture
+                ? 'opacity-60 grayscale bg-gray-50 border-gray-200 border'
+                : 'bg-white border-blue-500 border-l-[4px] border-y border-r border-y-gray-100 border-r-gray-100';
+    let btnClasses = (isSyncing || isAsignando)
+        ? 'pointer-events-none bg-green-400 text-white font-bold'
+        : isFuture
+            ? 'pointer-events-none opacity-50 bg-gray-300 border-gray-300 text-gray-500'
+            : 'bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600';
+    let btnIcon = isAsignando ? 'fa-ship fa-pulse' : isSyncing ? 'fa-sync-alt fa-spin' : isFuture ? 'fa-lock' : 'fa-clipboard-check';
+    let btnText = isAsignando ? '¡Abordando!' : isSyncing ? 'Registrando...' : isFuture ? 'No disponible hoy' : 'Abordar Lancha';
+    let tagFecha = isHoy
+        ? `<span class="bg-green-100 text-green-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-green-200">HOY</span>`
+        : `<span class="bg-yellow-100 text-yellow-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-yellow-200">${res.fecha}</span>`;
+    let clienteEsc = (res.cliente || '').replace(/'/g, "\\'");
+    let contactoEsc = (res.contacto || '').replace(/'/g, "\\'");
+
+    return `<div class="${cardClasses} rounded-2xl shadow-sm p-4 block mb-3 transition-all relative overflow-hidden" data-res-id="${res.id}" data-res-fp="${fp}">
+        ${isSyncing ? '<div class="absolute top-2 right-3 text-[10px] items-center text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i> Nube</div>' : ''}
+        <div class="flex justify-between items-start relative z-10">
+            <div>
+                <h3 class="font-extrabold text-gray-800 text-lg">${res.cliente}</h3>
+                <p class="text-[10px] text-gray-500 mt-1 uppercase font-bold tracking-wider flex items-center">${tagFecha} <i class="fas fa-building text-xs mx-1 text-gray-400"></i> ${(res.contacto||'').replace('_',' ')}</p>
+            </div>
+            <div class="text-right">
+                <span class="font-black text-2xl text-blue-600">${res.pax} <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">PAX</span></span>
+                <p class="text-[10px] text-gray-400 mt-0 font-bold uppercase tracking-widest">${res.hora || 'Libre'}</p>
+            </div>
+        </div>
+        <div class="flex mt-4 space-x-2 relative z-10">
+            <button class="flex-[2] py-2.5 rounded-xl text-sm font-bold transition active:scale-95 border ${btnClasses}" onclick="prepararAsignacion('${res.id}', '${clienteEsc}', '${res.pax}', '${contactoEsc}')"><i class="fas ${btnIcon} mr-1"></i> ${btnText}</button>
+            ${!isSyncing && !isAsignando ? `<button class="px-3 py-2.5 rounded-xl text-[11px] font-bold bg-purple-100 text-purple-700 border border-purple-200 hover:bg-purple-200 transition active:scale-95" onclick="abrirPaseDesdeReserva('${res.id}', '${clienteEsc}', '${res.pax}', '${contactoEsc}')"><i class="fas fa-share-square mr-1"></i>Pasar</button>` : ''}
+        </div>
+    </div>`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function renderReservas(reservas) {
     const container = document.getElementById('reservas-container');
     let hoy = getHoyLocal();
     let hoyPartes = hoy.split('-');
-    let formatLocal = `${hoyPartes[2]}/${hoyPartes[1]}/${hoyPartes[0]}`; // e.g., 26/03/2026
+    let formatLocal = `${hoyPartes[2]}/${hoyPartes[1]}/${hoyPartes[0]}`;
 
     let resAMostrar = reservas.filter(r => {
         let isSyncing = r.id === 'Creando...';
-        let f = String(r.fecha).trim();
+        let f = String(r.fecha || '').trim();
         let isHoy = f === hoy || f === formatLocal || !r.fecha;
-        let isMine = String(r.creado_por || '').trim().toLowerCase() === String(myOpName).trim().toLowerCase();
+        let isMine = String(r.creado_por || '').trim().toLowerCase() === String(myOpName || '').trim().toLowerCase();
         return isHoy || isMine || isSyncing;
     });
 
-    // Skip re-render si nada cambió
-    let fp = JSON.stringify(resAMostrar.map(r => `${r.id}|${r._asignando||false}|${r.pax}|${r.cliente}`));
+    // Container FP
+    let fp = resAMostrar.map(r => _resCardFP(r, hoy, formatLocal)).join(';');
     if (container._fp === fp) return;
     container._fp = fp;
 
-    // Capturar IDs existentes
-    let prevIds = new Set([...container.querySelectorAll('[data-res-id]')].map(el => el.dataset.resId));
-
-    if(!resAMostrar || resAMostrar.length === 0) {
+    if (!resAMostrar || resAMostrar.length === 0) {
         container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-clipboard-list text-4xl mb-3 opacity-20 block"></i> No hay pasajeros pendientes hoy.</div>`;
         return;
     }
 
-    container.innerHTML = resAMostrar.map(res => {
-        let isSyncing   = res.id === 'Creando...';
-        let isAsignando = !!res._asignando;
-        let f = String(res.fecha).trim();
-        let isHoy = f === hoy || f === formatLocal || !res.fecha;
-        let isFutureForMe = !isHoy && !isSyncing && !isAsignando;
+    // Eliminar cualquier elemento que no sea una card (spinner inicial, mensajes vacíos, etc.)
+    container.querySelectorAll(':scope > :not([data-res-id])').forEach(el => el.remove());
 
-        let cardClasses = isAsignando ? "bg-green-50 border-green-400 border-l-[4px] opacity-80 animate-pulse border-y border-r"
-            : isSyncing ? "bg-yellow-50 border-yellow-300 border-l-[4px] opacity-90 animate-pulse border-y border-r"
-            : (isFutureForMe ? "opacity-60 grayscale bg-gray-50 border-gray-200 border" : "bg-white border-blue-500 border-l-[4px] border-y border-r border-y-gray-100 border-r-gray-100");
-        let btnClasses = (isSyncing || isAsignando) ? "pointer-events-none bg-green-400 text-white font-bold"
-            : (isFutureForMe ? "pointer-events-none opacity-50 bg-gray-300 border-gray-300 text-gray-500" : "bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600");
-        let btnIcon = isAsignando ? "fa-ship fa-pulse" : (isSyncing ? "fa-sync-alt fa-spin" : (isFutureForMe ? "fa-lock" : "fa-clipboard-check"));
-        let btnText = isAsignando ? "¡Abordando!" : (isSyncing ? "Registrando..." : (isFutureForMe ? "No disponible hoy" : "Abordar Lancha"));
-        let tagFecha = isHoy ? `<span class="bg-green-100 text-green-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-green-200">HOY</span>` : `<span class="bg-yellow-100 text-yellow-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-yellow-200">${res.fecha}</span>`;
+    // Recopilar cards existentes
+    let existing = new Map();
+    container.querySelectorAll('[data-res-id]').forEach(el => existing.set(el.dataset.resId, el));
 
-        return `
-        <div class="${cardClasses} rounded-2xl shadow-sm p-4 block mb-3 transition-all relative overflow-hidden" data-res-id="${res.id}">
-            ${isSyncing ? '<div class="absolute top-2 right-3 text-[10px] items-center text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i> Nube</div>' : ''}
-            <div class="flex justify-between items-start relative z-10">
-                <div>
-                    <h3 class="font-extrabold text-gray-800 text-lg">${res.cliente}</h3>
-                    <p class="text-[10px] text-gray-500 mt-1 uppercase font-bold tracking-wider flex items-center">${tagFecha} <i class="fas fa-building text-xs mx-1 text-gray-400"></i> ${res.contacto.replace('_',' ')}</p>
-                </div>
-                <div class="text-right">
-                    <span class="font-black text-2xl text-blue-600">${res.pax} <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">PAX</span></span>
-                    <p class="text-[10px] text-gray-400 mt-0 font-bold uppercase tracking-widest">${res.hora || 'Libre'}</p>
-                </div>
-            </div>
-            <div class="flex mt-4 space-x-2 relative z-10">
-                <button class="flex-[2] py-2.5 rounded-xl text-sm font-bold transition active:scale-95 border ${btnClasses}" onclick="prepararAsignacion('${res.id}', '${res.cliente}', '${res.pax}', '${res.contacto}')"><i class="fas ${btnIcon} mr-1"></i> ${btnText}</button>
-                ${!isSyncing && !isAsignando ? `<button class="px-3 py-2.5 rounded-xl text-[11px] font-bold bg-purple-100 text-purple-700 border border-purple-200 hover:bg-purple-200 transition active:scale-95" onclick="abrirPaseDesdeReserva('${res.id}', '${res.cliente}', '${res.pax}', '${res.contacto}')"><i class="fas fa-share-square mr-1"></i>Pasar</button>` : ''}
-            </div>
-        </div>
-        `;
-    }).join('');
+    // Eliminar cards que ya no están
+    let newIds = new Set(resAMostrar.map(r => r.id));
+    existing.forEach((el, id) => { if (!newIds.has(id)) el.remove(); });
 
-    // Animar solo los cards genuinamente nuevos
-    container.querySelectorAll('[data-res-id]').forEach(el => {
-        if (!prevIds.has(el.dataset.resId)) el.classList.add('card-enter');
+    // Actualizar o crear cada card
+    resAMostrar.forEach(res => {
+        let cardFp  = _resCardFP(res, hoy, formatLocal);
+        let existEl = existing.get(res.id);
+        if (existEl) {
+            if (existEl.dataset.resFp !== cardFp) {
+                let tmp = document.createElement('div');
+                tmp.innerHTML = _resCardHTML(res, hoy, formatLocal).trim();
+                let newEl = tmp.firstElementChild;
+                existEl.replaceWith(newEl);
+                existing.set(res.id, newEl);
+            }
+        } else {
+            let tmp = document.createElement('div');
+            tmp.innerHTML = _resCardHTML(res, hoy, formatLocal).trim();
+            let newEl = tmp.firstElementChild;
+            newEl.classList.add('card-enter');
+            existing.set(res.id, newEl);
+        }
     });
+
+    // Re-ordenar sin recrear nodos
+    resAMostrar.forEach(res => container.appendChild(existing.get(res.id)));
 }
 
 function renderFinanzas() { renderCaja(window.cajaData); }
@@ -1388,75 +1518,73 @@ function ejecutarZarpe(id_op) {
 // ==========================
 // VENTA DIRECTA (MUELLE)
 // ==========================
-function generarListaHTML(manifiesto) {
-    if(!manifiesto || manifiesto.length === 0) return '<div class="text-center p-6 bg-white border-2 border-dashed border-gray-200 rounded-2xl text-gray-400 font-bold"><i class="fas fa-ship text-4xl mb-3 opacity-20 block"></i> Lancha vacía.<br><span class="text-[10px] font-normal">Agrega pasajeros usando el formulario superior.</span></div>';
-    
-    return manifiesto.map(m => {
-        let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
-        let isSelected = !isSyncing && window.editandoMovId === m.id;
-
-        let bgClass   = isSelected ? 'bg-orange-50 ring-2 ring-orange-400' : isSyncing ? 'bg-blue-50/60' : 'bg-white';
-        let iconoSinc = isSyncing
-            ? `<span class="inline-flex items-center gap-0.5 text-[9px] font-black text-blue-500 ml-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping inline-block"></span>guardando</span>`
-            : '';
-        
-        let isAliado       = m.tipo === 'Aliado' || m.tipo === 'Aliado(PaseIn)' || m.tipo === 'Aliado(PaseOut)' || m.tipo === 'Pase_Recibido';
-        let isComisionado  = m.tipo === 'Comisionado';
-
-        let isAgencia = m.tipo === 'Agencia';
-        // Pre-calcular adicionales para botón Cobrar y badge
-        let adicionalesSum = 0;
-        if (m.adicionales) {
-            adicionalesSum = (m.adicionales + '').split(',').reduce((acc, part) => {
-                let val = parseFloat((part.split(':')[1] || '').trim()) || 0;
-                return acc + val;
-            }, 0);
-        }
-
-        // Botones: Cobrar (no aliado), Adicionales (solo agencia), Pasar (no pase out), X (todos)
-        let subBtns = (isSelected && !isSyncing) ? `
-        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
-            ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('cobro_directo', { id_operacion: document.getElementById('hidden-gestion-op').value, id_contacto: '${m.contacto}', nombre_contacto: '${(m.nombreContacto||m.contacto||'').replace(/'/g,"\\'")}', monto: ${m.monto||0}, monto_adicionales: ${adicionalesSum}, detalle_adicionales: '${(m.adicionales||'').replace(/'/g,"\\'")}', bloqueado: false }); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar${adicionalesSum > 0 ? ` <span class="bg-white/30 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full ml-1">+S/${adicionalesSum.toFixed(2)}</span>` : ''}</button>` : ''}
-            ${isAgencia ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
-            ${m.tipo !== 'Aliado(PaseOut)' ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
-            <button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>
-        </div>` : '';
-
-        // Monto display según tipo
-        let montoDisplay;
-        if (isAliado) {
-            montoDisplay = `<span class="text-[10px] font-black text-purple-500 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">PASE</span>`;
-        } else if (isAgencia && adicionalesSum > 0) {
-            let montoBase = parseFloat(m.monto || 0);
-            let detalleAdics = (m.adicionales || '').replace(/'/g, "\\'");
-            let detalleTitle = (m.adicionales || '').replace(/, /g, ' | ');
-            montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${montoBase.toFixed(2)} <span class="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 border border-amber-300 text-[9px] font-black px-1 py-0.5 rounded ml-0.5 cursor-pointer active:bg-amber-200" title="${detalleTitle}" onclick="mostrarDetalleAdicionales('${detalleAdics}'); event.stopPropagation();">+${adicionalesSum.toFixed(2)} <i class='fas fa-info-circle text-[8px]'></i></span></span>`;
-        } else {
-            montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto||0).toFixed(2)}</span>`;
-        }
-
-        // Etiqueta tipo legible
-        let tipoLabel = { Libre:'Libre', Agencia:'Agencia', Aliado:'Aliado·Pase', 'Aliado(PaseIn)':'Pase·Entrada', 'Aliado(PaseOut)':'Pase·Salida', Comisionado:'Comisionado', Pase_Recibido:'Pase', Abordaje_CRM:'CRM', Directo:'Libre' }[m.tipo] || m.tipo.replace(/_/g,' ');
-
-        // Nombre a mostrar: preferir nombreContacto si está disponible
-        let nombreMostrar = m.nombreContacto || m.contacto || '';
-
-        return `
-        <div class="flex flex-col ${bgClass} border ${isSyncing ? 'border-blue-200' : 'border-gray-200'} p-3 rounded-xl ${isSyncing ? 'cursor-default' : 'cursor-pointer hover:bg-blue-50'} transition shadow-sm mb-2" data-mov-id="${m.id}" ${isSyncing ? '' : `onclick="cargarParaEditar('${m.id}')"`}>
-            <div class="flex justify-between items-center">
-                <div class="flex-1 min-w-0 pr-2">
-                    <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block truncate">${nombreMostrar}${adicionalesSum > 0 ? ` <i class="fas fa-tag text-amber-500 text-[9px]" title="Tiene adicionales"></i>` : ''} ${iconoSinc}</span>
-                    <span class="text-[10px] ${isAliado?'text-purple-500':isComisionado?'text-orange-500':'text-gray-500'} font-bold">${tipoLabel}</span>
-                </div>
-                <div class="text-right shrink-0">
-                    <span class="font-black text-blue-600 text-sm">${m.pax} PAX</span>
-                    ${montoDisplay}
-                </div>
-            </div>
-            ${subBtns}
-        </div>`;
-    }).join('');
+// ── Helpers DOM-diffing manifiesto ───────────────────────────────────────────
+function _itemManifiestoFP(m) {
+    let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
+    let isSelected = !isSyncing && window.editandoMovId === m.id;
+    return `${m.id}|${isSyncing?1:0}|${isSelected?1:0}|${m.pax}|${m.monto}|${m.adicionales||''}`;
 }
+
+function _itemManifiestoHTML(m) {
+    let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
+    let isSelected = !isSyncing && window.editandoMovId === m.id;
+    let fp = _itemManifiestoFP(m);
+
+    let bgClass   = isSelected ? 'bg-orange-50 ring-2 ring-orange-400' : isSyncing ? 'bg-blue-50/60' : 'bg-white';
+    let iconoSinc = isSyncing
+        ? `<span class="inline-flex items-center gap-0.5 text-[9px] font-black text-blue-500 ml-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping inline-block"></span>guardando</span>`
+        : '';
+
+    let isAliado      = m.tipo === 'Aliado' || m.tipo === 'Aliado(PaseIn)' || m.tipo === 'Aliado(PaseOut)' || m.tipo === 'Pase_Recibido';
+    let isComisionado = m.tipo === 'Comisionado';
+    let isAgencia     = m.tipo === 'Agencia';
+
+    let adicionalesSum = 0;
+    if (m.adicionales) {
+        adicionalesSum = (m.adicionales + '').split(',').reduce((acc, part) => {
+            let val = parseFloat((part.split(':')[1] || '').trim()) || 0;
+            return acc + val;
+        }, 0);
+    }
+
+    let subBtns = (isSelected && !isSyncing) ? `
+    <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
+        ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('cobro_directo', { id_operacion: document.getElementById('hidden-gestion-op').value, id_contacto: '${m.contacto}', nombre_contacto: '${(m.nombreContacto||m.contacto||'').replace(/'/g,"\\'")}', monto: ${m.monto||0}, monto_adicionales: ${adicionalesSum}, detalle_adicionales: '${(m.adicionales||'').replace(/'/g,"\\'")}', bloqueado: false }); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar${adicionalesSum > 0 ? ` <span class="bg-white/30 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full ml-1">+S/${adicionalesSum.toFixed(2)}</span>` : ''}</button>` : ''}
+        ${isAgencia ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
+        ${m.tipo !== 'Aliado(PaseOut)' ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
+        <button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>
+    </div>` : '';
+
+    let montoDisplay;
+    if (isAliado) {
+        montoDisplay = `<span class="text-[10px] font-black text-purple-500 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">PASE</span>`;
+    } else if (isAgencia && adicionalesSum > 0) {
+        let montoBase    = parseFloat(m.monto || 0);
+        let detalleAdics = (m.adicionales || '').replace(/'/g, "\\'");
+        let detalleTitle = (m.adicionales || '').replace(/, /g, ' | ');
+        montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${montoBase.toFixed(2)} <span class="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 border border-amber-300 text-[9px] font-black px-1 py-0.5 rounded ml-0.5 cursor-pointer active:bg-amber-200" title="${detalleTitle}" onclick="mostrarDetalleAdicionales('${detalleAdics}'); event.stopPropagation();">+${adicionalesSum.toFixed(2)} <i class='fas fa-info-circle text-[8px]'></i></span></span>`;
+    } else {
+        montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto||0).toFixed(2)}</span>`;
+    }
+
+    let tipoLabel = { Libre:'Libre', Agencia:'Agencia', Aliado:'Aliado·Pase', 'Aliado(PaseIn)':'Pase·Entrada', 'Aliado(PaseOut)':'Pase·Salida', Comisionado:'Comisionado', Pase_Recibido:'Pase', Abordaje_CRM:'CRM', Directo:'Libre' }[m.tipo] || m.tipo.replace(/_/g,' ');
+    let nombreMostrar = m.nombreContacto || m.contacto || '';
+
+    return `<div class="flex flex-col ${bgClass} border ${isSyncing ? 'border-blue-200' : 'border-gray-200'} p-3 rounded-xl ${isSyncing ? 'cursor-default' : 'cursor-pointer hover:bg-blue-50'} transition shadow-sm mb-2" data-mov-id="${m.id}" data-item-fp="${fp}" ${isSyncing ? '' : `onclick="cargarParaEditar('${m.id}')"`}>
+        <div class="flex justify-between items-center">
+            <div class="flex-1 min-w-0 pr-2">
+                <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block truncate">${nombreMostrar}${adicionalesSum > 0 ? ` <i class="fas fa-tag text-amber-500 text-[9px]" title="Tiene adicionales"></i>` : ''} ${iconoSinc}</span>
+                <span class="text-[10px] ${isAliado?'text-purple-500':isComisionado?'text-orange-500':'text-gray-500'} font-bold">${tipoLabel}</span>
+            </div>
+            <div class="text-right shrink-0">
+                <span class="font-black text-blue-600 text-sm">${m.pax} PAX</span>
+                ${montoDisplay}
+            </div>
+        </div>
+        ${subBtns}
+    </div>`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function abrirModalGestionBote(id_op) {
     let op = window.operacionesData.find(o => o.id === id_op);
@@ -1696,7 +1824,9 @@ function confirmarVentaDirecta() {
     if(tipo === 'Libre') {
         contacto = (document.getElementById('input-vd-contacto-text')?.value.trim().toUpperCase() || '');
         id_contacto_payload = 'CON-00';
-        nombre_contacto_payload = contacto ? 'VARIOS:' + contacto : 'VARIOS';
+        let con00 = (window.contactosData || []).find(c => c.id === 'CON-00');
+        let con00Nombre = con00 ? con00.nombre : 'LIBRE';
+        nombre_contacto_payload = con00Nombre + ':' + (contacto || 'VARIOS');
     } else {
         let sel = getContactoSeleccionado('input-vd-contacto-select');
         contacto = sel.nombre;
@@ -1750,8 +1880,9 @@ function confirmarVentaDirecta() {
             currentOp.ocupados += requestedDelta;
             currentOp.manifiesto.unshift({ id: newTempId, tipo: tipoOptimista, contacto: id_contacto_payload, nombreContacto: nombre_contacto_payload, pax, monto: parseFloat(precio).toFixed(2), estado: 'Embarcado', _syncing: true });
         }
-        // Actualizar solo el modal (no re-render completo de ops durante embarque activo)
+        // Actualizar modal + card de operaciones (DOM diffing, solo cambia el card afectado)
         actualizarModalSiAbierto();
+        renderOperaciones(window.operacionesData);
     }
 
     // Recordar tipo para próximo embarque y limpiar formulario
@@ -1774,7 +1905,22 @@ function confirmarVentaDirecta() {
     };
     if(id_mov) payload.id_mov = id_mov;
 
+    // Timer local: si GAS tarda >8s, quitar "guardando" visualmente (el dato ya está en GAS)
+    let _confirmTimer = null;
+    if(newTempId) {
+        _confirmTimer = setTimeout(() => {
+            let opIdx2 = window.operacionesData.findIndex(o => o.id === id_op);
+            if(opIdx2 === -1) return;
+            let mIdx2 = window.operacionesData[opIdx2].manifiesto.findIndex(m => m.id === newTempId);
+            if(mIdx2 !== -1 && window.operacionesData[opIdx2].manifiesto[mIdx2]._syncing) {
+                window.operacionesData[opIdx2].manifiesto[mIdx2]._syncing = false;
+                actualizarModalSiAbierto();
+            }
+        }, 8000);
+    }
+
     fetchPostBg(endpoint, payload).then(res => {
+        if(_confirmTimer) clearTimeout(_confirmTimer);
         if(res.status === 'error') {
             // ROLLBACK: revertir el item optimista si GAS rechazó
             let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
@@ -1788,13 +1934,13 @@ function confirmarVentaDirecta() {
                     if(mIdx !== -1) op.manifiesto[mIdx]._syncing = false;
                 }
                 actualizarModalSiAbierto();
+                renderOperaciones(window.operacionesData);
             }
             mostrarToast('❌ ' + (res.message || 'Error al registrar. Verifica el aforo.'), 'error');
             return;
         }
 
         // ── Resolución inmediata del temp con el ID real de GAS ──────────────
-        // Esto elimina la necesidad del content-matching en syncManifestBg
         if(newTempId && res.id_mov) {
             let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
             if(opIdx !== -1) {
@@ -1802,11 +1948,10 @@ function confirmarVentaDirecta() {
                 if(mIdx !== -1) {
                     window.operacionesData[opIdx].manifiesto[mIdx].id       = res.id_mov;
                     window.operacionesData[opIdx].manifiesto[mIdx]._syncing = false;
-                    actualizarModalSiAbierto(); // actualiza el punto azul → nada (ya no pulsa)
+                    actualizarModalSiAbierto(); // quita "guardando" del item en la lista
                 }
             }
         } else if(id_mov) {
-            // Edición exitosa: limpiar _syncing del item editado
             let opIdx = window.operacionesData.findIndex(o => o.id === id_op);
             if(opIdx !== -1) {
                 let mIdx = window.operacionesData[opIdx].manifiesto.findIndex(m => m.id === id_mov);
@@ -1817,13 +1962,6 @@ function confirmarVentaDirecta() {
             }
         }
 
-        // Sync diferido ligero: solo si quedan temps sin resolver (caso edge)
-        let opCheck = window.operacionesData.find(o => o.id === id_op);
-        let hayTempsRestantes = (opCheck?.manifiesto || []).some(m => m._syncing || (m.id && m.id.startsWith('temp-')));
-        if(hayTempsRestantes) {
-            clearTimeout(window._syncTimer);
-            window._syncTimer = setTimeout(syncManifestBg, 3000);
-        }
     });
 }
 
@@ -1908,8 +2046,11 @@ function confirmarNuevaReserva() {
     let precio = document.getElementById('input-crm-precio').value.trim();
     let nombreCliente, id_contacto;
     if (tipo === 'Libre') {
-        nombreCliente = (document.getElementById('input-crm-contacto-text')?.value.trim().toUpperCase() || '');
+        let apellido  = (document.getElementById('input-crm-contacto-text')?.value.trim().toUpperCase() || '');
         id_contacto   = 'CON-00';
+        let con00     = (window.contactosData || []).find(c => c.id === 'CON-00');
+        let con00Nombre = con00 ? con00.nombre : 'LIBRE';
+        nombreCliente = con00Nombre + ':' + (apellido || 'VARIOS');
     } else {
         let sel = document.getElementById('input-crm-contacto-select');
         nombreCliente = sel?.value || '';
@@ -2544,17 +2685,19 @@ window.addEventListener('offline', () => { mostrarToast('📶 Sin conexión. Las
 
 function fetchPostBg(action, payload) {
     pendingPostRequests++;
-    let refreshIcon = document.querySelector('#btn-refresh i'); if(refreshIcon) refreshIcon.classList.add('fa-spin', 'text-yellow-400');
+    let dot = document.getElementById('sync-dot');
+    if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-300 animate-ping';
     return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} })
-        .then(res => res.json())
+        .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
         .then(d => {
             pendingPostRequests--;
-            if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400');
+            if (dot && pendingPostRequests === 0) dot.className = 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse';
             return d;
         })
         .catch(err => {
             pendingPostRequests--;
-            if(refreshIcon) refreshIcon.classList.remove('fa-spin', 'text-yellow-400');
+            if (dot) dot.className = 'w-2 h-2 rounded-full bg-red-400';
+            setTimeout(() => { if (dot && pendingPostRequests === 0) dot.className = 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse'; }, 3000);
             _enqueueOffline(action, payload);
             mostrarToast('📶 Sin conexión. La acción se reintentará al reconectar.', 'error');
             return { status: 'error', message: 'Error de conexión' };
@@ -3126,19 +3269,54 @@ function verDetallePase(idx) {
 }
 
 function mostrarToast(msg, tipo = 'info') {
-    let toast = document.getElementById('app-toast');
-    if(!toast) {
-        toast = document.createElement('div');
-        toast.id = 'app-toast';
-        toast.style.cssText = 'position:fixed;bottom:90px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 18px;border-radius:12px;font-size:12px;font-weight:700;max-width:90vw;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.15);transition:opacity 0.3s;';
-        document.body.appendChild(toast);
-    }
-    toast.style.background = tipo==='error'?'#fee2e2':tipo==='success'?'#dcfce7':'#dbeafe';
-    toast.style.color      = tipo==='error'?'#991b1b':tipo==='success'?'#15803d':'#1e40af';
-    toast.style.border     = tipo==='error'?'1px solid #fca5a5':tipo==='success'?'1px solid #86efac':'1px solid #93c5fd';
-    toast.style.opacity = '1';
-    toast.innerText = msg;
-    clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 4000);
+    let banner = document.getElementById('header-toast');
+    if (!banner) return; // fallback: header aún no montado
+
+    let bg    = tipo === 'error'   ? 'rgba(254,226,226,0.97)' : tipo === 'success' ? 'rgba(220,252,231,0.97)' : 'rgba(219,234,254,0.97)';
+    let color = tipo === 'error'   ? '#991b1b' : tipo === 'success' ? '#15803d' : '#1e40af';
+    let bord  = tipo === 'error'   ? '#fca5a5' : tipo === 'success' ? '#86efac' : '#93c5fd';
+    let icon  = tipo === 'error'   ? '✕ ' : tipo === 'success' ? '✓ ' : '';
+
+    banner.style.background   = bg;
+    banner.style.color        = color;
+    banner.style.borderBottom = `2px solid ${bord}`;
+    banner.style.padding      = '7px 16px';
+    banner.style.fontSize     = '11px';
+    banner.style.fontWeight   = '700';
+    banner.style.textAlign    = 'center';
+    banner.style.letterSpacing = '0.01em';
+    banner.textContent = icon + msg;
+
+    // Slide-down
+    banner.style.maxHeight = '0';
+    banner.style.opacity   = '0';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        banner.style.maxHeight = '48px';
+        banner.style.opacity   = '1';
+    }));
+
+    clearTimeout(banner._timer);
+    banner._timer = setTimeout(() => {
+        banner.style.maxHeight = '0';
+        banner.style.opacity   = '0';
+    }, tipo === 'error' ? 5000 : 3000);
 }
-function toggleSpinner(show) { const s = document.getElementById('global-spinner'); const u = document.getElementById('btn-refresh'); if(show) { s.classList.remove('hidden'); u.classList.add('hidden'); } else { s.classList.add('hidden'); u.classList.remove('hidden'); } }
+
+function toggleSpinner(show) {
+    const s   = document.getElementById('global-spinner');
+    const u   = document.getElementById('btn-refresh');
+    const dot = document.getElementById('sync-dot');
+    if (show) {
+        s.classList.remove('hidden');
+        u.classList.add('hidden');
+    } else {
+        s.classList.add('hidden');
+        u.classList.remove('hidden');
+    }
+    if (dot) {
+        dot.style.background = show ? '#fbbf24' : '';
+        dot.className = show
+            ? 'w-2 h-2 rounded-full bg-amber-300'
+            : 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse';
+    }
+}

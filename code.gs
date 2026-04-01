@@ -250,7 +250,11 @@ function CheckCapacidadDisponible(ss, id_operacion, ignore_mov_id = null) {
   let ocupados = 0;
   const movData = ss.getSheetByName('Movimientos').getDataRange().getValues();
   for (let i = 1; i < movData.length; i++) {
-    if (movData[i][1] === id_operacion && movData[i][0] !== ignore_mov_id) ocupados += parseInt(movData[i][5])||0; // col 6 = cant_pax (índice 5)
+    let estado = (movData[i][11] || '').toString().toLowerCase(); // col 12 = estado_movimiento (índice 11)
+    if (movData[i][1] === id_operacion && movData[i][0] !== ignore_mov_id
+        && !estado.includes('pasado') && !estado.includes('cancelado')) {
+      ocupados += parseInt(movData[i][5])||0; // col 6 = cant_pax (índice 5)
+    }
   }
   const opsData = ss.getSheetByName('Operaciones').getDataRange().getValues();
   let idBote = '';
@@ -480,6 +484,8 @@ function derivarPase(payload) {
       sheetMov.getRange(i+1, 3).setValue('Aliado(PaseOut)');                     // tipo_movimiento
       // col 4 (id_contacto): conserva el contacto/agencia original del pasajero
       // col 5 (nombreContacto): conserva el nombre original — NO se toca
+      sheetMov.getRange(i+1, 10).setValue(payload.operador || 'App');            // operador_registro (quien hace el pase)
+      sheetMov.getRange(i+1, 11).setValue(new Date());                           // timestamp_registro (momento del pase)
       sheetMov.getRange(i+1, 12).setValue('Pasado');                             // estado_movimiento
       sheetMov.getRange(i+1, 13).setValue(payload.aliado_id || payload.aliado);  // Id_contactoPase = aliado destino
       SpreadsheetApp.flush();
