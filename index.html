@@ -321,7 +321,8 @@
             <div class="flex space-x-2">
                 <div class="flex-1">
                     <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Fecha Tour</label>
-                    <input type="date" id="input-crm-fecha" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5" onchange="actualizarHoraSugeridaCRM()">
+                    <input type="date" id="input-crm-fecha" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-blue-500 shadow-sm mt-0.5" onchange="actualizarHoraSugeridaCRM(); _mostrarFechaLegible('input-crm-fecha','crm-fecha-legible')">
+                    <span id="crm-fecha-legible" class="text-[10px] text-blue-600 font-bold ml-1"></span>
                 </div>
                 <div class="flex-1">
                     <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Hora Salida</label>

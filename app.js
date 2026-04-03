@@ -344,6 +344,19 @@ function getHoyLocal() {
     return (new Date(Date.now() - tzoffset)).toISOString().split('T')[0];
 }
 
+// Muestra la fecha seleccionada en formato dd/mm/yyyy bajo el input para evitar confusión de formato
+function _mostrarFechaLegible(inputId, spanId) {
+    let val = document.getElementById(inputId)?.value;
+    let span = document.getElementById(spanId);
+    if (!span) return;
+    if (!val) { span.textContent = ''; return; }
+    let parts = val.split('-'); // yyyy-mm-dd
+    if (parts.length === 3) {
+        let esHoy = val === getHoyLocal();
+        span.textContent = `${parts[2]}/${parts[1]}/${parts[0]}${esHoy ? ' · HOY' : ''}`;
+    }
+}
+
 function esFechaHoy(ts) {
     if(!ts) return false;
     try {
@@ -754,14 +767,18 @@ function _generarCardFP(op) {
 
 function _generarCardHTML(op) {
     let porcentaje = op.capacidad > 0 ? (op.ocupados / op.capacidad) * 100 : 0;
-    let isViaje = op.estado === 'En_Viaje';
+    let isViaje   = op.estado === 'En_Viaje';
+    let isCerrada = op.estado === 'Cerrada';
     let endTs   = isViaje ? calcularEndTs(op) : 0;
     let remMs   = endTs > 0 ? endTs - Date.now() : -1;
     let isExpired = endTs > 0 && remMs <= 0;
     let fp = _generarCardFP(op);
 
     let bgStyle, barColor, titleColor, gradientBar;
-    if (!isViaje) {
+    if (isCerrada) {
+        bgStyle = 'bg-gray-50 border-gray-300 opacity-80'; barColor = 'bg-gray-400';
+        titleColor = 'text-gray-500'; gradientBar = 'from-gray-300 to-gray-400';
+    } else if (!isViaje) {
         bgStyle = 'bg-white border-gray-100'; barColor = 'bg-green-500';
         titleColor = 'text-blue-900'; gradientBar = 'from-green-400 to-green-500';
     } else if (isExpired) {
@@ -773,7 +790,9 @@ function _generarCardHTML(op) {
     }
 
     let tagEstado = '';
-    if (isViaje) {
+    if (isCerrada) {
+        tagEstado = `<span class="trip-estado-tag absolute top-2 right-4 bg-gray-200 text-gray-600 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-gray-300 z-10"><i class="fas fa-check-double mr-1"></i>Cerrada</span>`;
+    } else if (isViaje) {
         if (isExpired) {
             tagEstado = `<span class="trip-estado-tag absolute top-2 right-4 bg-emerald-200 text-emerald-800 text-[8px] px-2 py-0.5 rounded font-black tracking-widest uppercase shadow-sm border border-emerald-300 z-10"><i class="fas fa-check-circle mr-1"></i>En Puerto</span>`;
         } else {
@@ -793,12 +812,15 @@ function _generarCardHTML(op) {
     }
 
     let fotoBtns = '';
-    if (isViaje) {
+    if (isViaje || isCerrada) {
         if (op.foto_zarpe) {
             let fotoEsc = op.foto_zarpe.replace(/'/g, "\\'");
+            let btnVer = isCerrada
+                ? 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200'
+                : isExpired ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100';
             fotoBtns = `
             <div class="flex gap-2">
-                <button class="flex-1 ${isExpired ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'} font-bold py-2 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="verFotoZarpe('${fotoEsc}')">
+                <button class="flex-1 ${btnVer} font-bold py-2 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="verFotoZarpe('${fotoEsc}')">
                     <i class="fas fa-camera mr-1.5"></i> Ver Foto
                 </button>
                 <button class="bg-gray-50 text-gray-500 font-bold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition active:scale-95 text-xs" title="Cambiar foto" onclick="abrirModalZarpeFoto('${op.id}', true)">
@@ -837,7 +859,14 @@ function _generarCardHTML(op) {
             <span class="truncate"><i class="fas fa-user-tie ${isViaje ? (isExpired ? 'text-emerald-400' : 'text-orange-400') : 'text-blue-400'} mr-1"></i><b class="text-gray-700">${op.capitan}</b></span>
             <span class="truncate text-right"><i class="fas fa-user-tag text-green-400 mr-1"></i><b class="text-gray-700">${op.guia}</b></span>
         </div>
-        ${!isViaje ? `
+        ${isCerrada ? `
+        <div class="mt-2 space-y-2">
+            <button class="w-full bg-gray-100 text-gray-500 font-bold py-2.5 rounded-xl border border-gray-300 transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
+                <i class="fas fa-clipboard-check mr-1.5 text-gray-400"></i> Ver Manifiesto Final
+            </button>
+            ${fotoBtns}
+        </div>
+        ` : !isViaje ? `
         <div class="flex space-x-2 mt-2">
             <button class="flex-[2] bg-blue-50 text-blue-700 font-bold py-2.5 rounded-xl border border-blue-200 hover:bg-blue-100 shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
                 <i class="fas fa-users mr-1.5"></i> Gest. PAX
@@ -846,12 +875,15 @@ function _generarCardHTML(op) {
                 <i class="fas fa-anchor mr-1.5"></i> Zarpar
             </button>
         </div>
+        ${op.id !== 'Creando...' && op.ocupados === 0 ? `
+        <button class="w-full mt-2 bg-red-50 text-red-600 font-bold py-2 rounded-xl border border-red-200 hover:bg-red-100 shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarAnularOp('${op.id}'); event.stopPropagation()">
+            <i class="fas fa-ban mr-1.5"></i> Anular Operación
+        </button>` : ''}
         ` : `
         <div class="mt-2 space-y-2">
-            ${isExpired ? `
-            <button class="w-full bg-emerald-500 text-white font-black py-3 rounded-xl border border-emerald-600 shadow-md shadow-emerald-500/30 transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarLlegada('${op.id}')">
-                <i class="fas fa-flag-checkered mr-1.5"></i> Confirmar Llegada
-            </button>` : ''}
+            <button class="w-full ${isExpired ? 'bg-emerald-500 text-white border-emerald-600 shadow-md shadow-emerald-500/30 font-black' : 'bg-amber-500 text-white border-amber-600 shadow-md shadow-amber-500/20 font-black'} py-3 rounded-xl border transition active:scale-95 text-xs flex items-center justify-center" onclick="confirmarLlegada('${op.id}')">
+                <i class="fas fa-flag-checkered mr-1.5"></i> ${isExpired ? 'Confirmar Llegada' : 'Finalizar Viaje'}
+            </button>
             <button class="w-full ${isExpired ? 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200' : 'bg-orange-100 text-orange-800 border-orange-200 hover:bg-orange-200'} font-bold py-2.5 rounded-xl border shadow-sm transition active:scale-95 text-xs flex items-center justify-center" onclick="abrirModalGestionBote('${op.id}')">
                 <i class="fas fa-clipboard-list mr-1.5"></i> Ver Manifiesto
             </button>
@@ -919,11 +951,8 @@ function renderOperaciones(operaciones) {
     let hoy = getHoyLocal();
     let opHoy = operaciones.filter(op => op.fecha === hoy || op.id === 'Creando...');
 
-    opHoy.sort((a, b) => {
-        if (a.estado === 'Abierta' && b.estado !== 'Abierta') return -1;
-        if (a.estado !== 'Abierta' && b.estado === 'Abierta') return 1;
-        return 0;
-    });
+    const _estadoOrden = { 'Abierta': 0, 'En_Viaje': 1, 'Cerrada': 2 };
+    opHoy.sort((a, b) => (_estadoOrden[a.estado] ?? 3) - (_estadoOrden[b.estado] ?? 3));
 
     // Container-level fingerprint — incluye contenido de pases para detectar cambios de aliado/nombre
     let fp = opHoy.map(o => _generarCardFP(o)).join(';')
@@ -974,8 +1003,10 @@ function renderOperaciones(operaciones) {
 
     opHoy.forEach(op => container.appendChild(existingCards.get(op.id)));
 
-    // Actualizar sección de pases
-    let pasesDiaHTML = _generarPasesDiaHTML(window.pasesExternosData || []);
+    // Actualizar sección de pases — solo los de HOY (los _syncing son recién enviados, siempre incluirlos)
+    let pasesDiaHTML = _generarPasesDiaHTML(
+        (window.pasesExternosData || []).filter(p => p._syncing || esFechaHoy(p.timestamp))
+    );
     if (pasesDiaHTML) {
         let tmp = document.createElement('div');
         tmp.innerHTML = pasesDiaHTML.trim();
@@ -1441,6 +1472,7 @@ function abrirModal(id) {
     
     if(id === 'modal-nueva-reserva') {
         document.getElementById('input-crm-fecha').value = getHoyLocal();
+        _mostrarFechaLegible('input-crm-fecha', 'crm-fecha-legible');
         cambiarTipoCRM();
         setTimeout(actualizarHoraSugeridaCRM, 50);
     } else if (id === 'modal-abrir-bote') {
@@ -1517,7 +1549,7 @@ function confirmarZarpe(id_op) {
     let totalPax = (op.manifiesto || []).reduce((s, m) => s + (parseFloat(m.pax) || 0), 0);
 
     document.getElementById('zarpe-confirm-subtitulo').textContent = `Operación ${id_op}`;
-    document.getElementById('zarpe-confirm-bote').textContent = op.nombre_bote || '–';
+    document.getElementById('zarpe-confirm-bote').textContent = op.bote || op.nombre_bote || '–';
     document.getElementById('zarpe-confirm-pax').textContent = `${totalPax} PAX`;
     document.getElementById('zarpe-confirm-destino').textContent = op.destino || '–';
     document.getElementById('zarpe-confirm-hora').textContent = op.hora_salida || '–';
@@ -1558,14 +1590,62 @@ function confirmarLlegada(id_op) {
 }
 
 function _ejecutarConfirmarLlegada(id_op) {
+    // Optimistic: cambiar estado a Cerrada sin eliminar la card (evita parpadeo)
     let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
     if (opIndex !== -1) {
-        window.operacionesData.splice(opIndex, 1);
+        window.operacionesData[opIndex].estado = 'Cerrada';
+        // Si el modal de gestión estaba abierto para esta op, actualizar su modo
+        if (window._gestionOpEstado && document.getElementById('hidden-gestion-op')?.value === id_op) {
+            window._gestionOpEstado = 'Cerrada';
+            document.getElementById('box-formulario-venta')?.classList.add('hidden');
+        }
         renderOperaciones(window.operacionesData);
     }
     fetchPostBg('confirmar_llegada', { id_operacion: id_op, creador: myOpName }).then(res => {
         if (res.status === 'error') { mostrarToast(res.message, 'error'); fetchDashboardDataBg(); return; }
         mostrarToast('✅ Llegada confirmada. Recursos liberados.', 'success');
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
+    });
+}
+
+function confirmarAnularOp(id_op) {
+    let op = window.operacionesData.find(o => o.id === id_op);
+    if (!op) return;
+    let bs = document.createElement('div');
+    bs.id = '_anular-op-bs';
+    bs.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:flex-end;';
+    bs.innerHTML = `<div style="background:white;border-radius:24px 24px 0 0;padding:24px;width:100%;box-shadow:0 -20px 60px rgba(0,0,0,.2);">
+        <div style="width:40px;height:4px;background:#e5e7eb;border-radius:4px;margin:0 auto 20px;"></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+            <div style="width:48px;height:48px;background:#fef2f2;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:22px;">🚫</div>
+            <div><strong style="font-size:17px;color:#111;">Anular Operación</strong><br><span style="font-size:12px;color:#6b7280;">${op.bote} · ${id_op}</span></div>
+        </div>
+        <p style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:12px;padding:10px 14px;margin-bottom:16px;">
+            Esta acción marcará la operación como <strong>Cancelada</strong> y liberará los recursos asignados. Solo disponible sin pasajeros a bordo.
+        </p>
+        <div style="display:flex;gap:10px;">
+            <button onclick="document.getElementById('_anular-op-bs').remove()" style="flex:1;background:#f3f4f6;color:#374151;font-weight:700;border:none;padding:14px;border-radius:14px;font-size:14px;cursor:pointer;">Cancelar</button>
+            <button onclick="document.getElementById('_anular-op-bs').remove();_ejecutarAnularOp('${id_op}')" style="flex:2;background:#dc2626;color:white;font-weight:900;border:none;padding:14px;border-radius:14px;font-size:14px;cursor:pointer;">🚫 Confirmar Anulación</button>
+        </div>
+    </div>`;
+    document.body.appendChild(bs);
+    bs.addEventListener('click', e => { if (e.target === bs) bs.remove(); });
+}
+
+function _ejecutarAnularOp(id_op) {
+    let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
+    if (opIndex !== -1) {
+        window.operacionesData.splice(opIndex, 1);
+        renderOperaciones(window.operacionesData);
+    }
+    fetchPostBg('anular_operacion', { id_operacion: id_op, creador: myOpName }).then(res => {
+        if (res.status === 'error') {
+            mostrarToast(res.message, 'error');
+            fetchDashboardDataBg();
+            return;
+        }
+        mostrarToast('✅ Operación anulada correctamente.', 'success');
         clearTimeout(window._syncTimer);
         window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
     });
@@ -1593,7 +1673,8 @@ function ejecutarZarpe(id_op) {
 function _itemManifiestoFP(m) {
     let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
     let isSelected = !isSyncing && window.editandoMovId === m.id;
-    return `${m.id}|${isSyncing?1:0}|${isSelected?1:0}|${m.pax}|${m.monto}|${m.adicionales||''}`;
+    let opEstado   = window._gestionOpEstado || 'Abierta';
+    return `${m.id}|${isSyncing?1:0}|${isSelected?1:0}|${m.pax}|${m.monto}|${m.adicionales||''}|${opEstado}`;
 }
 
 function _itemManifiestoHTML(m) {
@@ -1618,12 +1699,14 @@ function _itemManifiestoHTML(m) {
         }, 0);
     }
 
+    let opEstado   = window._gestionOpEstado || 'Abierta';
+    let soloCobrо  = opEstado === 'En_Viaje' || opEstado === 'Cerrada';
     let subBtns = (isSelected && !isSyncing) ? `
     <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
         ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('cobro_directo', { id_operacion: document.getElementById('hidden-gestion-op').value, id_contacto: '${m.contacto}', nombre_contacto: '${(m.nombreContacto||m.contacto||'').replace(/'/g,"\\'")}', monto: ${m.monto||0}, monto_adicionales: ${adicionalesSum}, detalle_adicionales: '${(m.adicionales||'').replace(/'/g,"\\'")}', bloqueado: false }); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar${adicionalesSum > 0 ? ` <span class="bg-white/30 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full ml-1">+S/${adicionalesSum.toFixed(2)}</span>` : ''}</button>` : ''}
-        ${isAgencia ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
-        ${m.tipo !== 'Aliado(PaseOut)' ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
-        <button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>
+        ${!soloCobrо && isAgencia ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
+        ${!soloCobrо && m.tipo !== 'Aliado(PaseOut)' ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
+        ${!soloCobrо ? `<button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>` : ''}
     </div>` : '';
 
     let montoDisplay;
@@ -1671,7 +1754,9 @@ function abrirModalGestionBote(id_op) {
     if(nodeH3.childNodes[0].nodeType === 3) nodeH3.childNodes[0].nodeValue = op.bote + " ";
 
     document.getElementById('hidden-gestion-op').value = op.id;
-    document.getElementById('box-formulario-venta').classList.toggle('hidden', op.estado === 'En_Viaje');
+    window._gestionOpEstado = op.estado; // usado por _itemManifiestoHTML para modo solo-cobro
+    let soloLectura = op.estado === 'En_Viaje' || op.estado === 'Cerrada';
+    document.getElementById('box-formulario-venta').classList.toggle('hidden', soloLectura);
 
     resetFormularioVenta();
     abrirModal('modal-gestion-bote');
@@ -1752,15 +1837,17 @@ function actualizarPrecioDefecto() {
     let tipo = document.getElementById('input-vd-tipo').value;
     let pax  = parseInt(document.getElementById('input-vd-pax').value) || 0;
     let precioInput = document.getElementById('input-vd-precio');
+    // Si el usuario está editando el campo de precio directamente, no sobreescribir su valor
+    let usuarioEditandoPrecio = (document.activeElement === precioInput);
 
     if(tipo === 'Libre') {
         let varios = (window.contactosData || []).find(c => c.id === 'CON-00');
         let precioVarios = varios ? parseFloat(varios.precio) || 30 : 30;
-        if(pax > 0) precioInput.value = (precioVarios * pax).toFixed(2);
+        if(pax > 0 && !usuarioEditandoPrecio) precioInput.value = (precioVarios * pax).toFixed(2);
 
     } else if(tipo === 'Agencia') {
         let sel = document.getElementById('input-vd-contacto-select');
-        if(sel && sel.value) {
+        if(sel && sel.value && !usuarioEditandoPrecio) {
             let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
             if(info) precioInput.value = (info.precio * pax).toFixed(2);
         }
@@ -2316,12 +2403,52 @@ function onCajaCategoriaChange() {
         sel.innerHTML = '<option value="">— Seleccionar —</option>';
         let contactos = window.contactosData || [];
         if (cat === 'Cobro') {
-            // Excluir aliados — ellos manejan pases, no cobros en efectivo
-            contactos.filter(c => !(c.tipo||'').toLowerCase().includes('aliado')).forEach(c => {
-                let opt = document.createElement('option');
-                opt.value = c.nombre; opt.dataset.id = c.id; opt.textContent = c.nombre + (c.tipo ? ' · ' + c.tipo : '');
-                sel.appendChild(opt);
+            // ── Recopilar contactos que ingresaron HOY desde los manifiestos activos ──
+            let hoyMovs = []; // { contactoId, nombreContacto }
+            (window.operacionesData || []).forEach(op => {
+                (op.manifiesto || []).forEach(m => {
+                    let cid    = m.contacto || '';
+                    let nombre = m.nombreContacto || m.contacto || '';
+                    if (!cid || !nombre) return;
+                    if (!hoyMovs.some(h => h.contactoId === cid && h.nombreContacto === nombre)) {
+                        hoyMovs.push({ contactoId: cid, nombreContacto: nombre });
+                    }
+                });
             });
+            let hoyIds = new Set(hoyMovs.map(h => h.contactoId));
+
+            // Excluir aliados en ambas listas
+            let sinAliados = contactos.filter(c => !(c.tipo||'').toLowerCase().includes('aliado'));
+
+            if (hoyMovs.length > 0) {
+                let grpHoy = document.createElement('optgroup');
+                grpHoy.label = '💡 Ingresaron Hoy';
+                hoyMovs.forEach(h => {
+                    let opt = document.createElement('option');
+                    opt.value = h.nombreContacto;
+                    opt.dataset.id = h.contactoId;
+                    opt.dataset.nombreContacto = h.nombreContacto;
+                    // Info extra del contacto si existe
+                    let cInfo = sinAliados.find(c => c.id === h.contactoId);
+                    opt.textContent = h.nombreContacto + (cInfo && cInfo.tipo ? ' · ' + cInfo.tipo : '');
+                    grpHoy.appendChild(opt);
+                });
+                sel.appendChild(grpHoy);
+            }
+
+            // Resto: contactos no vistos hoy
+            let resto = sinAliados.filter(c => !hoyIds.has(c.id));
+            if (resto.length > 0) {
+                let grpResto = document.createElement('optgroup');
+                grpResto.label = '📋 Otros Contactos';
+                resto.forEach(c => {
+                    let opt = document.createElement('option');
+                    opt.value = c.nombre; opt.dataset.id = c.id;
+                    opt.textContent = c.nombre + (c.tipo ? ' · ' + c.tipo : '');
+                    grpResto.appendChild(opt);
+                });
+                sel.appendChild(grpResto);
+            }
         } else {
             // Pagos: solo comisionados
             contactos.filter(c => (c.tipo||'').toLowerCase().includes('comisionado')).forEach(c => {
@@ -2343,7 +2470,15 @@ function onCajaCategoriaChange() {
 function onCajaContactoChange() {
     let sel = document.getElementById('caja-select-contacto');
     let opt = sel.options[sel.selectedIndex];
-    document.getElementById('caja-id-contacto-hidden').value = opt?.dataset?.id || '';
+    let contactoId = opt?.dataset?.id || '';
+    document.getElementById('caja-id-contacto-hidden').value = contactoId;
+
+    // Para contactos CON-00* (familia/varios directos) del grupo "Hoy":
+    // auto-rellenar comentarios con el nombreContacto específico de ese movimiento
+    let nombreContacto = opt?.dataset?.nombreContacto || '';
+    if (contactoId && /^CON-00/i.test(contactoId) && nombreContacto) {
+        document.getElementById('caja-comentarios').value = nombreContacto;
+    }
 }
 
 function confirmarCaja() {
@@ -2380,7 +2515,7 @@ function confirmarCaja() {
         comentarios:  comentario,
         foto_url:     '',
         operador:     myOpName,
-        timestamp:    new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString(),
+        timestamp:    new Date().toISOString(),
         _syncing:     true
     };
     if (!window.cajaData) window.cajaData = [];
@@ -2592,7 +2727,7 @@ function confirmarDerivacion() {
                 monto: mov.monto,
                 estado: 'Pasado',
                 _syncing: true,
-                timestamp: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString()
+                timestamp: new Date().toISOString()
             });
 
             op.manifiesto.splice(movIndex, 1);
@@ -2642,7 +2777,11 @@ function confirmarAnularPase() {
         let op = window.operacionesData.find(o => o.id === id_op);
         if(op) {
             let paxNum = parseInt(pase.pax) || 0;
-            op.manifiesto.unshift({ id: id_mov, tipo: 'Libre', contacto: pase.nombreOrigen, nombreContacto: pase.nombreOrigen, pax: pase.pax, monto: pase.monto, estado: 'Embarcado' });
+            // Recuperar tipo real del contacto original (no dejar 'Libre')
+            let origenId = pase.origenId || '';
+            let contactoInfo = (window.contactosData || []).find(c => c.id === origenId || c.nombre === origenId);
+            let tipoMov = contactoInfo ? (contactoInfo.tipo || 'Directo') : 'Directo';
+            op.manifiesto.unshift({ id: id_mov, tipo: tipoMov, contacto: pase.origenId || pase.nombreOrigen, nombreContacto: pase.nombreOrigen, pax: pase.pax, monto: pase.monto, estado: 'Embarcado' });
             op.ocupados += paxNum;
         }
         renderOperaciones(window.operacionesData);
@@ -2806,10 +2945,12 @@ function confirmarPaseDesdeReserva() {
     if(resIdx !== -1) window.reservasData[resIdx]._asignando = true;
     renderReservas(window.reservasData);
 
-    // Optimistic: agregar a pases del día
+    // Optimistic: agregar a pases del día.
+    // Se usa tempId para poder eliminarlo al confirmar GAS y evitar duplicado.
     if(!window.pasesExternosData) window.pasesExternosData = [];
+    let tempPaseId = 'temp-pase-' + Date.now();
     window.pasesExternosData.unshift({
-        id: 'temp-pase-' + Date.now(),
+        id: tempPaseId,
         tipo: 'Aliado(PaseOut)',
         aliadoId:     sel.id || sel.nombre,
         nombreOrigen: contacto,
@@ -2817,11 +2958,20 @@ function confirmarPaseDesdeReserva() {
         monto: '0',
         estado: 'Pasado',
         _syncing: true,
-        timestamp: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString()
+        timestamp: new Date().toISOString()
     });
     renderOperaciones(window.operacionesData);
 
     cerrarSubModal('modal-pase-reserva');
+
+    // Recuperar monto de la reserva original para no perder la información de cobranza
+    let resObj = (window.reservasData || []).find(r => r.id === id_reserva);
+    let montoTotal  = resObj ? (parseFloat(resObj.monto) || 0) : 0;
+    let paxNum      = parseInt(pax) || 1;
+    let precioUnit  = paxNum > 0 ? montoTotal / paxNum : 0;
+    // Resolver nombre real del contacto (no mandar el ID como nombre)
+    let contactoInfo = (window.contactosData || []).find(c => c.id === contacto || c.nombre === contacto);
+    let nombreContactoReal = contactoInfo ? contactoInfo.nombre : contacto;
 
     fetchPostBg('pase_desde_reserva', {
         id_reserva,
@@ -2829,10 +2979,15 @@ function confirmarPaseDesdeReserva() {
         aliado: sel.nombre,
         aliado_id: sel.id || sel.nombre,
         id_contacto_original: contacto,
-        nombre_contacto_original: contacto,
+        nombre_contacto_original: nombreContactoReal,
+        precio_unitario: precioUnit,
+        monto_total: montoTotal,
         creador: myOpName
     }).then(res => {
         if(res.status === 'error') { alert(res.message); return; }
+        // Eliminar el temp optimista ANTES del BG fetch para evitar que se re-inyecte como duplicado.
+        // El BG fetch traerá el pase real con su MOV-id definitivo.
+        window.pasesExternosData = (window.pasesExternosData || []).filter(p => p.id !== tempPaseId);
         clearTimeout(window._syncTimer);
         window._syncTimer = setTimeout(fetchDashboardDataBg, 3000);
     });

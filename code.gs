@@ -63,6 +63,7 @@ function doPost(e) {
     else if (action === 'subir_foto_zarpe')         { return jsonResponse(subirFotoZarpe(data.payload)); }
     else if (action === 'guardar_cierre')           { return jsonResponse(guardarCierre(data.payload)); }
     else if (action === 'confirmar_llegada')        { return jsonResponse(confirmarLlegada(data.payload)); }
+    else if (action === 'anular_operacion')         { return jsonResponse(anularOperacion(data.payload)); }
     return jsonResponse({ error: 'Acción no requerida o desconocida' }, 400);
   } catch (error) {
     return jsonResponse({ error: error.toString() }, 500);
@@ -127,11 +128,16 @@ function getDashboardData() {
   const personalMap = {};
   todoPersonal.forEach(p => { personalMap[p.id_empleado] = p.nombre; });
 
-  const operacionesActivasRef = todasOperaciones.filter(op => op.estado === 'Abierta' || op.estado === 'En_Viaje');
+  // Mostrar en el muelle: Abiertas y En_Viaje siempre + Cerradas de HOY (para historial visual del turno)
+  const hoyISO = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const operacionesActivasRef = todasOperaciones.filter(op => {
+    if (op.estado === 'Abierta' || op.estado === 'En_Viaje') return true;
+    if (op.estado === 'Cerrada') return parseDateForJS(op.fecha) === hoyISO;
+    return false;
+  });
 
   // Recursos (bote/capitán/guía) solo se bloquean por operaciones Abiertas del día de HOY.
   // Operaciones de días anteriores que quedaron sin cerrar NO bloquean recursos al día siguiente.
-  const hoyISO = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   const operacionesAbiertas = todasOperaciones.filter(op => {
     if (op.estado !== 'Abierta') return false;
     let fechaOp = parseDateForJS(op.fecha);
@@ -561,7 +567,11 @@ function zarparOperacion(payload) {
   return { status: 'error', message: 'Operación no encontrada.' };
 }
 
-// Confirmar llegada de una lancha En_Viaje → la cierra y registra hora de llegada
+// Confirmar llegada de una lancha En_Viaje → la cierra y libera recursos
+// Estados válidos de Operaciones: Abierta | En_Viaje | Cerrada | Cancelada
+// Transiciones: Abierta → En_Viaje (zarpar) → Cerrada (confirmarLlegada / cerrarOperacion)
+//               Abierta → Cancelada (anularOperacion, solo sin pasajeros)
+// NOTA: Columna 11 de Operaciones es Destino (NO hora_llegada). No sobreescribir.
 function confirmarLlegada(payload) {
   if (!payload || !payload.id_operacion) return { status: 'error', message: '❌ Se requiere id_operacion.' };
   const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -570,8 +580,6 @@ function confirmarLlegada(payload) {
   for (let i = 1; i < data.length; i++) {
     if (data[i][0] === payload.id_operacion) {
       sheet.getRange(i+1, 7).setValue('Cerrada');
-      // Col 11 = hora_llegada si existe, si no se ignora
-      try { sheet.getRange(i+1, 11).setValue(new Date()); } catch(e) {}
       SpreadsheetApp.flush();
       return { message: '✅ Llegada confirmada. Recursos liberados.' };
     }
@@ -683,8 +691,8 @@ function paseDesdeReserva(payload) {
     payload.id_contacto_original || '',               // col 4  id_contacto = contacto CRM original
     payload.nombre_contacto_original,                 // col 5  nombreContacto = nombre CRM original
     payload.cant_pax,                                 // col 6  cant_pax
-    0,                                                // col 7  precio_unitario
-    0,                                                // col 8  monto_total
+    parseFloat(payload.precio_unitario) || 0,         // col 7  precio_unitario (de la reserva original)
+    parseFloat(payload.monto_total) || 0,             // col 8  monto_total (de la reserva original)
     '',                                               // col 9  adicionales
     payload.creador || 'App',                         // col 10 operador_registro
     new Date(),                                       // col 11 timestamp_registro
@@ -713,6 +721,40 @@ function editarOperacion(payload) {
   return { status: 'error', message: '❌ Operación no encontrada.' };
 }
 
+// Anular una operación Abierta o En_Viaje que NO tenga pasajeros activos a bordo.
+// Requiere que todos los movimientos asociados estén en estado Cancelado o Pasado.
+// payload: { id_operacion }
+function anularOperacion(payload) {
+  if (!payload || !payload.id_operacion) return { status: 'error', message: '❌ Se requiere id_operacion.' };
+  const ss       = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const opsSheet = ss.getSheetByName('Operaciones');
+  const opsData  = opsSheet.getDataRange().getValues();
+
+  // Verificar que no haya pasajeros activos (Embarcado / cualquier estado activo)
+  const movSheet = ss.getSheetByName('Movimientos');
+  const movData  = movSheet.getDataRange().getValues();
+  for (let j = 1; j < movData.length; j++) {
+    if (String(movData[j][1]) !== String(payload.id_operacion)) continue;
+    let estadoMov = (movData[j][11] || '').toString().toLowerCase();
+    if (!estadoMov.includes('cancelado') && !estadoMov.includes('pasado')) {
+      return { status: 'error', message: '❌ No se puede anular: hay pasajeros activos a bordo.' };
+    }
+  }
+
+  for (let i = 1; i < opsData.length; i++) {
+    if (String(opsData[i][0]) === String(payload.id_operacion)) {
+      let estadoOp = (opsData[i][6] || '').toString();
+      if (estadoOp === 'Cerrada' || estadoOp === 'Cancelada') {
+        return { status: 'error', message: `❌ La operación ya está ${estadoOp}.` };
+      }
+      opsSheet.getRange(i+1, 7).setValue('Cancelada');
+      SpreadsheetApp.flush();
+      return { message: '✅ Operación anulada correctamente.' };
+    }
+  }
+  return { status: 'error', message: '❌ Operación no encontrada.' };
+}
+
 // Guardar reporte de cierre del día como archivo HTML en Drive/Cierres
 // payload: { html, nombre }  →  nombre ej: "Cierre 2026-03-31 14-30"
 function guardarCierre(payload) {
@@ -730,23 +772,42 @@ function guardarCierre(payload) {
   }
 }
 
-// Anular un pase: limpia Id_contactoPase, reasigna id_operacion y restaura estado a Embarcado
+// Anular un pase: limpia Id_contactoPase, reasigna id_operacion y restaura estado a Embarcado.
+// El tipo_movimiento se restaura al tipo real del contacto original (buscado en tabla Contactos).
 // payload: { id_mov, id_operacion_nueva }
 function anularPase(payload) {
   if (!payload.id_mov || !payload.id_operacion_nueva) {
     return { status: 'error', message: 'Faltan id_mov o id_operacion_nueva.' };
   }
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const ss       = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheetMov = ss.getSheetByName('Movimientos');
   const movData  = sheetMov.getDataRange().getValues();
   for (let i = 1; i < movData.length; i++) {
     if (movData[i][0] === payload.id_mov) {
+      // Recuperar id_contacto original (col 4, índice 3) y buscar su tipo en Contactos
+      let idContacto = String(movData[i][3] || '');
+      let tipoMovimiento = 'Directo'; // fallback si no se encuentra
+      if (idContacto) {
+        const conSheet = ss.getSheetByName('Contactos');
+        const conData  = conSheet.getDataRange().getValues();
+        const conKeys  = conData[0].map(k => String(k).trim().toLowerCase());
+        let idxId   = conKeys.indexOf('id_contacto');
+        let idxTipo = conKeys.indexOf('tipo');
+        if (idxId >= 0 && idxTipo >= 0) {
+          for (let j = 1; j < conData.length; j++) {
+            if (String(conData[j][idxId]) === idContacto) {
+              tipoMovimiento = String(conData[j][idxTipo] || 'Directo');
+              break;
+            }
+          }
+        }
+      }
       sheetMov.getRange(i+1, 2).setValue(payload.id_operacion_nueva);  // col 2  id_operacion
-      sheetMov.getRange(i+1, 3).setValue('Libre');                     // col 3  tipo_movimiento (reset a Libre)
+      sheetMov.getRange(i+1, 3).setValue(tipoMovimiento);              // col 3  tipo_movimiento (del contacto)
       sheetMov.getRange(i+1, 12).setValue('Embarcado');                // col 12 estado_movimiento
       sheetMov.getRange(i+1, 13).setValue('');                         // col 13 Id_contactoPase → vaciar
       SpreadsheetApp.flush();
-      return { message: '✅ Pase anulado. Movimiento reasignado a ' + payload.id_operacion_nueva + '.' };
+      return { message: '✅ Pase anulado. Movimiento reasignado a ' + payload.id_operacion_nueva + '.', tipo: tipoMovimiento };
     }
   }
   return { status: 'error', message: 'Movimiento no encontrado.' };
