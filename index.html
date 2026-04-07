@@ -27,6 +27,8 @@
         .card-enter { animation: cardEnter 0.32s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
         @keyframes rowEnter { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
         .row-enter { animation: rowEnter 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+        @keyframes cobrarAppear { from { opacity: 0; transform: scaleY(0.85) translateY(-4px); } to { opacity: 1; transform: scaleY(1) translateY(0); } }
+        .cobrar-btn-appear { animation: cobrarAppear 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both; transform-origin: top; }
         .nav-item.active { color: #56070c; }
         .nav-item.active .icon { transform: scale(1.15); }
 
@@ -76,7 +78,7 @@
             <div class="text-5xl mb-4">🚀</div>
             <h2 class="text-white text-xl font-black mb-2 tracking-tight">Nueva versión disponible</h2>
             <p class="text-blue-200 text-sm mb-6">Se publicó una actualización del sistema. Debes recargar para continuar operando sin errores.</p>
-            <button onclick="window.location.reload(true)"
+            <button onclick="window.location.reload()"
                 class="w-full py-4 bg-white text-blue-900 font-black text-base rounded-2xl shadow-xl active:scale-95 transition-transform tracking-wide uppercase">
                 Actualizar ahora
             </button>
@@ -184,7 +186,7 @@
                     <div class="flex-[1.5] relative" id="container-precio-venta">
                         <label id="label-precio-venta" class="text-[9px] font-bold text-green-600 uppercase tracking-widest text-center block mb-0.5">S/ Total Cobrado</label>
                         <span class="absolute left-3 top-8 text-green-600 font-black">S/</span>
-                        <input type="number" id="input-vd-precio" class="w-full bg-white border border-green-200 rounded-xl p-2.5 pl-8 text-xl font-black text-center text-green-700 focus:outline-green-500 shadow-inner" placeholder="0.00" onfocus="this.select()" oninput="actualizarPrecioDefecto()" onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarVentaDirecta();}">
+                        <input type="number" id="input-vd-precio" inputmode="decimal" class="w-full bg-white border border-green-200 rounded-xl p-2.5 pl-8 text-xl font-black text-center text-green-700 focus:outline-green-500 shadow-inner" placeholder="0.00" oninput="actualizarPrecioDefecto()" onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarVentaDirecta();}">
                     </div>
                 </div>
 
@@ -367,7 +369,7 @@
                 <div class="flex-[1.5] relative">
                     <label class="text-[9px] font-bold text-green-600 uppercase tracking-widest text-center block mb-0.5">S/ Total</label>
                     <span class="absolute left-3 top-8 text-green-600 font-black">S/</span>
-                    <input type="number" id="input-crm-precio" class="w-full bg-white border border-green-200 rounded-xl p-2.5 pl-8 text-xl font-black text-center text-green-700 focus:outline-green-500 shadow-inner" placeholder="0.00" onfocus="this.select()">
+                    <input type="number" id="input-crm-precio" inputmode="decimal" class="w-full bg-white border border-green-200 rounded-xl p-2.5 pl-8 text-xl font-black text-center text-green-700 focus:outline-green-500 shadow-inner" placeholder="0.00">
                 </div>
             </div>
         </div>
@@ -409,6 +411,7 @@
         <input type="hidden" id="caja-modo">          <!-- ingreso | salida | cobro_directo -->
         <input type="hidden" id="caja-id-operacion">
         <input type="hidden" id="caja-id-contacto-hidden">
+        <input type="hidden" id="caja-id-movimiento">  <!-- id_mov vinculado al cobro directo -->
 
         <div class="space-y-3 overflow-y-auto flex-1 px-1 pb-2">
             <!-- Categoría -->
@@ -567,7 +570,10 @@
             </div>
         </div>
 
-        <button class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-md hover:bg-blue-700 transition active:scale-95 text-xs uppercase tracking-wider" onclick="cerrarSubModal('modal-detalle-caja')">Aceptar</button>
+        <div class="flex gap-2 mt-0">
+            <button class="flex-1 bg-red-50 text-red-600 border border-red-200 font-bold py-3 rounded-xl hover:bg-red-100 transition active:scale-95 text-xs uppercase tracking-wider" onclick="anularTransaccionCaja()"><i class="fas fa-trash-alt mr-1"></i>Anular cobro</button>
+            <button class="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-blue-700 transition active:scale-95 text-xs uppercase tracking-wider" onclick="cerrarSubModal('modal-detalle-caja')">Aceptar</button>
+        </div>
     </div>
 
     <!-- Modal Editar Operación (capitán / guía) -->
@@ -763,6 +769,10 @@
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('./sw.js')
                     .catch(err => console.warn('SW no registrado:', err));
+            });
+            // Cuando un SW nuevo toma el control → recargar para servir archivos frescos
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                window.location.reload();
             });
         }
     </script>

@@ -57,7 +57,8 @@ function _loadDashboardCache() {
         window.contactosData     = c.contactos   || [];
         window.catalogosData     = c.catalogos   || {};
         window.reservasData      = c.reservas    || [];
-        window.pasesExternosData = c.pases       || [];
+        // Solo cargar pases de HOY desde el cache — descartar los de días anteriores
+        window.pasesExternosData = (c.pases || []).filter(p => esFechaHoy(p.timestamp));
         window.cajaData          = c.caja        || [];
         if (window.catalogosData) renderCatalogos(window.catalogosData);
         renderOperaciones(window.operacionesData);
@@ -428,7 +429,7 @@ function fetchDashboardData() {
             window.contactosData     = data.catalogos ? data.catalogos.contactos : [];
             window.catalogosData     = data.catalogos || {};
             window.reservasData      = data.sala_de_espera || [];
-            window.pasesExternosData = data.pases_externos || [];
+            window.pasesExternosData = (data.pases_externos || []).filter(p => esFechaHoy(p.timestamp));
             window.cajaData          = data.movimientos_dia || [];
 
             try { renderCatalogos(data.catalogos); } catch(e) { console.error('renderCatalogos:', e); }
@@ -594,6 +595,30 @@ function actualizarListaManifiestoSuave(manifiesto) {
     // Re-ordenar sin recrear nodos
     filtered.forEach(m => lista.appendChild(existing.get(m.id)));
 
+    // ── Sección de movimientos PASADOS (derivados) al fondo de la lista ──
+    let pasadosSection = lista.querySelector('[data-section="pasados-section"]');
+    let opId2 = document.getElementById('hidden-gestion-op')?.value;
+    let op2   = (window.operacionesData || []).find(o => o.id === opId2);
+    let pasados = op2 ? (op2.manifiesto_pasados || []) : [];
+    if (pasados.length > 0) {
+        let pasadosFp = pasados.map(m => _itemManifiestoFP(m)).join(';');
+        if (!pasadosSection || pasadosSection.dataset.fp !== pasadosFp) {
+            if (pasadosSection) pasadosSection.remove();
+            let wrapper = document.createElement('div');
+            wrapper.dataset.section = 'pasados-section';
+            wrapper.dataset.fp = pasadosFp;
+            wrapper.innerHTML = `
+                <div class="flex items-center gap-2 my-2 px-1">
+                    <span class="text-[9px] font-black text-gray-400 uppercase tracking-wider whitespace-nowrap"><i class="fas fa-share-square mr-1 text-purple-400"></i>Derivados · ${pasados.reduce((s,m) => s+(parseInt(m.pax)||0), 0)} PAX</span>
+                    <div class="flex-1 h-px bg-gray-200"></div>
+                </div>
+                ${pasados.map(m => _itemManifiestoHTML(m)).join('')}`;
+            lista.appendChild(wrapper);
+        }
+    } else if (pasadosSection) {
+        pasadosSection.remove();
+    }
+
     lista.scrollTop = scrollTop;
 }
 
@@ -651,7 +676,7 @@ function fetchDashboardDataBg() {
             window.contactosData     = data.catalogos ? data.catalogos.contactos : [];
             window.catalogosData     = data.catalogos || {};
             window.reservasData      = data.sala_de_espera || [];
-            window.pasesExternosData = data.pases_externos || [];
+            window.pasesExternosData = (data.pases_externos || []).filter(p => esFechaHoy(p.timestamp));
             window.cajaData          = data.movimientos_dia || [];
 
             // Filtrar items eliminados localmente que GAS aún no procesó
@@ -911,12 +936,34 @@ function _generarPasesDiaHTML(pases) {
         let ts           = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
         let paseId       = p.id || '';
         let paseNombreEsc = origen.replace(/'/g,"\\'");
+
+        // Cobrar button: only if origin is NOT an aliado (i.e., Libre / Agencia / Comisionado)
+        let origenTipo = p.origenTipo || '';
+        let origenId   = p.origenId   || '';
+        let paseEsCobrable = !_TIPOS_SIN_COBRO.includes(origenTipo) && !!(origenId);
+        let pagoStPase = paseEsCobrable ? _calcPagoEstado({ id: paseId, tipo: origenTipo, monto: p.monto || 0 }) : null;
+        let cobrarPaseBtn = '';
+        if (paseEsCobrable && pagoStPase && pagoStPase.estado !== 'pagado_completo') {
+            let montoNum = parseFloat(p.monto) || 0;
+            let pendNum  = pagoStPase.pendiente;
+            let etiqueta = pagoStPase.estado === 'pagado_parcial'
+                ? `Pend. S/${pendNum.toFixed(2)}`
+                : `S/${montoNum.toFixed(2)}`;
+            let nombreEsc = origen.replace(/'/g,"\\'");
+            cobrarPaseBtn = `<button class="cobrar-btn-appear mt-1 w-full bg-green-500 text-white text-[9px] font-bold py-1 rounded-lg flex items-center justify-center gap-1 hover:bg-green-600 active:scale-95 transition"
+                onclick="abrirModalCaja('cobro_directo', { id_contacto: '${origenId}', nombre_contacto: '${nombreEsc}', monto: ${montoNum}, id_mov: '${paseId}', pendiente: ${pendNum.toFixed(2)}, bloqueado: true }); event.stopPropagation();">
+                <span class='w-1 h-1 rounded-full bg-white animate-pulse'></span>
+                <i class='fas fa-money-bill-wave text-[8px]'></i> Cobrar ${etiqueta}
+            </button>`;
+        }
+
         return `
         <tr class="border-t border-gray-100 hover:bg-purple-50 transition">
             <td class="py-2 px-2 cursor-pointer" onclick="verDetallePase(${idx})">
                 <span class="text-[9px] font-bold text-purple-400 uppercase tracking-wide block">Para:</span>
                 <span class="text-[11px] font-black text-purple-800 block uppercase leading-tight">${aliadoNombre}</span>
                 ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
+                ${cobrarPaseBtn}
             </td>
             <td class="py-2 px-2 text-center text-sm font-black text-blue-600 cursor-pointer" onclick="verDetallePase(${idx})">${p.pax}</td>
             <td class="py-2 px-2 text-[9px] text-gray-400 text-right cursor-pointer" onclick="verDetallePase(${idx})">${ts}</td>
@@ -1005,7 +1052,7 @@ function renderOperaciones(operaciones) {
 
     // Actualizar sección de pases — solo los de HOY (los _syncing son recién enviados, siempre incluirlos)
     let pasesDiaHTML = _generarPasesDiaHTML(
-        (window.pasesExternosData || []).filter(p => p._syncing || esFechaHoy(p.timestamp))
+        (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp))
     );
     if (pasesDiaHTML) {
         let tmp = document.createElement('div');
@@ -1670,49 +1717,120 @@ function ejecutarZarpe(id_op) {
 // VENTA DIRECTA (MUELLE)
 // ==========================
 // ── Helpers DOM-diffing manifiesto ───────────────────────────────────────────
+// ── Helpers de tipo y estado de cobro ────────────────────────────────────────
+// Tipos que NO generan cobro (pases recibidos de aliados — ellos no nos pagan)
+// Aliado(PaseOut): la agencia original derivó sus PAX → SÍ se cobra a la agencia
+const _TIPOS_SIN_COBRO = ['Aliado(PaseIn)', 'Pase_Recibido', 'Aliado'];
+
+function _calcPagoEstado(m) {
+    if (_TIPOS_SIN_COBRO.includes(m.tipo)) {
+        return { cobrable: false, estado: 'sin_cobro', totalACobrar: 0, totalPagado: 0, pendiente: 0 };
+    }
+    let adicionalesSum = 0;
+    if (m.adicionales) {
+        adicionalesSum = (m.adicionales + '').split(',').reduce((acc, p) => {
+            return acc + (parseFloat((p.split(':')[1] || '').trim()) || 0);
+        }, 0);
+    }
+    let totalACobrar = (parseFloat(m.monto) || 0) + adicionalesSum;
+    let totalPagado  = (window.cajaData || [])
+        .filter(c => c.id_movimiento && c.id_movimiento === m.id)
+        .reduce((sum, c) => sum + (parseFloat(c.monto) || 0), 0);
+    let pendiente = Math.max(0, totalACobrar - totalPagado);
+    let estado = totalPagado <= 0 ? 'por_cobrar'
+               : pendiente > 0.005 ? 'pagado_parcial'
+               : 'pagado_completo';
+    return { cobrable: true, estado, totalACobrar, totalPagado, pendiente };
+}
+
+function _tipoBadgeHTML(tipo) {
+    const MAP = {
+        'Libre':           ['Libre',        'bg-gray-100 text-gray-600 border-gray-300'],
+        'Directo':         ['Libre',        'bg-gray-100 text-gray-600 border-gray-300'],
+        'Agencia':         ['Agencia',      'bg-blue-100 text-blue-700 border-blue-300'],
+        'Comisionado':     ['Comisionado',  'bg-orange-100 text-orange-700 border-orange-300'],
+        'Aliado(PaseIn)':  ['Pase·Entrada', 'bg-teal-100 text-teal-700 border-teal-300'],
+        'Aliado(PaseOut)': ['Pase·Salida',  'bg-purple-100 text-purple-700 border-purple-300'],
+        'Aliado':          ['Aliado',       'bg-purple-100 text-purple-700 border-purple-300'],
+        'Pase_Recibido':   ['Pase',         'bg-teal-100 text-teal-700 border-teal-300'],
+        'Abordaje_CRM':    ['CRM',          'bg-indigo-100 text-indigo-700 border-indigo-300'],
+    };
+    let [label, cls] = MAP[tipo] || [tipo.replace(/_/g,' '), 'bg-gray-100 text-gray-600 border-gray-300'];
+    return `<span class="inline-block text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded border ${cls}">${label}</span>`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function _itemManifiestoFP(m) {
     let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
     let isSelected = !isSyncing && window.editandoMovId === m.id;
     let opEstado   = window._gestionOpEstado || 'Abierta';
-    return `${m.id}|${isSyncing?1:0}|${isSelected?1:0}|${m.pax}|${m.monto}|${m.adicionales||''}|${opEstado}`;
+    let pagoSt     = _calcPagoEstado(m).estado;
+    return `${m.id}|${isSyncing?1:0}|${isSelected?1:0}|${m.pax}|${m.monto}|${m.adicionales||''}|${opEstado}|${pagoSt}`;
 }
 
 function _itemManifiestoHTML(m) {
     let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
     let isSelected = !isSyncing && window.editandoMovId === m.id;
-    let fp = _itemManifiestoFP(m);
+    let fp         = _itemManifiestoFP(m);
 
-    let bgClass   = isSelected ? 'bg-orange-50 ring-2 ring-orange-400' : isSyncing ? 'bg-blue-50/60' : 'bg-white';
+    let pagoInfo   = _calcPagoEstado(m);
+    let { cobrable, estado: pagoEstado, totalACobrar, pendiente } = pagoInfo;
+
+    // Color del card según estado de cobro (no por tipo de contacto)
+    let bgClass, borderClass;
+    if (isSelected) {
+        bgClass = 'bg-orange-50'; borderClass = 'ring-2 ring-orange-400 border-orange-200';
+    } else if (isSyncing) {
+        bgClass = 'bg-blue-50/60'; borderClass = 'border-blue-200';
+    } else if (!cobrable) {
+        bgClass = 'bg-white'; borderClass = 'border-gray-200';
+    } else if (pagoEstado === 'pagado_completo') {
+        bgClass = 'bg-green-50'; borderClass = 'border-green-300';
+    } else if (pagoEstado === 'pagado_parcial') {
+        bgClass = 'bg-amber-50'; borderClass = 'border-amber-300';
+    } else { // por_cobrar
+        bgClass = 'bg-red-50'; borderClass = 'border-red-200';
+    }
+
     let iconoSinc = isSyncing
         ? `<span class="inline-flex items-center gap-0.5 text-[9px] font-black text-blue-500 ml-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping inline-block"></span>guardando</span>`
         : '';
 
-    let isAliado      = m.tipo === 'Aliado' || m.tipo === 'Aliado(PaseIn)' || m.tipo === 'Aliado(PaseOut)' || m.tipo === 'Pase_Recibido';
-    let isComisionado = m.tipo === 'Comisionado';
-    let isAgencia     = m.tipo === 'Agencia';
+    let adicionalesSum = totalACobrar - (parseFloat(m.monto) || 0);
+    let opEstado       = window._gestionOpEstado || 'Abierta';
+    let soloLectura    = opEstado === 'En_Viaje' || opEstado === 'Cerrada';
 
-    let adicionalesSum = 0;
-    if (m.adicionales) {
-        adicionalesSum = (m.adicionales + '').split(',').reduce((acc, part) => {
-            let val = parseFloat((part.split(':')[1] || '').trim()) || 0;
-            return acc + val;
-        }, 0);
+    // ── Botón Cobrar (siempre visible para ítems cobrables no completamente pagados) ──
+    let cobrarBtn = '';
+    if (cobrable && pagoEstado !== 'pagado_completo' && !isSyncing) {
+        let etiquetaMonto = pagoEstado === 'pagado_parcial'
+            ? `<span class="bg-white/25 border border-white/30 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full ml-1">Pend. S/${pendiente.toFixed(2)}</span>`
+            : `S/ ${totalACobrar.toFixed(2)}`;
+        cobrarBtn = `
+        <button class="cobrar-btn-appear mt-2 w-full bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl flex items-center justify-center gap-1.5 transition hover:bg-green-600 active:scale-95 shadow-sm"
+            onclick="abrirModalCaja('cobro_directo', { id_operacion: document.getElementById('hidden-gestion-op').value, id_contacto: '${m.contacto}', nombre_contacto: '${(m.nombreContacto||m.contacto||'').replace(/'/g,"\\'")}', monto: ${m.monto||0}, monto_adicionales: ${adicionalesSum.toFixed(2)}, detalle_adicionales: '${(m.adicionales||'').replace(/'/g,"\\'")}', id_mov: '${m.id}', pendiente: ${pendiente.toFixed(2)}, bloqueado: true }); event.stopPropagation();">
+            <span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse shrink-0"></span>
+            <i class="fas fa-money-bill-wave text-[10px]"></i>
+            Cobrar ${etiquetaMonto}
+        </button>`;
+    } else if (cobrable && pagoEstado === 'pagado_completo') {
+        cobrarBtn = `<div class="mt-2 flex items-center justify-center gap-1 text-[10px] font-black text-green-700"><i class="fas fa-check-circle"></i> Pagado S/ ${totalACobrar.toFixed(2)}</div>`;
     }
 
-    let opEstado   = window._gestionOpEstado || 'Abierta';
-    let soloCobrо  = opEstado === 'En_Viaje' || opEstado === 'Cerrada';
+    // ── Sub-botones secundarios (solo al seleccionar) ──
+    let esPaseOut = m.tipo === 'Aliado(PaseOut)';
     let subBtns = (isSelected && !isSyncing) ? `
     <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
-        ${!isAliado ? `<button class="flex-1 min-w-[70px] bg-green-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-green-500/30 hover:bg-green-600 transition" onclick="abrirModalCaja('cobro_directo', { id_operacion: document.getElementById('hidden-gestion-op').value, id_contacto: '${m.contacto}', nombre_contacto: '${(m.nombreContacto||m.contacto||'').replace(/'/g,"\\'")}', monto: ${m.monto||0}, monto_adicionales: ${adicionalesSum}, detalle_adicionales: '${(m.adicionales||'').replace(/'/g,"\\'")}', bloqueado: false }); event.stopPropagation();"><i class="fas fa-money-bill-wave mr-1"></i> Cobrar${adicionalesSum > 0 ? ` <span class="bg-white/30 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full ml-1">+S/${adicionalesSum.toFixed(2)}</span>` : ''}</button>` : ''}
-        ${!soloCobrо && isAgencia ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
-        ${!soloCobrо && m.tipo !== 'Aliado(PaseOut)' ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
-        ${!soloCobrо ? `<button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>` : ''}
+        ${!soloLectura && m.tipo === 'Agencia' ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
+        ${!soloLectura && !esPaseOut ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
+        ${!soloLectura ? `<button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>` : ''}
     </div>` : '';
 
+    // ── Display monto ──
     let montoDisplay;
-    if (isAliado) {
+    if (_TIPOS_SIN_COBRO.includes(m.tipo)) {
         montoDisplay = `<span class="text-[10px] font-black text-purple-500 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">PASE</span>`;
-    } else if (isAgencia && adicionalesSum > 0) {
+    } else if (adicionalesSum > 0) {
         let montoBase    = parseFloat(m.monto || 0);
         let detalleAdics = (m.adicionales || '').replace(/'/g, "\\'");
         let detalleTitle = (m.adicionales || '').replace(/, /g, ' | ');
@@ -1721,20 +1839,21 @@ function _itemManifiestoHTML(m) {
         montoDisplay = `<span class="text-[10px] text-gray-500 block font-bold">S/ ${parseFloat(m.monto||0).toFixed(2)}</span>`;
     }
 
-    let tipoLabel = { Libre:'Libre', Agencia:'Agencia', Aliado:'Aliado·Pase', 'Aliado(PaseIn)':'Pase·Entrada', 'Aliado(PaseOut)':'Pase·Salida', Comisionado:'Comisionado', Pase_Recibido:'Pase', Abordaje_CRM:'CRM', Directo:'Libre' }[m.tipo] || m.tipo.replace(/_/g,' ');
     let nombreMostrar = m.nombreContacto || m.contacto || '';
+    let tipoBadge     = _tipoBadgeHTML(m.tipo);
 
-    return `<div class="flex flex-col ${bgClass} border ${isSyncing ? 'border-blue-200' : 'border-gray-200'} p-3 rounded-xl ${isSyncing ? 'cursor-default' : 'cursor-pointer hover:bg-blue-50'} transition shadow-sm mb-2" data-mov-id="${m.id}" data-item-fp="${fp}" ${isSyncing ? '' : `onclick="cargarParaEditar('${m.id}')"`}>
+    return `<div class="flex flex-col ${bgClass} border ${borderClass} p-3 rounded-xl ${isSyncing ? 'cursor-default' : 'cursor-pointer'} transition shadow-sm mb-2" data-mov-id="${m.id}" data-item-fp="${fp}" ${isSyncing ? '' : `onclick="cargarParaEditar('${m.id}')"`}>
         <div class="flex justify-between items-center">
             <div class="flex-1 min-w-0 pr-2">
-                <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block truncate">${nombreMostrar}${adicionalesSum > 0 ? ` <i class="fas fa-tag text-amber-500 text-[9px]" title="Tiene adicionales"></i>` : ''} ${iconoSinc}</span>
-                <span class="text-[10px] ${isAliado?'text-purple-500':isComisionado?'text-orange-500':'text-gray-500'} font-bold">${tipoLabel}</span>
+                <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block truncate">${nombreMostrar} ${iconoSinc}</span>
+                <div class="flex items-center gap-1 mt-0.5">${tipoBadge}</div>
             </div>
             <div class="text-right shrink-0">
                 <span class="font-black text-blue-600 text-sm">${m.pax} PAX</span>
                 ${montoDisplay}
             </div>
         </div>
+        ${cobrarBtn}
         ${subBtns}
     </div>`;
 }
@@ -1789,8 +1908,9 @@ function cambiarTipoVentaDirecta() {
     let comisionBox = document.getElementById('box-comision-info');
     let precioContainer = document.getElementById('container-precio-venta');
 
-    // Resetear estado del precio
+    // Resetear estado del precio (removeAttribute necesario para iOS Safari)
     precioInput.readOnly = false;
+    precioInput.removeAttribute('readonly');
     precioInput.classList.remove('bg-gray-100', 'opacity-60');
     precioContainer.classList.remove('hidden');
     comisionBox.classList.add('hidden');
@@ -1818,6 +1938,7 @@ function cambiarTipoVentaDirecta() {
         // Aliado = pase, no hay cobro de dinero
         precioInput.value = '0';
         precioInput.readOnly = true;
+        precioInput.setAttribute('readonly', 'readonly');
         precioInput.classList.add('bg-gray-100', 'opacity-60');
 
     } else if(tipo === 'Comisionado') {
@@ -2131,8 +2252,9 @@ function cambiarTipoCRM() {
     let container = document.getElementById('container-crm-contacto');
     let precioInput = document.getElementById('input-crm-precio');
 
-    // Resetear estado del precio antes de aplicar tipo
+    // Resetear estado del precio antes de aplicar tipo (removeAttribute necesario para iOS Safari)
     precioInput.readOnly = false;
+    precioInput.removeAttribute('readonly');
     precioInput.classList.remove('bg-gray-100', 'opacity-50', 'cursor-not-allowed');
 
     if(tipo === 'Libre') {
@@ -2154,6 +2276,7 @@ function cambiarTipoCRM() {
                 <option value="">Seleccionar...</option>${opts}</select>`;
         precioInput.value = '0';
         precioInput.readOnly = true;
+        precioInput.setAttribute('readonly', 'readonly');
         precioInput.classList.add('bg-gray-100', 'opacity-50', 'cursor-not-allowed');
 
     } else if(tipo === 'Comisionado') {
@@ -2184,6 +2307,7 @@ function actualizarPrecioDefectoCRM() {
     } else if(tipo === 'Aliado') {
         precioInput.value = '0';
         precioInput.readOnly = true;
+        precioInput.setAttribute('readonly', 'readonly');
         precioInput.classList.add('bg-gray-100', 'opacity-50', 'cursor-not-allowed');
 
     } else if(tipo === 'Comisionado' && pax > 0) {
@@ -2323,10 +2447,12 @@ function abrirModalCaja(modo, opts = {}) {
     let desc   = document.getElementById('desc-modal-caja');
     let btnOk  = document.getElementById('btn-confirmar-caja');
 
-    document.getElementById('caja-modo').value             = modo;
-    document.getElementById('caja-id-operacion').value     = opts.id_operacion || '';
+    window._pendingMovsForCobro = null;
+    document.getElementById('caja-modo').value               = modo;
+    document.getElementById('caja-id-operacion').value       = opts.id_operacion || '';
     document.getElementById('caja-id-contacto-hidden').value = opts.id_contacto || '';
-    document.getElementById('caja-monto').value            = opts.monto || '';
+    document.getElementById('caja-id-movimiento').value      = opts.id_mov || '';
+    document.getElementById('caja-monto').value              = opts.monto || '';
     document.getElementById('caja-comentarios').value      = '';
     document.getElementById('comprobante-foto-camara').value  = '';
     document.getElementById('comprobante-foto-galeria').value = '';
@@ -2358,16 +2484,25 @@ function abrirModalCaja(modo, opts = {}) {
         catSel.innerHTML = `<option value="Cobro">💰 Cobro</option>`;
         catSel.setAttribute('disabled', 'true');
 
-        let baseNum  = parseFloat(opts.monto || 0);
-        let adicNum  = parseFloat(opts.monto_adicionales || 0);
-        let totalNum = baseNum + adicNum;
+        let baseNum      = parseFloat(opts.monto || 0);
+        let adicNum      = parseFloat(opts.monto_adicionales || 0);
+        let totalNum     = baseNum + adicNum;
+        let pendienteNum = parseFloat(opts.pendiente || 0);
 
-        if (adicNum > 0) {
+        // Pre-llenar con monto pendiente si hay pago parcial previo, si no con total
+        let montoSugerido = (pendienteNum > 0 && pendienteNum < totalNum) ? pendienteNum : totalNum;
+        document.getElementById('caja-monto').value = montoSugerido.toFixed(2);
+
+        // Descripción según estado de pago
+        if (pendienteNum > 0 && pendienteNum < totalNum) {
+            let pagadoNum = totalNum - pendienteNum;
+            desc.innerHTML = opts.nombre_contacto
+                ? `Cobro a <strong>${opts.nombre_contacto}</strong><br><span class="text-[11px] text-gray-500">Total S/ ${totalNum.toFixed(2)} · Pagado S/ ${pagadoNum.toFixed(2)} · <span class="text-amber-600 font-black">Pendiente S/ ${pendienteNum.toFixed(2)}</span></span>`
+                : 'Registrar cobro parcial.';
+        } else if (adicNum > 0) {
             desc.innerHTML = opts.nombre_contacto
                 ? `Cobro a <strong>${opts.nombre_contacto}</strong><br><span class="text-[11px] text-gray-500">Base S/ ${baseNum.toFixed(2)} <span class="text-amber-600 font-black">+ Adicionales S/ ${adicNum.toFixed(2)}</span> = <span class="text-green-700 font-black">Total S/ ${totalNum.toFixed(2)}</span></span>`
                 : 'Registrar cobro.';
-            // Pre-llenar con el total combinado
-            document.getElementById('caja-monto').value = totalNum.toFixed(2);
         } else {
             desc.textContent = opts.nombre_contacto ? `Cobro a ${opts.nombre_contacto}` : 'Registrar cobro.';
         }
@@ -2384,6 +2519,11 @@ function abrirModalCaja(modo, opts = {}) {
     }
     if (opts.bloqueado) {
         document.getElementById('caja-select-contacto').setAttribute('disabled','true');
+    }
+    // Para contactos Varios (CON-00*): pre-llenar comentarios con nombre de familia
+    // (en cobro_directo onCajaContactoChange no se dispara, así que lo hacemos aquí)
+    if (/^CON-00/i.test(opts.id_contacto || '') && (opts.nombre_contacto || '')) {
+        document.getElementById('caja-comentarios').value = opts.nombre_contacto;
     }
     abrirModal('modal-caja');
 }
@@ -2403,10 +2543,12 @@ function onCajaCategoriaChange() {
         sel.innerHTML = '<option value="">— Seleccionar —</option>';
         let contactos = window.contactosData || [];
         if (cat === 'Cobro') {
-            // ── Recopilar contactos que ingresaron HOY desde los manifiestos activos ──
+            // ── Recopilar contactos cobrables de HOY (activos + derivados, excluir PaseIn) ──
             let hoyMovs = []; // { contactoId, nombreContacto }
             (window.operacionesData || []).forEach(op => {
-                (op.manifiesto || []).forEach(m => {
+                // Manifiesto activo: excluir tipos sin cobro (PaseIn, Pase_Recibido, Aliado)
+                [...(op.manifiesto || []), ...(op.manifiesto_pasados || [])].forEach(m => {
+                    if (_TIPOS_SIN_COBRO.includes(m.tipo)) return;
                     let cid    = m.contacto || '';
                     let nombre = m.nombreContacto || m.contacto || '';
                     if (!cid || !nombre) return;
@@ -2424,13 +2566,24 @@ function onCajaCategoriaChange() {
                 let grpHoy = document.createElement('optgroup');
                 grpHoy.label = '💡 Ingresaron Hoy';
                 hoyMovs.forEach(h => {
+                    // Para Varios (CON-00*): solo sumar los movimientos de ESA familia específica
+                    let isVarios = /^CON-00/i.test(h.contactoId);
+                    let totalPend = 0;
+                    (window.operacionesData || []).forEach(op => {
+                        [...(op.manifiesto || []), ...(op.manifiesto_pasados || [])].forEach(m => {
+                            if (m.contacto !== h.contactoId) return;
+                            if (isVarios && m.nombreContacto !== h.nombreContacto) return;
+                            totalPend += _calcPagoEstado(m).pendiente;
+                        });
+                    });
                     let opt = document.createElement('option');
                     opt.value = h.nombreContacto;
                     opt.dataset.id = h.contactoId;
                     opt.dataset.nombreContacto = h.nombreContacto;
-                    // Info extra del contacto si existe
                     let cInfo = sinAliados.find(c => c.id === h.contactoId);
-                    opt.textContent = h.nombreContacto + (cInfo && cInfo.tipo ? ' · ' + cInfo.tipo : '');
+                    let tipoLabel = cInfo && cInfo.tipo ? ' · ' + cInfo.tipo : '';
+                    let pendLabel = totalPend > 0.01 ? ` 💳 Pend. S/${totalPend.toFixed(2)}` : ' ✓ Al día';
+                    opt.textContent = h.nombreContacto + tipoLabel + pendLabel;
                     grpHoy.appendChild(opt);
                 });
                 sel.appendChild(grpHoy);
@@ -2479,19 +2632,46 @@ function onCajaContactoChange() {
     if (contactoId && /^CON-00/i.test(contactoId) && nombreContacto) {
         document.getElementById('caja-comentarios').value = nombreContacto;
     }
+
+    // FIFO: pre-llenar monto con total pendiente del contacto (para Cobro regular en Caja tab)
+    window._pendingMovsForCobro = null;
+    let modo = document.getElementById('caja-modo').value;
+    let cat  = document.getElementById('caja-categoria').value;
+    if (contactoId && modo !== 'cobro_directo' && cat === 'Cobro') {
+        // Para Varios (CON-00*): filtrar solo por la familia seleccionada, no por todas
+        let isVarios = /^CON-00/i.test(contactoId);
+        let pendingMovs = [];
+        (window.operacionesData || []).forEach(op => {
+            [...(op.manifiesto || []), ...(op.manifiesto_pasados || [])].forEach(m => {
+                if (m.contacto !== contactoId) return;
+                if (isVarios && m.nombreContacto !== nombreContacto) return;
+                let ps = _calcPagoEstado(m);
+                if (ps.cobrable && ps.pendiente > 0.005) {
+                    pendingMovs.push({ id_mov: m.id, pendiente: ps.pendiente });
+                }
+            });
+        });
+        if (pendingMovs.length > 0) {
+            let totalPend = pendingMovs.reduce((s, m) => s + m.pendiente, 0);
+            document.getElementById('caja-monto').value = totalPend.toFixed(2);
+            window._pendingMovsForCobro = pendingMovs;
+        }
+    }
 }
 
 function confirmarCaja() {
-    let modo      = document.getElementById('caja-modo').value;
-    let cat       = document.getElementById('caja-categoria').value;
-    let monto     = document.getElementById('caja-monto').value;
-    let metodo    = document.getElementById('caja-metodo').value;
-    let comentario= document.getElementById('caja-comentarios').value.trim();
-    let idOp      = document.getElementById('caja-id-operacion').value;
-    let idContacto= document.getElementById('caja-id-contacto-hidden').value;
+    let modo        = document.getElementById('caja-modo').value;
+    let cat         = document.getElementById('caja-categoria').value;
+    let monto       = document.getElementById('caja-monto').value;
+    let metodo      = document.getElementById('caja-metodo').value;
+    let comentario  = document.getElementById('caja-comentarios').value.trim();
+    let idOp        = document.getElementById('caja-id-operacion').value;
+    let idContacto  = document.getElementById('caja-id-contacto-hidden').value;
+    let idMovimiento= document.getElementById('caja-id-movimiento')?.value || '';
 
     if (!monto || isNaN(monto) || parseFloat(monto) <= 0) { alert('Ingresa un monto válido.'); return; }
     if (cat === 'Varios' && !comentario) { alert('El campo "Comentarios" es obligatorio para movimientos varios.'); return; }
+    if (/^CON-00/i.test(idContacto) && !comentario) { alert('⚠️ Debes ingresar el nombre de la familia en Comentarios para identificar este cobro.'); return; }
 
     // Prefixar comentarios de Varios con [I] o [S] para identificar dirección
     if (cat === 'Varios') {
@@ -2503,37 +2683,107 @@ function confirmarCaja() {
     let galFile = document.getElementById('comprobante-foto-galeria').files[0];
     let fotoFile = camFile || galFile;
 
+    // ── FIFO: distribuir pago entre movimientos pendientes del contacto ────
+    let pendMovs = window._pendingMovsForCobro;
+    if (!idMovimiento && cat === 'Cobro' && pendMovs && pendMovs.length > 0) {
+        window._pendingMovsForCobro = null;
+        if (!window.cajaData) window.cajaData = [];
+        let remaining = parseFloat(monto);
+
+        function enviarFifo(idMov, amount, foto_base64) {
+            let tId = 'temp-tx-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+            window.cajaData.unshift({
+                id: tId, id_operacion: idOp, id_contacto: idContacto,
+                id_movimiento: idMov, categoria: cat,
+                monto: amount, metodo_pago: metodo, comentarios: comentario,
+                foto_url: '', operador: myOpName, timestamp: new Date().toISOString(), _syncing: true
+            });
+            fetchPostBg('registrar_transaccion', {
+                id_operacion: idOp, id_contacto: idContacto, id_movimiento: idMov,
+                categoria: cat, monto: amount, metodo_pago: metodo,
+                comentarios: comentario, foto_base64: foto_base64 || '', operador: myOpName
+            }).then(res => {
+                let idx = (window.cajaData || []).findIndex(c => c.id === tId);
+                if (idx !== -1) {
+                    if (res && res.id_transaccion) window.cajaData[idx] = { ...window.cajaData[idx], id: res.id_transaccion, _syncing: true };
+                    else window.cajaData.splice(idx, 1);
+                }
+                renderCaja(window.cajaData);
+                actualizarModalSiAbierto();
+            }).catch(() => {
+                let idx = (window.cajaData || []).findIndex(c => c.id === tId);
+                if (idx !== -1) window.cajaData.splice(idx, 1);
+                renderCaja(window.cajaData);
+                actualizarModalSiAbierto();
+            });
+        }
+
+        function distribuirFifo(foto_base64) {
+            for (let mov of pendMovs) {
+                if (remaining <= 0.005) break;
+                let amount = Math.min(remaining, mov.pendiente);
+                enviarFifo(mov.id_mov, amount, foto_base64);
+                remaining -= amount;
+            }
+            // Sobrante sin id_movimiento (exceso de pago)
+            if (remaining > 0.005) {
+                enviarFifo('', remaining, foto_base64);
+            }
+        }
+
+        cerrarSubModal('modal-caja');
+        if (fotoFile) {
+            let reader = new FileReader();
+            reader.onload = e => distribuirFifo(e.target.result);
+            reader.readAsDataURL(fotoFile);
+        } else {
+            distribuirFifo('');
+        }
+        renderCaja(window.cajaData);
+        actualizarModalSiAbierto();
+        return;
+    }
+
     // ── Optimistic update ─────────────────────────────────────────────────
     let tempId = 'temp-tx-' + Date.now();
     let tempTx = {
-        id:           tempId,
-        id_operacion: idOp,
-        id_contacto:  idContacto,
-        categoria:    cat,
-        monto:        parseFloat(monto),
-        metodo_pago:  metodo,
-        comentarios:  comentario,
-        foto_url:     '',
-        operador:     myOpName,
-        timestamp:    new Date().toISOString(),
-        _syncing:     true
+        id:            tempId,
+        id_operacion:  idOp,
+        id_contacto:   idContacto,
+        id_movimiento: idMovimiento,
+        categoria:     cat,
+        monto:         parseFloat(monto),
+        metodo_pago:   metodo,
+        comentarios:   comentario,
+        foto_url:      '',
+        operador:      myOpName,
+        timestamp:     new Date().toISOString(),
+        _syncing:      true
     };
     if (!window.cajaData) window.cajaData = [];
     window.cajaData.unshift(tempTx);
     renderCaja(window.cajaData);
+    // Si hay modal de manifiesto abierto, actualizar cards (estado cobro cambió)
+    if (idMovimiento) actualizarModalSiAbierto();
 
     cerrarSubModal('modal-caja');
+    // Si venimos de cobro directo (desde el manifiesto), volver al modal del bote
+    if (modo === 'cobro_directo' && idOp) {
+        document.getElementById('modal-gestion-bote').classList.remove('hidden');
+        document.getElementById('modal-backdrop').classList.remove('hidden');
+    }
 
     function enviar(foto_base64) {
         fetchPostBg('registrar_transaccion', {
-            id_operacion: idOp,
-            id_contacto:  idContacto,
-            categoria:    cat,
-            monto:        parseFloat(monto),
-            metodo_pago:  metodo,
-            comentarios:  comentario,
-            foto_base64:  foto_base64 || '',
-            operador:     myOpName
+            id_operacion:  idOp,
+            id_contacto:   idContacto,
+            id_movimiento: idMovimiento,
+            categoria:     cat,
+            monto:         parseFloat(monto),
+            metodo_pago:   metodo,
+            comentarios:   comentario,
+            foto_base64:   foto_base64 || '',
+            operador:      myOpName
         }).then(res => {
             // Reemplazar temp con ID real si volvió, luego sync completo
             let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
@@ -2545,11 +2795,13 @@ function confirmarCaja() {
                 }
             }
             renderCaja(window.cajaData);
+            if (idMovimiento) actualizarModalSiAbierto();
             setTimeout(fetchDashboardDataBg, 5000);
         }).catch(() => {
             let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
             if (idx !== -1) window.cajaData.splice(idx, 1);
             renderCaja(window.cajaData);
+            if (idMovimiento) actualizarModalSiAbierto();
             mostrarToast('Error al registrar transacción.', 'error');
         });
     }
@@ -2705,8 +2957,10 @@ function confirmarDerivacion() {
     let id_op = document.getElementById('hidden-gestion-op').value;
     if(!aliado) return alert("Selecciona a quién se le emite el Pase.");
 
-    cerrarSubModal('modal-derivar'); 
-    
+    cerrarSubModal('modal-derivar');
+    window.editandoMovId = null;
+    resetFormularioVenta();
+
     let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
     if(opIndex !== -1) {
         let op = window.operacionesData[opIndex];
@@ -2722,6 +2976,8 @@ function confirmarDerivacion() {
                 id: mov.id,
                 tipo: 'Aliado(PaseOut)',
                 aliadoId:     aliado_id,
+                origenId:     mov.contacto || '',
+                origenTipo:   mov.tipo || '',
                 nombreOrigen: mov.nombreContacto || mov.contacto,
                 pax: mov.pax,
                 monto: mov.monto,
@@ -2805,6 +3061,7 @@ function _esIngresoCaja(tx) {
 function abrirDetalleCaja(id_tx) {
     let tx = window.cajaData.find(c => c.id === id_tx);
     if(!tx) return;
+    window._detalleCajaTxId = id_tx;
 
     let isPase    = tx.metodo_pago === 'Pase_Canje' || tx.metodo_pago === 'Pase / Canje';
     let esIngreso = _esIngresoCaja(tx);
@@ -2834,6 +3091,50 @@ function abrirDetalleCaja(id_tx) {
     document.getElementById('detalle-caja-op').innerText     = tx.operador || 'Sistema';
 
     abrirModal('modal-detalle-caja');
+}
+
+function anularTransaccionCaja() {
+    let id_tx = window._detalleCajaTxId;
+    if (!id_tx) return;
+    let tx = (window.cajaData || []).find(c => c.id === id_tx);
+    if (!tx) return;
+
+    let monto = parseFloat(tx.monto).toFixed(2);
+    let cat   = (tx.categoria || '').replace(/_/g, ' ');
+    if (!confirm(`¿Anular este registro?\n\n${cat} · S/ ${monto}\n\nEsta acción no se puede deshacer.`)) return;
+
+    cerrarSubModal('modal-detalle-caja');
+
+    // Quitar de local state
+    let idx = window.cajaData.findIndex(c => c.id === id_tx);
+    if (idx !== -1) window.cajaData.splice(idx, 1);
+    renderCaja(window.cajaData);
+
+    // Invalidar FP del manifiesto y container para que recalculen el estado de cobro
+    // en la próxima apertura del modal (el botón Cobrar debe reaparecer)
+    let listaEl = document.getElementById('gestion-manifiesto-lista');
+    if (listaEl) listaEl._fp = null;
+    let contEl = document.getElementById('operaciones-container');
+    if (contEl) contEl._fp = null;
+
+    actualizarModalSiAbierto();
+    window._detalleCajaTxId = null;
+
+    fetchPostBg('eliminar_transaccion', { id_transaccion: id_tx, operador: myOpName })
+        .then(res => {
+            if (res && res.status === 'error') {
+                mostrarToast('Error al anular: ' + res.message, 'error');
+                // Revertir si falla
+                setTimeout(fetchDashboardDataBg, 1000);
+            } else {
+                mostrarToast('✅ Cobro anulado correctamente.');
+                setTimeout(fetchDashboardDataBg, 3000);
+            }
+        })
+        .catch(() => {
+            mostrarToast('Error de conexión al anular.', 'error');
+            setTimeout(fetchDashboardDataBg, 2000);
+        });
 }
 
 function obtenerHoraSugerida() {

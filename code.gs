@@ -57,6 +57,7 @@ function doPost(e) {
     else if (action === 'derivar_pase')             { return jsonResponse(derivarPase(data.payload)); }
     else if (action === 'anular_pase')              { return jsonResponse(anularPase(data.payload)); }
     else if (action === 'eliminar_movimiento')      { return jsonResponse(eliminarMovimiento(data.payload)); }
+    else if (action === 'eliminar_transaccion')     { return jsonResponse(eliminarTransaccion(data.payload)); }
     else if (action === 'actualizar_adicionales')   { return jsonResponse(actualizarAdicionales(data.payload)); }
     else if (action === 'pase_desde_reserva')       { return jsonResponse(paseDesdeReserva(data.payload)); }
     else if (action === 'editar_operacion')         { return jsonResponse(editarOperacion(data.payload)); }
@@ -182,6 +183,20 @@ function getDashboardData() {
         estado: m.estado_movimiento,
         id_contactoPase: m.Id_contactoPase || '',
         adicionales: m.adicionales || ''
+      })),
+      manifiesto_pasados: movsBote.filter(m => {
+        let e = (m.estado_movimiento || '').toLowerCase();
+        return e.includes('pasado') && !e.includes('cancelado');
+      }).map(m => ({
+        id: m.id_mov,
+        tipo: m.tipo_movimiento,
+        contacto: m.id_contacto,
+        nombreContacto: m.nombreContacto || m.id_contacto,
+        pax: m.cant_pax,
+        monto: m.monto_total_cobrar,
+        estado: m.estado_movimiento,
+        id_contactoPase: m.Id_contactoPase || '',
+        adicionales: m.adicionales || ''
       }))
     };
   });
@@ -225,23 +240,31 @@ function getDashboardData() {
   const movimientosCaja = sheetToJSON('Caja_Operador').map(c => {
     let v = Object.values(c);
     return {
-      id:           v[0] || '',
-      id_operacion: v[1] || '',
-      id_contacto:  v[2] || '',
-      categoria:    v[3] || '',
-      monto:        parseFloat(v[4]) || 0,
-      metodo_pago:  v[5] || '',
-      comentarios:  v[6] || '',
-      foto_url:     v[7] || '',
-      operador:     v[8] || '',
-      timestamp:    formatTimestamp(v[9])
+      id:             v[0] || '',
+      id_operacion:   v[1] || '',
+      id_contacto:    v[2] || '',
+      categoria:      v[3] || '',
+      monto:          parseFloat(v[4]) || 0,
+      metodo_pago:    v[5] || '',
+      comentarios:    v[6] || '',
+      foto_url:       v[7] || '',
+      operador:       v[8] || '',
+      timestamp:      formatTimestamp(v[9]),
+      id_movimiento:  v[10] || ''
     };
   });
 
-  // Pases: todos los movimientos con aliado destino (Id_contactoPase con valor).
-  // El frontend filtra por esFechaHoy() para la vista "Hoy" y muestra todo en "Histórico".
+  // Pases del DÍA: solo movimientos derivados HOY (timestamp_registro = hoy en timezone local)
+  const _hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   const pasesExternos = todosMovimientos
-    .filter(m => (m.Id_contactoPase || '').toString().trim() !== '')
+    .filter(m => {
+      if ((m.Id_contactoPase || '').toString().trim() === '') return false;
+      let ts = m.timestamp_registro;
+      if (!ts) return false;
+      let d = ts instanceof Date ? ts : new Date(ts.toString());
+      if (isNaN(d.getTime())) return false;
+      return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd') === _hoy;
+    })
     .map(m => ({
       id:            m.id_mov,
       tipo:          m.tipo_movimiento,
@@ -494,13 +517,28 @@ function registrarTransaccion(payload) {
       payload.comentarios   || '',
       fotoUrl,
       payload.operador      || '',
-      new Date()
+      new Date(),
+      payload.id_movimiento || ''
     ]);
     SpreadsheetApp.flush();
     return { message: '✅ Transacción registrada.', id_transaccion: newId, foto_url: fotoUrl };
   } catch(e) {
     return { status: 'error', message: e.toString() };
   }
+}
+
+function eliminarTransaccion(payload) {
+  const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('Caja_Operador');
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === payload.id_transaccion) {
+      sheet.deleteRow(i + 1);
+      SpreadsheetApp.flush();
+      return { message: '🗑️ Transacción eliminada.' };
+    }
+  }
+  return { status: 'error', message: 'Transacción no encontrada.' };
 }
 
 function derivarPase(payload) {

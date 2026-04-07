@@ -1,5 +1,5 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v1';
+const CACHE_NAME = 'ops-v6';
 const SHELL = [
     './index.html',
     './app.js',
@@ -29,6 +29,12 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
     let url = e.request.url;
 
+    // En desarrollo local (localhost / 127.0.0.1) → siempre red, nunca cache
+    if (url.includes('localhost') || url.includes('127.0.0.1')) {
+        e.respondWith(fetch(e.request));
+        return;
+    }
+
     // Llamadas a GAS → siempre red (nunca cachear respuestas del servidor)
     if (url.includes('script.google.com') || url.includes('googleapis.com')) {
         e.respondWith(fetch(e.request).catch(() =>
@@ -53,20 +59,18 @@ self.addEventListener('fetch', e => {
         return;
     }
 
-    // Shell local (index.html, app.js) → cache primero, red como respaldo
+    // Shell local (index.html, app.js) → red primero, cache como respaldo (siempre jala última versión)
     e.respondWith(
-        caches.match(e.request).then(cached => {
-            if (cached) return cached;
-            return fetch(e.request).then(res => {
+        fetch(e.request)
+            .then(res => {
                 if (res.ok) {
                     let clone = res.clone();
                     caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
                 }
                 return res;
-            });
-        }).catch(() =>
-            // Offline y sin cache: mostrar index como fallback
-            caches.match('./index.html')
-        )
+            })
+            .catch(() =>
+                caches.match(e.request).then(cached => cached || caches.match('./index.html'))
+            )
     );
 });
