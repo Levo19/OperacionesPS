@@ -1192,11 +1192,18 @@ function renderCaja(caja) {
     // Categorías que son salidas: Pagos, Varios-salida, legacy
     let CATS_SALIDA  = ['Pagos', 'Pago_Comisionado', 'Pago Comisionado', 'Retiro_Jefatura', 'Retiro a Jefatura'];
 
+    const _METODO_BADGE = {
+        'Efectivo':      ['💵', 'bg-green-100 text-green-700'],
+        'Transferencia': ['🏦', 'bg-blue-100 text-blue-700'],
+        'Yape':          ['📱', 'bg-violet-100 text-violet-700'],
+        'Plin':          ['📲', 'bg-teal-100 text-teal-700'],
+        'Tarjeta':       ['💳', 'bg-indigo-100 text-indigo-700'],
+        'Pase_Canje':    ['🤝', 'bg-purple-100 text-purple-700'],
+        'Pase / Canje':  ['🤝', 'bg-purple-100 text-purple-700'],
+    };
     let historialHtml = txHoy.map(c => {
         let monto = parseFloat(c.monto) || 0;
         let isPase = c.metodo_pago === 'Pase_Canje' || c.metodo_pago === 'Pase / Canje';
-        // Varios: detectar si es ingreso o salida por el campo modo guardado en comentarios (prefijo "[I]"/["S]")
-        // Si no hay prefijo, asumir ingreso para Varios (retrocompatibilidad)
         let esIngreso, esSalida;
         if (c.categoria === 'Varios') {
             esSalida  = (c.comentarios || '').startsWith('[S]');
@@ -1211,14 +1218,40 @@ function renderCaja(caja) {
         let signo     = isPase ? '🤝' : (esIngreso ? '+' : '-');
         let dotColor  = isPase ? 'text-purple-400' : (esIngreso ? 'text-green-400' : 'text-red-400');
         let hora      = c.timestamp ? new Date(c.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '—';
-        let catLabel  = c.categoria === 'Varios' ? ('Varios · ' + (c.comentarios||'').replace(/^\[.\] ?/,'').substring(0,30)) : c.categoria.replace(/_/g,' ');
-        let syncDot   = c._syncing ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1 align-middle"></span>` : '';
-        let rowBg     = c._syncing ? 'bg-blue-50' : '';
+
+        // ── Nombre del contacto ──────────────────────────────────────────────
+        let contactNombre = '';
+        if (c.id_contacto) {
+            if (/^CON-00/i.test(c.id_contacto)) {
+                // Varios: el nombre de la familia está en comentarios (sin prefijo [I]/[S])
+                contactNombre = (c.comentarios || '').replace(/^\[.\] ?/, '').trim();
+            } else {
+                let cInfo = (window.contactosData || []).find(ct => ct.id === c.id_contacto);
+                contactNombre = cInfo ? cInfo.nombre : '';
+            }
+        }
+        let catLabel = c.categoria === 'Varios'
+            ? (esIngreso ? 'Ingreso varios' : 'Salida varios')
+            : c.categoria.replace(/_/g, ' ');
+        // Nombre principal: contacto si existe, si no la categoría
+        let nombrePrincipal = contactNombre || catLabel;
+        // Subtítulo: categoría si ya usamos el nombre arriba
+        let subLabel = contactNombre ? catLabel : '';
+
+        // ── Badge método de pago ─────────────────────────────────────────────
+        let metodo = c.metodo_pago || 'Efectivo';
+        let [metIco, metCls] = _METODO_BADGE[metodo] || ['💰', 'bg-gray-100 text-gray-600'];
+        let metodoBadge = `<span class="inline-flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded ${metCls} ml-1">${metIco} ${metodo.replace('_', ' ')}</span>`;
+
+        let syncDot = c._syncing ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1 align-middle"></span>` : '';
+        let rowBg   = c._syncing ? 'bg-blue-50' : '';
         return `
         <div class="flex justify-between items-center p-3.5 ${rowBg} cursor-pointer hover:bg-gray-50 transition active:scale-95" data-caja-id="${c.id}" onclick="${c._syncing ? '' : `abrirDetalleCaja('${c.id}')`}">
             <div class="flex-1 min-w-0 pr-2">
-                <span class="text-xs font-extrabold text-gray-800 block truncate"><i class="fas fa-circle text-[7px] ${dotColor} mr-1.5"></i>${catLabel} ${syncDot}</span>
-                <span class="text-[10px] text-gray-400 font-bold">${hora} · ${c.metodo_pago||'Efectivo'} · ${c.operador||''}</span>
+                <span class="text-xs font-extrabold text-gray-800 block truncate">
+                    <i class="fas fa-circle text-[7px] ${dotColor} mr-1.5"></i>${nombrePrincipal} ${metodoBadge} ${syncDot}
+                </span>
+                <span class="text-[10px] text-gray-400 font-bold">${hora}${subLabel ? ' · ' + subLabel : ''} · ${c.operador||''}</span>
             </div>
             <span class="font-black text-sm ${colorText} shrink-0">${signo} S/${monto.toFixed(2)}</span>
         </div>`;
@@ -1770,7 +1803,10 @@ function _itemManifiestoFP(m) {
 
 function _itemManifiestoHTML(m) {
     let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
-    let isSelected = !isSyncing && window.editandoMovId === m.id;
+    let opEstado   = window._gestionOpEstado || 'Abierta';
+    let soloLectura = opEstado === 'En_Viaje' || opEstado === 'Cerrada';
+    // En modo solo-lectura las cards no son seleccionables (no hay botones de edición)
+    let isSelected = !isSyncing && !soloLectura && window.editandoMovId === m.id;
     let fp         = _itemManifiestoFP(m);
 
     let pagoInfo   = _calcPagoEstado(m);
@@ -1797,8 +1833,6 @@ function _itemManifiestoHTML(m) {
         : '';
 
     let adicionalesSum = totalACobrar - (parseFloat(m.monto) || 0);
-    let opEstado       = window._gestionOpEstado || 'Abierta';
-    let soloLectura    = opEstado === 'En_Viaje' || opEstado === 'Cerrada';
 
     // ── Botón Cobrar (siempre visible para ítems cobrables no completamente pagados) ──
     let cobrarBtn = '';
@@ -1842,7 +1876,8 @@ function _itemManifiestoHTML(m) {
     let nombreMostrar = m.nombreContacto || m.contacto || '';
     let tipoBadge     = _tipoBadgeHTML(m.tipo);
 
-    return `<div class="flex flex-col ${bgClass} border ${borderClass} p-3 rounded-xl ${isSyncing ? 'cursor-default' : 'cursor-pointer'} transition shadow-sm mb-2" data-mov-id="${m.id}" data-item-fp="${fp}" ${isSyncing ? '' : `onclick="cargarParaEditar('${m.id}')"`}>
+    let clickable = !isSyncing && !soloLectura;
+    return `<div class="flex flex-col ${bgClass} border ${borderClass} p-3 rounded-xl ${clickable ? 'cursor-pointer' : 'cursor-default'} transition shadow-sm mb-2" data-mov-id="${m.id}" data-item-fp="${fp}" ${clickable ? `onclick="cargarParaEditar('${m.id}')"` : ''}>
         <div class="flex justify-between items-center">
             <div class="flex-1 min-w-0 pr-2">
                 <span class="text-xs font-bold ${isSelected ? 'text-orange-800' : 'text-gray-800'} uppercase block truncate">${nombreMostrar} ${iconoSinc}</span>
@@ -1875,6 +1910,7 @@ function abrirModalGestionBote(id_op) {
     document.getElementById('hidden-gestion-op').value = op.id;
     window._gestionOpEstado = op.estado; // usado por _itemManifiestoHTML para modo solo-cobro
     let soloLectura = op.estado === 'En_Viaje' || op.estado === 'Cerrada';
+    if (soloLectura) window.editandoMovId = null;
     document.getElementById('box-formulario-venta').classList.toggle('hidden', soloLectura);
 
     resetFormularioVenta();
