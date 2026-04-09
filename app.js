@@ -955,12 +955,31 @@ function _generarPasesDiaHTML(pases) {
                     onclick="abrirModalCaja('pago_agencia', { id_contacto: '${agenciaCompradaId}', nombre_contacto: '${agNombre.replace(/'/g,"\\'")}', monto: ${montoComprado}, id_mov: '${paseId}', pax: ${parseInt(p.pax)||0} }); event.stopPropagation();">
                     <i class='fas fa-store text-[8px]'></i> Pagar a ${agNombre}
                 </button>`;
+            // Cobrar al origen (parte A) — aunque el asiento sea comprado, aún se cobra al cliente original
+            let cobrarOrigenBtn = '';
+            let origenIdC  = p.origenId || '';
+            let origenTipoC = p.tipo    || '';
+            if (origenIdC && !_TIPOS_SIN_COBRO.includes(origenTipoC)) {
+                let pagoStC = _calcPagoEstado({ id: paseId, tipo: origenTipoC, monto: p.monto || 0 });
+                if (pagoStC && pagoStC.estado !== 'pagado_completo' && pagoStC.estado !== 'sin_cobro') {
+                    let montoNum = parseFloat(p.monto) || 0;
+                    let pendNum  = pagoStC.pendiente;
+                    let etiqueta = pagoStC.estado === 'pagado_parcial' ? `Pend. S/${pendNum.toFixed(2)}` : `S/${montoNum.toFixed(2)}`;
+                    let nombreEsc = origen.replace(/'/g,"\\'");
+                    cobrarOrigenBtn = `<button class="cobrar-btn-appear mt-1 w-full bg-green-500 text-white text-[9px] font-bold py-1 rounded-lg flex items-center justify-center gap-1 hover:bg-green-600 active:scale-95 transition"
+                        onclick="abrirModalCaja('cobro_directo', { id_contacto: '${origenIdC}', nombre_contacto: '${nombreEsc}', monto: ${montoNum}, id_mov: '${paseId}', pendiente: ${pendNum.toFixed(2)}, bloqueado: true }); event.stopPropagation();">
+                        <span class='w-1 h-1 rounded-full bg-white animate-pulse'></span>
+                        <i class='fas fa-money-bill-wave text-[8px]'></i> Cobrar ${etiqueta}
+                    </button>`;
+                }
+            }
             return `
             <tr class="border-t border-gray-100 hover:bg-orange-50 transition">
                 <td class="py-2 px-2">
                     <span class="text-[9px] font-bold text-orange-400 uppercase tracking-wide block">Compra:</span>
                     <span class="text-[11px] font-black text-orange-800 block uppercase leading-tight">${agNombre}</span>
                     ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
+                    ${cobrarOrigenBtn}
                     ${estadoChip}
                     ${pagarBtn}
                 </td>
@@ -971,9 +990,9 @@ function _generarPasesDiaHTML(pases) {
         }
 
         // ── Pase normal a aliado ──────────────────────────────────────────
-        // Cobrar button: only if origin is NOT an aliado (i.e., Libre / Agencia / Comisionado)
-        let origenTipo = p.origenTipo || '';
-        let origenId   = p.origenId   || '';
+        // Cobrar button: only if origin generates cobro (Libre / Agencia / Comisionado, no Aliado)
+        let origenTipo = p.tipo    || '';   // p.tipo es el tipo del movimiento = tipo del origen
+        let origenId   = p.origenId || '';
         let paseEsCobrable = !_TIPOS_SIN_COBRO.includes(origenTipo) && !!(origenId);
         let pagoStPase = paseEsCobrable ? _calcPagoEstado({ id: paseId, tipo: origenTipo, monto: p.monto || 0 }) : null;
         let cobrarPaseBtn = '';
@@ -2551,10 +2570,11 @@ function abrirModalCaja(modo, opts = {}) {
         catSel.removeAttribute('disabled');
     } else if (modo === 'salida') {
         titulo.innerHTML = '<i class="fas fa-minus-circle text-red-500 mr-2"></i> Registrar Salida';
-        desc.textContent = 'Pagos a comisionados u otros egresos.';
+        desc.textContent = 'Pagos a comisionados, agencias u otros egresos.';
         btnOk.className  = btnOk.className.replace(/bg-\w+-\d+/g,'') + ' bg-red-500 hover:bg-red-600';
         catSel.innerHTML = `
             <option value="Pagos">🤝 Pagos (Comisionados)</option>
+            <option value="Pago Agencia">🏢 Pago Agencia</option>
             <option value="Varios">🔀 Varios</option>`;
         catSel.removeAttribute('disabled');
     } else if (modo === 'pago_agencia') {
@@ -2632,12 +2652,57 @@ function onCajaCategoriaChange() {
     let comentReq    = document.getElementById('caja-comentarios-req');
     let sel          = document.getElementById('caja-select-contacto');
 
-    // Mostrar selector de contacto en Cobro o Pagos
-    if (cat === 'Cobro' || cat === 'Pagos') {
+    // Mostrar selector de contacto en Cobro, Pagos o Pago Agencia
+    if (cat === 'Cobro' || cat === 'Pagos' || cat === 'Pago Agencia') {
         contactoRow.classList.remove('hidden');
         sel.innerHTML = '<option value="">— Seleccionar —</option>';
         let contactos = window.contactosData || [];
-        if (cat === 'Cobro') {
+        if (cat === 'Pago Agencia') {
+            // Agencias con compras pendientes hoy (primero), luego resto
+            let deudas = [];
+            (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp)).forEach(p => {
+                let agId = (p.id_agencia_comprada || '').trim();
+                if (!agId) return;
+                let pagado = (window.cajaData || []).some(c =>
+                    (c.id_movimiento || '') === p.id && c.categoria === 'Pago Agencia'
+                );
+                if (pagado) return;
+                let monto = parseFloat(p.monto_comprado) || 0;
+                if (!(monto > 0)) return;
+                let agInfo = contactos.find(c => c.id === agId);
+                let agNombre = agInfo ? agInfo.nombre : agId;
+                let ex = deudas.find(d => d.agenciaId === agId);
+                if (ex) { ex.pendiente += monto; ex.paseIds.push(p.id); }
+                else deudas.push({ agenciaId: agId, agenciaNombre: agNombre, pendiente: monto, paseIds: [p.id] });
+            });
+            if (deudas.length > 0) {
+                let grp = document.createElement('optgroup');
+                grp.label = '⚠️ Deudas pendientes hoy';
+                deudas.forEach(d => {
+                    let opt = document.createElement('option');
+                    opt.value = d.agenciaNombre;
+                    opt.dataset.id = d.agenciaId;
+                    opt.dataset.paseIds = d.paseIds.join(',');
+                    opt.textContent = `${d.agenciaNombre} — Debe S/${d.pendiente.toFixed(2)}`;
+                    grp.appendChild(opt);
+                });
+                sel.appendChild(grp);
+            }
+            let deudaIds = new Set(deudas.map(d => d.agenciaId));
+            let restoAg = contactos.filter(c => normTipo(c.tipo).includes('agencia') && !deudaIds.has(c.id));
+            if (restoAg.length > 0) {
+                let grp2 = document.createElement('optgroup');
+                grp2.label = '📋 Otras Agencias';
+                restoAg.forEach(c => {
+                    let opt = document.createElement('option');
+                    opt.value = c.nombre; opt.dataset.id = c.id;
+                    opt.textContent = c.nombre;
+                    grp2.appendChild(opt);
+                });
+                sel.appendChild(grp2);
+            }
+            sel.removeAttribute('disabled');
+        } else if (cat === 'Cobro') {
             // ── Recopilar contactos cobrables de HOY (activos + derivados, excluir PaseIn) ──
             let hoyMovs = []; // { contactoId, nombreContacto }
             (window.operacionesData || []).forEach(op => {
@@ -2728,10 +2793,22 @@ function onCajaContactoChange() {
         document.getElementById('caja-comentarios').value = nombreContacto;
     }
 
-    // FIFO: pre-llenar monto con total pendiente del contacto (para Cobro regular en Caja tab)
-    window._pendingMovsForCobro = null;
+    // Para Pago Agencia: si hay exactamente un pase pendiente para esa agencia, auto-linkar id_movimiento
     let modo = document.getElementById('caja-modo').value;
     let cat  = document.getElementById('caja-categoria').value;
+    let idMovEl = document.getElementById('caja-id-movimiento');
+    if (cat === 'Pago Agencia' && idMovEl) {
+        let paseIds = (opt?.dataset?.paseIds || '').split(',').filter(Boolean);
+        idMovEl.value = paseIds.length === 1 ? paseIds[0] : '';
+        // Pre-llenar monto con la deuda de ese pase concreto si es uno solo
+        if (paseIds.length === 1) {
+            let pase = (window.pasesExternosData || []).find(p => p.id === paseIds[0]);
+            if (pase) document.getElementById('caja-monto').value = parseFloat(pase.monto_comprado || 0).toFixed(2);
+        }
+    }
+
+    // FIFO: pre-llenar monto con total pendiente del contacto (para Cobro regular en Caja tab)
+    window._pendingMovsForCobro = null;
     if (contactoId && modo !== 'cobro_directo' && cat === 'Cobro') {
         // Para Varios (CON-00*): filtrar solo por la familia seleccionada, no por todas
         let isVarios = /^CON-00/i.test(contactoId);
