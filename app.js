@@ -937,6 +937,40 @@ function _generarPasesDiaHTML(pases) {
         let paseId       = p.id || '';
         let paseNombreEsc = origen.replace(/'/g,"\\'");
 
+        // ── Pase convertido a compra de agencia ──────────────────────────
+        let agenciaCompradaId = (p.id_agencia_comprada || '').trim();
+        if (agenciaCompradaId) {
+            let agInfo        = contactos.find(c => c.id === agenciaCompradaId);
+            let agNombre      = agInfo ? agInfo.nombre : agenciaCompradaId;
+            let montoComprado = parseFloat(p.monto_comprado) || 0;
+            // Detectar si ya fue pagado (hay entrada en cajaData con id_movimiento = paseId y categoria Pago Agencia)
+            let pagadoTx = (window.cajaData || []).find(c =>
+                (c.id_movimiento || '') === paseId && c.categoria === 'Pago Agencia'
+            );
+            let estadoChip = pagadoTx
+                ? `<span class="inline-flex items-center gap-1 text-[8px] font-black text-green-700 bg-green-100 px-2 py-0.5 rounded-full mt-1"><i class="fas fa-check-circle text-[7px]"></i>Pagado S/${montoComprado.toFixed(2)}</span>`
+                : `<span class="inline-flex items-center gap-1 text-[8px] font-black text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full mt-1"><i class="fas fa-clock text-[7px]"></i>Pendiente S/${montoComprado.toFixed(2)}</span>`;
+            let pagarBtn = pagadoTx ? '' :
+                `<button class="mt-1 w-full bg-orange-500 text-white text-[9px] font-bold py-1 rounded-lg flex items-center justify-center gap-1 hover:bg-orange-600 active:scale-95 transition"
+                    onclick="abrirModalCaja('pago_agencia', { id_contacto: '${agenciaCompradaId}', nombre_contacto: '${agNombre.replace(/'/g,"\\'")}', monto: ${montoComprado}, id_mov: '${paseId}', pax: ${parseInt(p.pax)||0} }); event.stopPropagation();">
+                    <i class='fas fa-store text-[8px]'></i> Pagar a ${agNombre}
+                </button>`;
+            return `
+            <tr class="border-t border-gray-100 hover:bg-orange-50 transition">
+                <td class="py-2 px-2">
+                    <span class="text-[9px] font-bold text-orange-400 uppercase tracking-wide block">Compra:</span>
+                    <span class="text-[11px] font-black text-orange-800 block uppercase leading-tight">${agNombre}</span>
+                    ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
+                    ${estadoChip}
+                    ${pagarBtn}
+                </td>
+                <td class="py-2 px-2 text-center text-sm font-black text-blue-600">${p.pax}</td>
+                <td class="py-2 px-2 text-[9px] text-gray-400 text-right">${ts}</td>
+                <td class="py-1.5 px-1.5"></td>
+            </tr>`;
+        }
+
+        // ── Pase normal a aliado ──────────────────────────────────────────
         // Cobrar button: only if origin is NOT an aliado (i.e., Libre / Agencia / Comisionado)
         let origenTipo = p.origenTipo || '';
         let origenId   = p.origenId   || '';
@@ -956,6 +990,11 @@ function _generarPasesDiaHTML(pases) {
                 <i class='fas fa-money-bill-wave text-[8px]'></i> Cobrar ${etiqueta}
             </button>`;
         }
+        // Botón Comprar — convierte este pase a compra de agencia
+        let comprarBtn = `<button class="mt-1 w-full bg-orange-100 text-orange-700 border border-orange-200 text-[9px] font-bold py-1 rounded-lg flex items-center justify-center gap-1 hover:bg-orange-200 active:scale-95 transition"
+            onclick="abrirModalComprarPase('${paseId}', ${parseInt(p.pax)||0}, '${paseNombreEsc}'); event.stopPropagation();">
+            <i class='fas fa-store text-[8px]'></i> Comprar
+        </button>`;
 
         return `
         <tr class="border-t border-gray-100 hover:bg-purple-50 transition">
@@ -964,6 +1003,7 @@ function _generarPasesDiaHTML(pases) {
                 <span class="text-[11px] font-black text-purple-800 block uppercase leading-tight">${aliadoNombre}</span>
                 ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
                 ${cobrarPaseBtn}
+                ${comprarBtn}
             </td>
             <td class="py-2 px-2 text-center text-sm font-black text-blue-600 cursor-pointer" onclick="verDetallePase(${idx})">${p.pax}</td>
             <td class="py-2 px-2 text-[9px] text-gray-400 text-right cursor-pointer" onclick="verDetallePase(${idx})">${ts}</td>
@@ -1190,7 +1230,7 @@ function renderCaja(caja) {
     // Categorías que son ingresos: Cobro, Varios-ingreso (modo ingreso), legacy
     let CATS_INGRESO = ['Cobro', 'Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'];
     // Categorías que son salidas: Pagos, Varios-salida, legacy
-    let CATS_SALIDA  = ['Pagos', 'Pago_Comisionado', 'Pago Comisionado', 'Retiro_Jefatura', 'Retiro a Jefatura'];
+    let CATS_SALIDA  = ['Pagos', 'Pago_Comisionado', 'Pago Comisionado', 'Retiro_Jefatura', 'Retiro a Jefatura', 'Pago Agencia'];
 
     const _METODO_BADGE = {
         'Efectivo':      ['💵', 'bg-green-100 text-green-700'],
@@ -2513,6 +2553,18 @@ function abrirModalCaja(modo, opts = {}) {
             <option value="Pagos">🤝 Pagos (Comisionados)</option>
             <option value="Varios">🔀 Varios</option>`;
         catSel.removeAttribute('disabled');
+    } else if (modo === 'pago_agencia') {
+        titulo.innerHTML = '<i class="fas fa-store text-orange-500 mr-2"></i> Pagar a Agencia';
+        desc.innerHTML   = opts.nombre_contacto
+            ? `Pago a <strong>${opts.nombre_contacto}</strong> por ${opts.pax || '?'} PAX.`
+            : 'Registrar pago a agencia.';
+        btnOk.className  = btnOk.className.replace(/bg-\w+-\d+/g,'') + ' bg-orange-500 hover:bg-orange-600';
+        catSel.innerHTML = `<option value="Pago Agencia">🏢 Pago Agencia</option>`;
+        catSel.setAttribute('disabled', 'true');
+        document.getElementById('caja-monto').value = parseFloat(opts.monto || 0).toFixed(2);
+        // Contacto bloqueado — ocultar el selector y forzar el id
+        let contactoRow = document.getElementById('caja-contacto-row');
+        if (contactoRow) contactoRow.classList.add('hidden');
     } else {
         // cobro_directo: desde botón "Cobrar" en el manifiesto
         titulo.innerHTML = '<i class="fas fa-money-bill-wave text-green-500 mr-2"></i> Cobrar';
@@ -3087,9 +3139,73 @@ function confirmarAnularPase() {
     });
 }
 
+// ============================
+// COMPRAR PASE (pase → compra agencia)
+// ============================
+function abrirModalComprarPase(id_mov, cantPax, nombreOrigen) {
+    document.getElementById('hidden-comprar-idmov').value = id_mov;
+    document.getElementById('hidden-comprar-pax').value   = cantPax;
+    document.getElementById('comprar-pase-info').textContent = `${cantPax} PAX · ${nombreOrigen}`;
+    document.getElementById('comprar-monto').value = '';
+    document.getElementById('comprar-monto-referencia').classList.add('hidden');
+
+    // Poblar selector solo con agencias
+    let sel = document.getElementById('select-comprar-agencia');
+    let agencias = (window.contactosData || []).filter(c => (c.tipo || '').toLowerCase().includes('agencia'));
+    sel.innerHTML = '<option value="">— Seleccionar agencia —</option>' +
+        agencias.map(a => `<option value="${a.id}" data-precio="${a.precio||0}">${a.nombre}</option>`).join('');
+
+    abrirModal('modal-comprar-pase');
+}
+
+function onComprarAgenciaChange() {
+    let sel    = document.getElementById('select-comprar-agencia');
+    let opt    = sel.options[sel.selectedIndex];
+    let precio = parseFloat(opt?.dataset?.precio || 0);
+    let pax    = parseInt(document.getElementById('hidden-comprar-pax').value) || 0;
+    let ref    = document.getElementById('comprar-monto-referencia');
+    if (precio > 0 && pax > 0) {
+        let calc = precio * pax;
+        document.getElementById('comprar-monto').value = calc.toFixed(2);
+        ref.textContent = `Precio pax defecto S/${precio.toFixed(2)} × ${pax} PAX = S/${calc.toFixed(2)}`;
+        ref.classList.remove('hidden');
+    } else {
+        ref.classList.add('hidden');
+    }
+}
+
+function confirmarComprarPase() {
+    let id_mov = document.getElementById('hidden-comprar-idmov').value;
+    let sel    = document.getElementById('select-comprar-agencia');
+    let id_agencia   = sel.value;
+    let nombre_agencia = sel.options[sel.selectedIndex]?.text || id_agencia;
+    let monto  = parseFloat(document.getElementById('comprar-monto').value);
+
+    if (!id_agencia)      return alert('Selecciona una agencia.');
+    if (!(monto > 0))     return alert('Ingresa un monto válido.');
+
+    cerrarSubModal('modal-comprar-pase');
+
+    // Optimistic: actualizar pasesExternosData
+    let paseIdx = (window.pasesExternosData || []).findIndex(p => p.id === id_mov);
+    if (paseIdx !== -1) {
+        window.pasesExternosData[paseIdx].aliadoId            = '';
+        window.pasesExternosData[paseIdx].id_agencia_comprada = id_agencia;
+        window.pasesExternosData[paseIdx].monto_comprado      = monto;
+    }
+    renderCaja(window.cajaData);
+
+    fetchPostBg('convertir_pase_a_compra', { id_mov, id_agencia, nombre_agencia, monto, operador: myOpName }).then(res => {
+        if (res.status === 'error') { alert(res.message); return; }
+        mostrarToast('✅ Pase convertido a compra con ' + nombre_agencia + '.', 'success');
+        clearTimeout(window._syncTimer);
+        window._syncTimer = setTimeout(syncManifestBg, 2000);
+    });
+}
+
 function _esIngresoCaja(tx) {
     let CATS_INGRESO = ['Cobro', 'Caja Chica', 'Ingreso por Venta', 'Ingreso_Venta', 'Caja_Chica'];
-    let CATS_SALIDA  = ['Pagos', 'Pago_Comisionado', 'Pago Comisionado', 'Retiro_Jefatura', 'Retiro a Jefatura'];
+    let CATS_SALIDA  = ['Pagos', 'Pago_Comisionado', 'Pago Comisionado', 'Retiro_Jefatura', 'Retiro a Jefatura', 'Pago Agencia'];
     if (tx.categoria === 'Varios') return !(tx.comentarios||'').startsWith('[S]');
     return CATS_INGRESO.includes(tx.categoria);
 }

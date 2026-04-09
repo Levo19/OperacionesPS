@@ -56,6 +56,7 @@ function doPost(e) {
     else if (action === 'registrar_caja_v2')        { return jsonResponse(registrarCajaV2(data.payload)); }
     else if (action === 'derivar_pase')             { return jsonResponse(derivarPase(data.payload)); }
     else if (action === 'anular_pase')              { return jsonResponse(anularPase(data.payload)); }
+    else if (action === 'convertir_pase_a_compra') { return jsonResponse(convertirPaseACompra(data.payload)); }
     else if (action === 'eliminar_movimiento')      { return jsonResponse(eliminarMovimiento(data.payload)); }
     else if (action === 'eliminar_transaccion')     { return jsonResponse(eliminarTransaccion(data.payload)); }
     else if (action === 'actualizar_adicionales')   { return jsonResponse(actualizarAdicionales(data.payload)); }
@@ -258,7 +259,9 @@ function getDashboardData() {
   const _hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   const pasesExternos = todosMovimientos
     .filter(m => {
-      if ((m.Id_contactoPase || '').toString().trim() === '') return false;
+      let hasAliadoPase = (m.Id_contactoPase      || '').toString().trim() !== '';
+      let hasCompra     = (m.id_agencia_comprada  || '').toString().trim() !== '';
+      if (!hasAliadoPase && !hasCompra) return false;
       let ts = m.timestamp_registro;
       if (!ts) return false;
       let d = ts instanceof Date ? ts : new Date(ts.toString());
@@ -266,15 +269,17 @@ function getDashboardData() {
       return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd') === _hoy;
     })
     .map(m => ({
-      id:            m.id_mov,
-      tipo:          m.tipo_movimiento,
-      aliadoId:      (m.Id_contactoPase || '').toString().trim(),   // ID del aliado destino (col 13)
-      origenId:      (m.id_contacto     || '').toString().trim(),   // contacto original (col 4)
-      nombreOrigen:  (m.nombreContacto  || m.id_contacto || '').toString(), // nombre del pasajero/agencia
-      pax:           m.cant_pax,
-      monto:         m.monto_total_cobrar,
-      estado:        m.estado_movimiento,
-      timestamp:     formatTimestamp(m.timestamp_registro)
+      id:                  m.id_mov,
+      tipo:                m.tipo_movimiento,
+      aliadoId:            (m.Id_contactoPase     || '').toString().trim(),
+      origenId:            (m.id_contacto         || '').toString().trim(),
+      nombreOrigen:        (m.nombreContacto      || m.id_contacto || '').toString(),
+      pax:                 m.cant_pax,
+      monto:               m.monto_total_cobrar,
+      estado:              m.estado_movimiento,
+      timestamp:           formatTimestamp(m.timestamp_registro),
+      id_agencia_comprada: (m.id_agencia_comprada || '').toString().trim(),
+      monto_comprado:      parseFloat(m.monto_comprado) || 0
     }));
 
   return {
@@ -808,6 +813,28 @@ function guardarCierre(payload) {
   } catch(e) {
     return { status: 'error', message: e.toString() };
   }
+}
+
+// Convertir un pase (aliado) a una compra (agencia).
+// Limpia Id_contactoPase y escribe id_agencia_comprada + monto_comprado (cols 13-15).
+// payload: { id_mov, id_agencia, nombre_agencia, monto }
+function convertirPaseACompra(payload) {
+  if (!payload.id_mov || !payload.id_agencia || !(parseFloat(payload.monto) > 0)) {
+    return { status: 'error', message: 'Faltan id_mov, id_agencia o monto.' };
+  }
+  const ss       = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheetMov = ss.getSheetByName('Movimientos');
+  const movData  = sheetMov.getDataRange().getValues();
+  for (let i = 1; i < movData.length; i++) {
+    if (movData[i][0] === payload.id_mov) {
+      sheetMov.getRange(i+1, 13).setValue('');                           // col 13 Id_contactoPase → borrar aliado
+      sheetMov.getRange(i+1, 14).setValue(payload.id_agencia);          // col 14 id_agencia_comprada
+      sheetMov.getRange(i+1, 15).setValue(parseFloat(payload.monto));   // col 15 monto_comprado
+      SpreadsheetApp.flush();
+      return { message: '✅ Pase convertido a compra con ' + (payload.nombre_agencia || payload.id_agencia) + '.' };
+    }
+  }
+  return { status: 'error', message: 'Movimiento no encontrado.' };
 }
 
 // Anular un pase: limpia Id_contactoPase, reasigna id_operacion y restaura estado a Embarcado.
