@@ -2140,10 +2140,14 @@ function cargarParaEditar(id_mov) {
     // Cargar contacto según tipo
     if(tipoMapeado === 'Libre') {
         let t = document.getElementById('input-vd-contacto-text');
-        if(t) t.value = movToEdit.contacto;
+        // nombreContacto se guarda como "LIBRE:FAMILIA VASQUEZ" — extraer solo el nombre de familia
+        let nc = movToEdit.nombreContacto || movToEdit.contacto || '';
+        let colonIdx = nc.indexOf(':');
+        if(t) t.value = colonIdx !== -1 ? nc.slice(colonIdx + 1) : nc;
     } else {
         let s = document.getElementById('input-vd-contacto-select');
-        if(s) s.value = movToEdit.contacto;
+        // Las opciones del select usan value="${c.nombre}", no el ID
+        if(s) s.value = movToEdit.nombreContacto || movToEdit.contacto;
     }
     document.getElementById('input-vd-pax').value = movToEdit.pax;
     document.getElementById('input-vd-precio').value = movToEdit.monto;
@@ -2562,6 +2566,9 @@ function abrirModalCaja(modo, opts = {}) {
         catSel.innerHTML = `<option value="Pago Agencia">🏢 Pago Agencia</option>`;
         catSel.setAttribute('disabled', 'true');
         document.getElementById('caja-monto').value = parseFloat(opts.monto || 0).toFixed(2);
+        // Guardar id_mov para que confirmarCaja lo incluya en la tx y el chip cambie inmediatamente
+        let idMovEl = document.getElementById('caja-id-movimiento');
+        if (idMovEl) idMovEl.value = opts.id_mov || '';
         // Contacto bloqueado — ocultar el selector y forzar el id
         let contactoRow = document.getElementById('caja-contacto-row');
         if (contactoRow) contactoRow.classList.add('hidden');
@@ -2851,6 +2858,8 @@ function confirmarCaja() {
     if (!window.cajaData) window.cajaData = [];
     window.cajaData.unshift(tempTx);
     renderCaja(window.cajaData);
+    // Para pago_agencia el chip de la fila de pase depende de cajaData — re-renderizar pases
+    if (modo === 'pago_agencia') renderOperaciones(window.operacionesData);
     // Si hay modal de manifiesto abierto, actualizar cards (estado cobro cambió)
     if (idMovimiento) actualizarModalSiAbierto();
 
@@ -3181,25 +3190,40 @@ function confirmarComprarPase() {
     let nombre_agencia = sel.options[sel.selectedIndex]?.text || id_agencia;
     let monto  = parseFloat(document.getElementById('comprar-monto').value);
 
-    if (!id_agencia)      return alert('Selecciona una agencia.');
-    if (!(monto > 0))     return alert('Ingresa un monto válido.');
+    if (!id_agencia)  return alert('Selecciona una agencia.');
+    if (!(monto > 0)) return alert('Ingresa un monto válido.');
 
     cerrarSubModal('modal-comprar-pase');
 
-    // Optimistic: actualizar pasesExternosData
+    // Optimistic: actualizar pasesExternosData inmediatamente
     let paseIdx = (window.pasesExternosData || []).findIndex(p => p.id === id_mov);
+    let paseAnterior = paseIdx !== -1 ? { ...window.pasesExternosData[paseIdx] } : null;
     if (paseIdx !== -1) {
         window.pasesExternosData[paseIdx].aliadoId            = '';
         window.pasesExternosData[paseIdx].id_agencia_comprada = id_agencia;
         window.pasesExternosData[paseIdx].monto_comprado      = monto;
+        window.pasesExternosData[paseIdx]._syncing            = true;
     }
-    renderCaja(window.cajaData);
+    // Los pases se renderizan dentro de renderOperaciones, no de renderCaja
+    renderOperaciones(window.operacionesData);
 
     fetchPostBg('convertir_pase_a_compra', { id_mov, id_agencia, nombre_agencia, monto, operador: myOpName }).then(res => {
-        if (res.status === 'error') { alert(res.message); return; }
+        if (paseIdx !== -1) window.pasesExternosData[paseIdx]._syncing = false;
+        if (res.status === 'error') {
+            // Rollback
+            if (paseIdx !== -1 && paseAnterior) window.pasesExternosData[paseIdx] = paseAnterior;
+            renderOperaciones(window.operacionesData);
+            mostrarToast('❌ ' + (res.message || 'Error al convertir pase.'), 'error');
+            return;
+        }
         mostrarToast('✅ Pase convertido a compra con ' + nombre_agencia + '.', 'success');
+        renderOperaciones(window.operacionesData);
         clearTimeout(window._syncTimer);
         window._syncTimer = setTimeout(syncManifestBg, 2000);
+    }).catch(() => {
+        if (paseIdx !== -1 && paseAnterior) window.pasesExternosData[paseIdx] = paseAnterior;
+        renderOperaciones(window.operacionesData);
+        mostrarToast('❌ Error de conexión al convertir pase.', 'error');
     });
 }
 
