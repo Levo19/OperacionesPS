@@ -1060,9 +1060,13 @@ function renderOperaciones(operaciones) {
     const _estadoOrden = { 'Abierta': 0, 'En_Viaje': 1, 'Cerrada': 2 };
     opHoy.sort((a, b) => (_estadoOrden[a.estado] ?? 3) - (_estadoOrden[b.estado] ?? 3));
 
-    // Container-level fingerprint — incluye contenido de pases para detectar cambios de aliado/nombre
+    // Container-level fingerprint — incluye pases y estado de pagos/cobros vinculados
     let fp = opHoy.map(o => _generarCardFP(o)).join(';')
-           + '|p:' + (window.pasesExternosData || []).map(p => `${p.id}|${p.aliadoId}|${p.pax}`).join(',');
+           + '|p:' + (window.pasesExternosData || []).map(p => {
+               let pagado  = (window.cajaData || []).some(c => (c.id_movimiento||'') === p.id && c.categoria === 'Pago Agencia') ? 1 : 0;
+               let cobrado = (window.cajaData || []).some(c => (c.id_movimiento||'') === p.id && c.categoria === 'Cobro') ? 1 : 0;
+               return `${p.id}|${p.aliadoId}|${p.id_agencia_comprada||''}|${pagado}|${cobrado}|${p.pax}`;
+           }).join(',');
     if (container._fp === fp) return;
     container._fp = fp;
 
@@ -1238,7 +1242,15 @@ function renderReservas(reservas) {
 function renderFinanzas() { renderCaja(window.cajaData); }
 
 function renderCaja(caja) {
-    let txHoy = (caja || []).filter(c => esFechaHoy(c.timestamp));
+    // Ordenar: _syncing/_queued primero, luego descendente por timestamp
+    let txHoy = (caja || [])
+        .filter(c => esFechaHoy(c.timestamp))
+        .sort((a, b) => {
+            let aPrio = (a._syncing || a._queued) ? 1 : 0;
+            let bPrio = (b._syncing || b._queued) ? 1 : 0;
+            if (aPrio !== bPrio) return bPrio - aPrio;
+            return new Date(b.timestamp) - new Date(a.timestamp);
+        });
     let ingresos = 0, salidas = 0;
     let comisionadosMap = {};
 
@@ -1302,10 +1314,15 @@ function renderCaja(caja) {
         let [metIco, metCls] = _METODO_BADGE[metodo] || ['💰', 'bg-gray-100 text-gray-600'];
         let metodoBadge = `<span class="inline-flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded ${metCls} ml-1">${metIco} ${metodo.replace('_', ' ')}</span>`;
 
-        let syncDot = c._syncing ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1 align-middle"></span>` : '';
-        let rowBg   = c._syncing ? 'bg-blue-50' : '';
+        let syncDot = c._queued
+            ? `<span class="inline-block w-2 h-2 rounded-full bg-orange-400 animate-pulse ml-1 align-middle" title="En cola — se enviará al reconectar"></span>`
+            : c._syncing
+                ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1 align-middle"></span>`
+                : '';
+        let rowBg  = c._queued ? 'bg-orange-50' : c._syncing ? 'bg-blue-50' : '';
+        let blocked = c._syncing || c._queued;
         return `
-        <div class="flex justify-between items-center p-3.5 ${rowBg} cursor-pointer hover:bg-gray-50 transition active:scale-95" data-caja-id="${c.id}" onclick="${c._syncing ? '' : `abrirDetalleCaja('${c.id}')`}">
+        <div class="flex justify-between items-center p-3.5 ${rowBg} cursor-pointer hover:bg-gray-50 transition active:scale-95" data-caja-id="${c.id}" onclick="${blocked ? '' : `abrirDetalleCaja('${c.id}')`}">
             <div class="flex-1 min-w-0 pr-2">
                 <span class="text-xs font-extrabold text-gray-800 block truncate">
                     <i class="fas fa-circle text-[7px] ${dotColor} mr-1.5"></i>${nombrePrincipal} ${metodoBadge} ${syncDot}
@@ -2959,24 +2976,30 @@ function confirmarCaja() {
             foto_base64:   foto_base64 || '',
             operador:      myOpName
         }).then(res => {
-            // Reemplazar temp con ID real si volvió, luego sync completo
             let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
             if (idx !== -1) {
                 if (res && res.id_transaccion) {
-                    window.cajaData[idx] = { ...window.cajaData[idx], id: res.id_transaccion, _syncing: true };
+                    // Confirmado por GAS — reemplazar con ID real
+                    window.cajaData[idx] = { ...window.cajaData[idx], id: res.id_transaccion, _syncing: true, _queued: false };
+                } else if (res && res.queued) {
+                    // Error de red — acción encolada offline, mantener visible con indicador naranja
+                    window.cajaData[idx] = { ...window.cajaData[idx], _syncing: false, _queued: true };
                 } else {
+                    // Error real de GAS — rollback
                     window.cajaData.splice(idx, 1);
                 }
             }
             renderCaja(window.cajaData);
+            if (modo === 'pago_agencia') renderOperaciones(window.operacionesData);
             if (idMovimiento) actualizarModalSiAbierto();
-            setTimeout(fetchDashboardDataBg, 5000);
+            if (res && res.id_transaccion) setTimeout(fetchDashboardDataBg, 5000);
         }).catch(() => {
+            // Error JS inesperado — rollback
             let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
             if (idx !== -1) window.cajaData.splice(idx, 1);
             renderCaja(window.cajaData);
             if (idMovimiento) actualizarModalSiAbierto();
-            mostrarToast('Error al registrar transacción.', 'error');
+            mostrarToast('❌ Error inesperado al registrar.', 'error');
         });
     }
 
@@ -3439,6 +3462,9 @@ async function _processOfflineQueue() {
     localStorage.setItem(_OFFLINE_Q_KEY, JSON.stringify(failed));
     if (!failed.length) {
         mostrarToast('✅ Acciones pendientes enviadas.', 'success');
+        // Limpiar entradas _queued del cajaData local — el BG refresh traerá las reales de GAS
+        window.cajaData = (window.cajaData || []).filter(c => !c._queued);
+        renderCaja(window.cajaData);
         fetchDashboardDataBg();
     } else {
         mostrarToast(`⚠️ ${failed.length} acción(es) no se pudieron enviar aún.`, 'error');
@@ -3464,7 +3490,7 @@ function fetchPostBg(action, payload) {
             setTimeout(() => { if (dot && pendingPostRequests === 0) dot.className = 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse'; }, 3000);
             _enqueueOffline(action, payload);
             mostrarToast('📶 Sin conexión. La acción se reintentará al reconectar.', 'error');
-            return { status: 'error', message: 'Error de conexión' };
+            return { status: 'error', queued: true, message: 'Error de conexión' };
         });
 }
 
