@@ -399,6 +399,46 @@ function _forceRenderEmpty() {
     }
 }
 
+function _cerrarOpsAntiguas() {
+    let hoy = getHoyLocal();
+    let stale = (window.operacionesData || []).filter(op =>
+        op.fecha && op.fecha !== hoy &&
+        op.estado !== 'Cerrada' && op.id !== 'Creando...'
+    );
+    if (stale.length === 0) return;
+
+    // Auto-cerrar optimísticamente en estado local
+    stale.forEach(op => {
+        let idx = window.operacionesData.findIndex(o => o.id === op.id);
+        if (idx !== -1) window.operacionesData[idx].estado = 'Cerrada';
+    });
+
+    // Enviar cierre al backend para cada op
+    stale.forEach(op => {
+        fetchPostBg('confirmar_llegada', { id_operacion: op.id, creador: 'auto_cierre' });
+    });
+
+    // Mostrar aviso
+    let detalle = stale.map(op => `<li class="text-[11px] text-orange-800 font-bold">${op.bote} · ${op.fecha} · ${op.id}</li>`).join('');
+    let bs = document.createElement('div');
+    bs.id = '_stale-ops-bs';
+    bs.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:flex-end;';
+    bs.innerHTML = `<div style="background:white;border-radius:24px 24px 0 0;padding:24px;width:100%;box-shadow:0 -20px 60px rgba(0,0,0,.2);">
+        <div style="width:40px;height:4px;background:#e5e7eb;border-radius:4px;margin:0 auto 20px;"></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+            <div style="width:48px;height:48px;background:#fff7ed;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:22px;">⚠️</div>
+            <div><strong style="font-size:17px;color:#111;">Operaciones de días anteriores</strong><br>
+            <span style="font-size:12px;color:#6b7280;">Se cerraron automáticamente al abrir la app.</span></div>
+        </div>
+        <ul style="list-style:disc;padding-left:16px;margin-bottom:16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:10px 14px;">
+            ${detalle}
+        </ul>
+        <button onclick="document.getElementById('_stale-ops-bs').remove()" style="width:100%;background:#f97316;color:white;font-weight:900;border:none;padding:14px;border-radius:14px;font-size:14px;cursor:pointer;">Entendido</button>
+    </div>`;
+    document.body.appendChild(bs);
+    bs.addEventListener('click', e => { if (e.target === bs) bs.remove(); });
+}
+
 function fetchDashboardData() {
     toggleSpinner(true);
     // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
@@ -433,6 +473,7 @@ function fetchDashboardData() {
             window.cajaData          = data.movimientos_dia || [];
 
             try { renderCatalogos(data.catalogos); } catch(e) { console.error('renderCatalogos:', e); }
+            try { _cerrarOpsAntiguas(); } catch(e) { console.error('_cerrarOpsAntiguas:', e); }
             try { renderOperaciones(window.operacionesData); } catch(e) { console.error('renderOperaciones:', e); }
             try { renderReservas(window.reservasData); } catch(e) { console.error('renderReservas:', e); }
             try { renderCaja(window.cajaData); } catch(e) { console.error('renderCaja:', e); }
@@ -993,22 +1034,38 @@ function _generarPasesDiaHTML(pases) {
         // Cobrar button: only if origin generates cobro (Libre / Agencia / Comisionado, no Aliado)
         let origenTipo = p.tipo    || '';   // p.tipo es el tipo del movimiento = tipo del origen
         let origenId   = p.origenId || '';
+        // Buscar movimiento en manifiesto para leer adicionales
+        let movManifPase = null;
+        for (let op of (window.operacionesData || [])) {
+            movManifPase = (op.manifiesto || []).find(m => m.id === paseId);
+            if (movManifPase) break;
+        }
+        let movAdicionalesPase = movManifPase ? (movManifPase.adicionales || '') : '';
+        let movAdicionalesSumPase = movAdicionalesPase ? movAdicionalesPase.split(',').reduce((acc, part) => {
+            return acc + (parseFloat((part.split(':')[1] || '').trim()) || 0);
+        }, 0) : 0;
         let paseEsCobrable = !_TIPOS_SIN_COBRO.includes(origenTipo) && !!(origenId);
-        let pagoStPase = paseEsCobrable ? _calcPagoEstado({ id: paseId, tipo: origenTipo, monto: p.monto || 0 }) : null;
+        let pagoStPase = paseEsCobrable ? _calcPagoEstado({ id: paseId, tipo: origenTipo, monto: p.monto || 0, adicionales: movAdicionalesPase }) : null;
         let cobrarPaseBtn = '';
         if (paseEsCobrable && pagoStPase && pagoStPase.estado !== 'pagado_completo') {
             let montoNum = parseFloat(p.monto) || 0;
+            let totalNum = montoNum + movAdicionalesSumPase;
             let pendNum  = pagoStPase.pendiente;
             let etiqueta = pagoStPase.estado === 'pagado_parcial'
                 ? `Pend. S/${pendNum.toFixed(2)}`
-                : `S/${montoNum.toFixed(2)}`;
+                : `S/${totalNum.toFixed(2)}`;
             let nombreEsc = origen.replace(/'/g,"\\'");
+            let adicsEsc  = movAdicionalesPase.replace(/'/g,"\\'");
             cobrarPaseBtn = `<button class="cobrar-btn-appear mt-1 w-full bg-green-500 text-white text-[9px] font-bold py-1 rounded-lg flex items-center justify-center gap-1 hover:bg-green-600 active:scale-95 transition"
-                onclick="abrirModalCaja('cobro_directo', { id_contacto: '${origenId}', nombre_contacto: '${nombreEsc}', monto: ${montoNum}, id_mov: '${paseId}', pendiente: ${pendNum.toFixed(2)}, bloqueado: true }); event.stopPropagation();">
+                onclick="abrirModalCaja('cobro_directo', { id_contacto: '${origenId}', nombre_contacto: '${nombreEsc}', monto: ${montoNum}, monto_adicionales: ${movAdicionalesSumPase.toFixed(2)}, detalle_adicionales: '${adicsEsc}', id_mov: '${paseId}', pendiente: ${pendNum.toFixed(2)}, bloqueado: true }); event.stopPropagation();">
                 <span class='w-1 h-1 rounded-full bg-white animate-pulse'></span>
                 <i class='fas fa-money-bill-wave text-[8px]'></i> Cobrar ${etiqueta}
             </button>`;
         }
+        let adicionalesPaseBtn = paseEsCobrable ? `<button class="mt-1 w-full bg-amber-100 text-amber-700 border border-amber-200 text-[9px] font-bold py-1 rounded-lg flex items-center justify-center gap-1 hover:bg-amber-200 active:scale-95 transition"
+            onclick="abrirModalImpuestos('${paseId}', '${origen.replace(/'/g,"\\'")}'); event.stopPropagation();">
+            <i class='fas fa-file-invoice-dollar text-[8px]'></i> Adicionales${movAdicionalesSumPase > 0 ? ` +S/${movAdicionalesSumPase.toFixed(2)}` : ''}
+        </button>` : '';
         // Botón Comprar — convierte este pase a compra de agencia
         let comprarBtn = `<button class="mt-1 w-full bg-orange-100 text-orange-700 border border-orange-200 text-[9px] font-bold py-1 rounded-lg flex items-center justify-center gap-1 hover:bg-orange-200 active:scale-95 transition"
             onclick="abrirModalComprarPase('${paseId}', ${parseInt(p.pax)||0}, '${paseNombreEsc}'); event.stopPropagation();">
@@ -1022,6 +1079,7 @@ function _generarPasesDiaHTML(pases) {
                 <span class="text-[11px] font-black text-purple-800 block uppercase leading-tight">${aliadoNombre}</span>
                 ${origen ? `<span class="text-[9px] text-gray-400 font-bold"><i class="fas fa-arrow-right text-[7px] mr-0.5"></i>De: ${origen}</span>` : ''}
                 ${cobrarPaseBtn}
+                ${adicionalesPaseBtn}
                 ${comprarBtn}
             </td>
             <td class="py-2 px-2 text-center text-sm font-black text-blue-600 cursor-pointer" onclick="verDetallePase(${idx})">${p.pax}</td>
@@ -1931,7 +1989,7 @@ function _itemManifiestoHTML(m) {
     let esPaseOut = m.tipo === 'Aliado(PaseOut)';
     let subBtns = (isSelected && !isSyncing) ? `
     <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
-        ${!soloLectura && m.tipo === 'Agencia' ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
+        ${!soloLectura && cobrable ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
         ${!soloLectura && !esPaseOut ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
         ${!soloLectura ? `<button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>` : ''}
     </div>` : '';
@@ -2485,12 +2543,13 @@ function prepararAsignacion(id_reserva, cliente, pax, contacto) {
     document.getElementById('text-cliente').innerText = cliente;
 
     let selectOp = document.getElementById('select-asignar-op');
-    let opsAbiertas = window.operacionesData.filter(op => op.estado === 'Abierta');
-    
+    let hoyOp = getHoyLocal();
+    let opsAbiertas = window.operacionesData.filter(op => op.estado === 'Abierta' && op.fecha === hoyOp);
+
     if(opsAbiertas.length === 0) {
-        selectOp.innerHTML = '<option value="">No hay lanchas abiertas disponibles</option>';
+        selectOp.innerHTML = '<option value="">No hay lanchas abiertas hoy</option>';
     } else {
-        selectOp.innerHTML = '<option value="">- Selecciona un lancha viva -</option>' + 
+        selectOp.innerHTML = '<option value="">- Selecciona un lancha viva -</option>' +
             opsAbiertas.map(op => `<option value="${op.id}">${op.bote} - ${op.ocupados}/${op.capacidad} PAX</option>`).join('');
     }
 
@@ -2516,6 +2575,13 @@ function confirmarAsignacion() {
                        : tipoRaw.includes('comision') ? 'Comisionado'
                        : 'Agencia'; // default for Agencia or unknown
 
+    // Para CON-00 (Libre/Varios) preservar el nombre de familia de la reserva
+    let esCon00 = contactInfo && /^CON-00/i.test(contactInfo.id);
+    let nombreContacto = esCon00
+        ? (reserva ? (reserva.cliente || contactInfo.nombre) : contactInfo.nombre)
+        : (contactInfo ? contactInfo.nombre : contacto);
+    let idContacto = contactInfo ? contactInfo.id : contacto;
+
     // Optimistic: mark reserva card as "abordando"
     let resIdx = (window.reservasData||[]).findIndex(r => r.id === id_reserva);
     if(resIdx !== -1) window.reservasData[resIdx]._asignando = true;
@@ -2528,7 +2594,8 @@ function confirmarAsignacion() {
         op.manifiesto.unshift({
             id: 'temp-crm-' + Date.now(),
             tipo: tipoMovimiento,
-            contacto: contacto,
+            contacto: idContacto,
+            nombreContacto: nombreContacto,
             pax: pax,
             monto: monto.toFixed(2),
             estado: 'Embarcado', _syncing: true
@@ -2543,8 +2610,8 @@ function confirmarAsignacion() {
         id_reserva,
         id_operacion,
         cant_pax: pax,
-        id_contacto: contactInfo ? contactInfo.id : contacto,
-        nombre_contacto: contactInfo ? contactInfo.nombre : contacto,
+        id_contacto: idContacto,
+        nombre_contacto: nombreContacto,
         tipo: tipoMovimiento,
         monto_total: monto,
         precio_unitario: paxNum > 0 ? (monto / paxNum).toFixed(2) : '0',
@@ -2722,7 +2789,8 @@ function onCajaCategoriaChange() {
         } else if (cat === 'Cobro') {
             // ── Recopilar contactos cobrables de HOY (activos + derivados, excluir PaseIn) ──
             let hoyMovs = []; // { contactoId, nombreContacto }
-            (window.operacionesData || []).forEach(op => {
+            let _hoyFin = getHoyLocal();
+            (window.operacionesData || []).filter(op => op.fecha === _hoyFin).forEach(op => {
                 // Manifiesto activo: excluir tipos sin cobro (PaseIn, Pase_Recibido, Aliado)
                 [...(op.manifiesto || []), ...(op.manifiesto_pasados || [])].forEach(m => {
                     if (_TIPOS_SIN_COBRO.includes(m.tipo)) return;
@@ -2746,7 +2814,7 @@ function onCajaCategoriaChange() {
                     // Para Varios (CON-00*): solo sumar los movimientos de ESA familia específica
                     let isVarios = /^CON-00/i.test(h.contactoId);
                     let totalPend = 0;
-                    (window.operacionesData || []).forEach(op => {
+                    (window.operacionesData || []).filter(op => op.fecha === _hoyFin).forEach(op => {
                         [...(op.manifiesto || []), ...(op.manifiesto_pasados || [])].forEach(m => {
                             if (m.contacto !== h.contactoId) return;
                             if (isVarios && m.nombreContacto !== h.nombreContacto) return;
