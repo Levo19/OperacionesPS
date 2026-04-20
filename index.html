@@ -71,18 +71,19 @@
 <body class="font-sans antialiased text-gray-800">
 
     <!-- MODAL LOGIN OPERADOR -->
-    <!-- Update overlay — aparece cuando se detecta nueva versión en producción -->
-    <div id="modal-update" class="hidden fixed inset-0 z-[200] flex flex-col items-center justify-center p-6"
-         style="background:rgba(10,20,60,0.97);backdrop-filter:blur(8px)">
-        <div class="text-center max-w-xs">
-            <div class="text-5xl mb-4">🚀</div>
-            <h2 class="text-white text-xl font-black mb-2 tracking-tight">Nueva versión disponible</h2>
-            <p class="text-blue-200 text-sm mb-6">Se publicó una actualización del sistema. Debes recargar para continuar operando sin errores.</p>
+    <!-- Update banner — aparece cuando se detecta nueva versión (no bloqueante) -->
+    <div id="modal-update" class="hidden fixed top-0 inset-x-0 z-[200] flex justify-center px-3 pt-3 pointer-events-none">
+        <div class="pointer-events-auto w-full max-w-sm bg-blue-950 border border-blue-700 rounded-2xl shadow-2xl px-4 py-3 flex items-center gap-3"
+             style="backdrop-filter:blur(12px)">
+            <div class="text-2xl shrink-0">🚀</div>
+            <div class="flex-1 min-w-0">
+                <p class="text-white text-[13px] font-black leading-tight">Nueva versión</p>
+                <p class="text-blue-300 text-[11px]">Actualizando en <span id="update-countdown">5</span>s…</p>
+            </div>
             <button onclick="window.location.reload()"
-                class="w-full py-4 bg-white text-blue-900 font-black text-base rounded-2xl shadow-xl active:scale-95 transition-transform tracking-wide uppercase">
-                Actualizar ahora
+                class="shrink-0 bg-white text-blue-900 font-black text-[11px] px-3 py-1.5 rounded-xl active:scale-95 transition-transform uppercase tracking-wide">
+                Ahora
             </button>
-            <p class="text-blue-400 text-[10px] mt-3 opacity-60">No puedes continuar sin actualizar</p>
         </div>
     </div>
 

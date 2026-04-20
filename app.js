@@ -196,7 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     fetchPersonalRapido(); // precarga operadores para que el login funcione de inmediato
     fetchDashboardData();
-    setInterval(fetchDashboardDataBg, 30000);
+    setInterval(fetchDashboardDataBg, 10000);
     programarResetDiario();
     iniciarCountdownTimer();
     // Procesar cola offline si hay items pendientes del turno anterior
@@ -204,10 +204,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // Detector de nueva versión: chequea cada 5 minutos
     setTimeout(checkForUpdates, 60000); // primera vez al minuto (GH Pages puede tardar en propagar)
     setInterval(checkForUpdates, 5 * 60 * 1000);
+    // Refrescar al volver a la pestaña si estuvo inactiva 30s+
+    let _lastVisible = Date.now();
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+            _lastVisible = Date.now();
+        } else if (Date.now() - _lastVisible > 30000) {
+            fetchDashboardDataBg();
+        }
+    });
 });
 
 // ── Detector de actualizaciones ───────────────────────────────────────────────
 let _pageEtag = null;
+let _updateCountdownTimer = null;
 
 function checkForUpdates() {
     // Solo en producción (GitHub Pages), no en localhost/Live Server
@@ -217,14 +227,30 @@ function checkForUpdates() {
             let fingerprint = r.headers.get('ETag') || r.headers.get('Last-Modified');
             if (!fingerprint) return;
             if (!_pageEtag) {
-                _pageEtag = fingerprint; // guardar valor inicial
-            } else if (_pageEtag !== fingerprint) {
-                // Nueva versión detectada — bloquear UI y forzar recarga
-                let overlay = document.getElementById('modal-update');
-                if (overlay) overlay.classList.remove('hidden');
+                _pageEtag = fingerprint;
+            } else if (_pageEtag !== fingerprint && !_updateCountdownTimer) {
+                _mostrarBannerActualizacion();
             }
         })
-        .catch(() => {}); // silenciar si no hay red
+        .catch(() => {});
+}
+
+function _mostrarBannerActualizacion() {
+    let banner = document.getElementById('modal-update');
+    if (!banner) return;
+    banner.classList.remove('hidden');
+    let countEl = document.getElementById('update-countdown');
+    let secs = 5;
+    if (countEl) countEl.textContent = secs;
+    _updateCountdownTimer = setInterval(() => {
+        secs--;
+        if (countEl) countEl.textContent = secs;
+        if (secs <= 0) {
+            clearInterval(_updateCountdownTimer);
+            _updateCountdownTimer = null;
+            window.location.reload();
+        }
+    }, 1000);
 }
 
 // ── Precarga ultraligera de operadores (solo hoja Personal) ──────────────────
