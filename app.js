@@ -2561,10 +2561,11 @@ function confirmarNuevaReserva() {
     });
 }
 
-function prepararAsignacion(id_reserva, cliente, pax, contacto) { 
-    document.getElementById('hidden-reserva-id').value = id_reserva; 
-    document.getElementById('hidden-reserva-pax').value = pax; 
-    document.getElementById('hidden-reserva-agencia').value = contacto; 
+function prepararAsignacion(id_reserva, cliente, pax, contacto) {
+    document.getElementById('hidden-reserva-id').value = id_reserva;
+    document.getElementById('hidden-reserva-pax').value = pax;
+    document.getElementById('hidden-reserva-agencia').value = contacto;
+    document.getElementById('hidden-reserva-cliente').value = cliente;
     document.getElementById('text-pax').innerText = pax;
     document.getElementById('text-cliente').innerText = cliente;
 
@@ -2602,9 +2603,10 @@ function confirmarAsignacion() {
                        : 'Agencia'; // default for Agencia or unknown
 
     // Para CON-00 (Libre/Varios) preservar el nombre de familia de la reserva
+    let clienteGuardado = document.getElementById('hidden-reserva-cliente')?.value || '';
     let esCon00 = contactInfo && /^CON-00/i.test(contactInfo.id);
     let nombreContacto = esCon00
-        ? (reserva ? (reserva.cliente || contactInfo.nombre) : contactInfo.nombre)
+        ? (clienteGuardado || (reserva ? reserva.cliente : '') || contactInfo.nombre)
         : (contactInfo ? contactInfo.nombre : contacto);
     let idContacto = contactInfo ? contactInfo.id : contacto;
 
