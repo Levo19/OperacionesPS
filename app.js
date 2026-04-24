@@ -2113,8 +2113,8 @@ function cambiarTipoVentaDirecta() {
 
     if(tipo === 'Libre') {
         precioLabel.textContent = 'S/ Total Cobrado';
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Apellido / Nombre</label>
-            <input type="text" id="input-vd-contacto-text" class="${_textInputClass()}" placeholder="Ej: Familia Vasquez">`;
+        container.innerHTML = `<label class="text-[9px] font-bold text-red-500 uppercase tracking-widest ml-1">Apellido * obligatorio</label>
+            <input type="text" id="input-vd-contacto-text" class="${_textInputClass()}" placeholder="Ej: García, Torres..." autocomplete="off">`;
 
     } else if(tipo === 'Agencia') {
         precioLabel.textContent = 'S/ Total (precio especial)';
@@ -2313,7 +2313,17 @@ function confirmarVentaDirecta() {
         nombre_contacto_payload = sel.nombre;
     }
 
-    if(!contacto) { mostrarToast('❌ Ingresa el nombre o selecciona el contacto.', 'error'); return; }
+    if(tipo === 'Libre' && !contacto) {
+        let inp = document.getElementById('input-vd-contacto-text');
+        if(inp) {
+            inp.classList.add('!border-red-400', '!bg-red-50');
+            inp.focus();
+            inp.addEventListener('input', () => inp.classList.remove('!border-red-400', '!bg-red-50'), { once: true });
+        }
+        mostrarToast('❌ Escribe el apellido de familia (mínimo 1 letra).', 'error');
+        return;
+    }
+    if(!contacto) { mostrarToast('❌ Selecciona el contacto.', 'error'); return; }
     if(!pax || parseFloat(pax) <= 0) { mostrarToast('❌ Cantidad de pasajeros inválida.', 'error'); return; }
     if(tipo !== 'Aliado' && (!precio || parseFloat(precio) < 0)) { mostrarToast('❌ Ingresa el precio cobrado.', 'error'); return; }
 
