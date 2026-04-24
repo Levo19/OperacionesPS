@@ -1094,13 +1094,14 @@ function _generarPasesDiaHTML(pases) {
         // Cobrar button: only if origin generates cobro (Libre / Agencia / Comisionado, no Aliado)
         let origenTipo = p.tipo    || '';   // p.tipo es el tipo del movimiento = tipo del origen
         let origenId   = p.origenId || '';
-        // Buscar movimiento en manifiesto para leer adicionales
-        let movManifPase = null;
-        for (let op of (window.operacionesData || [])) {
-            movManifPase = (op.manifiesto || []).find(m => m.id === paseId);
-            if (movManifPase) break;
+        // Leer adicionales: primero del objeto pase (si ya fue actualizado), luego manifiesto como fallback
+        let movAdicionalesPase = p.adicionales || '';
+        if (!movAdicionalesPase) {
+            for (let op of (window.operacionesData || [])) {
+                let movManifPase = (op.manifiesto || []).find(m => m.id === paseId);
+                if (movManifPase) { movAdicionalesPase = movManifPase.adicionales || ''; break; }
+            }
         }
-        let movAdicionalesPase = movManifPase ? (movManifPase.adicionales || '') : '';
         let movAdicionalesSumPase = movAdicionalesPase ? movAdicionalesPase.split(',').reduce((acc, part) => {
             return acc + (parseFloat((part.split(':')[1] || '').trim()) || 0);
         }, 0) : 0;
@@ -3189,18 +3190,24 @@ function abrirModalImpuestos(id_mov, contacto) {
 
     // Leer adicionales actuales del movimiento para pre-cargar cantidades
     let existingAdics = {};
+    let _adicsStr = '';
     for (let op of (window.operacionesData || [])) {
         let mov = (op.manifiesto || []).find(m => m.id === id_mov);
-        if (mov && mov.adicionales) {
-            (mov.adicionales + '').split(',').forEach(part => {
-                let sep = part.indexOf(':');
-                if (sep === -1) return;
-                let nombre = part.substring(0, sep).trim();
-                let monto  = parseFloat(part.substring(sep + 1).trim()) || 0;
-                if (nombre) existingAdics[nombre] = monto;
-            });
-            break;
-        }
+        if (mov) { _adicsStr = mov.adicionales || ''; break; }
+    }
+    // Fallback: buscar en pases (movimientos convertidos a PASEOUT)
+    if (!_adicsStr) {
+        let pase = (window.pasesExternosData || []).find(p => p.id === id_mov);
+        if (pase) _adicsStr = pase.adicionales || '';
+    }
+    if (_adicsStr) {
+        (_adicsStr + '').split(',').forEach(part => {
+            let sep = part.indexOf(':');
+            if (sep === -1) return;
+            let nombre = part.substring(0, sep).trim();
+            let monto  = parseFloat(part.substring(sep + 1).trim()) || 0;
+            if (nombre) existingAdics[nombre] = monto;
+        });
     }
 
     if(!impuestos.length) {
@@ -3257,9 +3264,15 @@ function confirmarImpuestos() {
     cerrarSubModal('modal-impuestos');
 
     // Optimistic: actualizar adicionales en local state inmediatamente
+    let _updatedLocal = false;
     for (let op of (window.operacionesData || [])) {
         let mov = (op.manifiesto || []).find(m => m.id === id_mov);
-        if (mov) { mov.adicionales = adicionales; break; }
+        if (mov) { mov.adicionales = adicionales; _updatedLocal = true; break; }
+    }
+    // Fallback: actualizar en pases (movimientos convertidos a PASEOUT)
+    if (!_updatedLocal) {
+        let pase = (window.pasesExternosData || []).find(p => p.id === id_mov);
+        if (pase) pase.adicionales = adicionales;
     }
     let cont = document.getElementById('operaciones-container');
     if (cont) cont._fp = null;

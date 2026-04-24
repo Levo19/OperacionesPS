@@ -1,5 +1,5 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v14';
+const CACHE_NAME = 'ops-v15';
 const SHELL = [
     './index.html',
     './app.js',

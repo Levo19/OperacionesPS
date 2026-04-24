@@ -279,7 +279,8 @@ function getDashboardData() {
       estado:              m.estado_movimiento,
       timestamp:           formatTimestamp(m.timestamp_registro),
       id_agencia_comprada: (m.id_agencia_comprada || '').toString().trim(),
-      monto_comprado:      parseFloat(m.monto_comprado) || 0
+      monto_comprado:      parseFloat(m.monto_comprado) || 0,
+      adicionales:         (m.adicionales         || '').toString().trim()
     }));
 
   return {
