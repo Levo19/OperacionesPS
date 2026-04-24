@@ -53,17 +53,15 @@ function _loadDashboardCache() {
         let raw = localStorage.getItem(_CACHE_KEY);
         if (!raw) return false;
         let c = JSON.parse(raw);
+        // Solo poblar memoria — NO renderizar. Los datos rancios no deben mostrarse
+        // antes de que llegue la respuesta fresca del servidor.
+        // El render con caché solo ocurre como fallback offline en fetchDashboardData.
         window.operacionesData   = c.operaciones || [];
         window.contactosData     = c.contactos   || [];
         window.catalogosData     = c.catalogos   || {};
         window.reservasData      = c.reservas    || [];
-        // Solo cargar pases de HOY desde el cache — descartar los de días anteriores
         window.pasesExternosData = (c.pases || []).filter(p => esFechaHoy(p.timestamp));
         window.cajaData          = c.caja        || [];
-        if (window.catalogosData) renderCatalogos(window.catalogosData);
-        renderOperaciones(window.operacionesData);
-        renderReservas(window.reservasData);
-        renderCaja(window.cajaData);
         return true;
     } catch(e) { return false; }
 }
@@ -170,6 +168,24 @@ function iniciarCountdownTimer() {
     }, 1000);
 }
 
+// ── Jornada cerrada (lock 8 PM) ──────────────────────────────────────────────
+function isJornadaCerrada() {
+    return new Date().getHours() >= 20;
+}
+function activarLock() {
+    const ol = document.getElementById('lock-overlay');
+    if (!ol) return;
+    const fd = document.getElementById('lock-fecha');
+    if (fd) fd.textContent = new Date().toLocaleDateString('es-PE', { weekday:'long', day:'2-digit', month:'long' });
+    ol.classList.add('active');
+}
+function ocultarLoadingOverlay() {
+    const ol = document.getElementById('loading-overlay');
+    if (!ol) return;
+    ol.classList.add('fade-out');
+    setTimeout(() => ol.remove(), 420);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Detectar si el día cambió desde la última sesión
     let sessionDate = localStorage.getItem('sot_session_date');
@@ -182,8 +198,21 @@ document.addEventListener('DOMContentLoaded', () => {
         myOpName = null;
     }
 
-    // Cargar caché local inmediatamente para mostrar datos sin esperar la red
+    // Poblar memoria desde caché (sin renderizar — evita mostrar datos rancios)
     _loadDashboardCache();
+
+    // Activar lock si ya son las 8 PM
+    if (isJornadaCerrada()) {
+        ocultarLoadingOverlay();
+        activarLock();
+        return; // no continuar cargando la app
+    }
+
+    // Programar activación del lock a las 8 PM si la app queda abierta
+    const ahora = new Date();
+    const ocho  = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate(), 20, 0, 0);
+    const msHasta8 = ocho - ahora;
+    if (msHasta8 > 0) setTimeout(activarLock, msHasta8);
 
     if (!myOpName) {
         mostrarModalLogin(false);
@@ -470,6 +499,7 @@ function fetchDashboardData() {
     // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
     let safetyTimer = setTimeout(() => {
         toggleSpinner(false);
+        ocultarLoadingOverlay();
         _forceRenderEmpty();
         console.warn('[SOT] fetchDashboardData timeout — forzando limpieza de UI');
     }, 35000);
@@ -486,6 +516,7 @@ function fetchDashboardData() {
         .then(data => {
             clearTimeout(safetyTimer);
             toggleSpinner(false);
+            ocultarLoadingOverlay();
             if(data.status === 'error') {
                 console.error("Error backend:", data.error);
                 _forceRenderEmpty();
@@ -512,11 +543,14 @@ function fetchDashboardData() {
             clearTimeout(safetyTimer);
             clearTimeout(abortTimer);
             toggleSpinner(false);
+            ocultarLoadingOverlay();
             console.warn('[SOT] fetchDashboardData error:', err.message);
             _forceRenderEmpty();
-            // También intentar renderizar con datos de caché si existen
+            // Fallback offline: renderizar con datos de caché si existen
+            try { renderCatalogos(window.catalogosData); } catch(e) {}
             try { renderOperaciones(window.operacionesData || []); } catch(e) {}
             try { renderReservas(window.reservasData || []); } catch(e) {}
+            try { renderCaja(window.cajaData || []); } catch(e) {}
             let hayCaché = !!localStorage.getItem(_CACHE_KEY);
             mostrarToast(
                 hayCaché ? '📴 Sin conexión — mostrando datos guardados' : '❌ Sin conexión y sin datos previos',

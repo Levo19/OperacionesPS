@@ -60,9 +60,45 @@
         .fin-tab-btn { border-bottom: 2px solid transparent; color: #6b7280; font-size: 11px; font-weight: 700; padding: 8px 12px; text-transform: uppercase; letter-spacing: .05em; cursor: pointer; transition: all .2s; }
         .fin-tab-btn.active { border-bottom-color: #56070c; color: #56070c; }
 
+    /* ── Loading overlay ── */
+    #loading-overlay {
+        position:fixed;inset:0;z-index:300;
+        background:linear-gradient(135deg,#0a1628 0%,#56070c 100%);
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;
+        transition:opacity .4s ease;
+    }
+    #loading-overlay.fade-out { opacity:0;pointer-events:none; }
+    .lo-ship { font-size:56px;animation:lo-bob .9s ease-in-out infinite alternate; }
+    @keyframes lo-bob { from{transform:translateY(0)} to{transform:translateY(-8px)} }
+    .lo-ring { width:44px;height:44px;border:3px solid rgba(255,255,255,.15);border-top-color:#e8b840;border-radius:50%;animation:spin .7s linear infinite; }
+    @keyframes spin { to{transform:rotate(360deg)} }
+    /* ── Lock overlay ── */
+    #lock-overlay {
+        position:fixed;inset:0;z-index:250;
+        background:linear-gradient(135deg,#0a0a0a 0%,#1a0305 100%);
+        display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+        text-align:center;padding:32px;
+    }
+    #lock-overlay.active { display:flex; }
     </style>
 </head>
 <body class="font-sans antialiased text-gray-800">
+
+    <!-- ── Pantalla de carga inicial ── -->
+    <div id="loading-overlay">
+        <div class="lo-ship">⛵</div>
+        <div style="color:#fff;font-size:24px;font-weight:900;letter-spacing:.05em;">SOT Operaciones</div>
+        <div class="lo-ring"></div>
+        <div style="color:rgba(255,255,255,.45);font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-top:4px;">Cargando datos…</div>
+    </div>
+
+    <!-- ── Pantalla de cierre (8 PM) ── -->
+    <div id="lock-overlay">
+        <div style="font-size:64px;">🔒</div>
+        <div style="color:#fff;font-size:22px;font-weight:900;">Jornada cerrada</div>
+        <div style="color:rgba(255,255,255,.55);font-size:14px;line-height:1.6;max-width:280px;">El sistema se bloquea automáticamente a las <b style="color:#e8b840;">8:00 PM</b>.<br>No se puede registrar actividad fuera del horario de operaciones.</div>
+        <div id="lock-fecha" style="color:rgba(255,255,255,.3);font-size:12px;margin-top:8px;"></div>
+    </div>
 
     <!-- MODAL LOGIN OPERADOR -->
     <!-- Update banner — aparece cuando se detecta nueva versión (no bloqueante) -->
