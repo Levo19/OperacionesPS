@@ -60,12 +60,6 @@
         .fin-tab-btn { border-bottom: 2px solid transparent; color: #6b7280; font-size: 11px; font-weight: 700; padding: 8px 12px; text-transform: uppercase; letter-spacing: .05em; cursor: pointer; transition: all .2s; }
         .fin-tab-btn.active { border-bottom-color: #56070c; color: #56070c; }
 
-        /* print cierre del día */
-        @media print {
-            body > *:not(#print-cierre) { display: none !important; }
-            #print-cierre { display: block !important; position: static; width: 100%; }
-        }
-        #print-cierre { display: none; }
     </style>
 </head>
 <body class="font-sans antialiased text-gray-800">
@@ -752,9 +746,6 @@
                 <button onclick="window.open('https://levo19.github.io/PS-Panel/ticket.html?fecha='+(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')})(),'_blank')" class="flex-none bg-[#1a4a2c] hover:bg-[#123320] active:scale-95 text-white font-black py-4 px-4 rounded-2xl shadow-lg transition flex items-center justify-center text-sm uppercase tracking-wider border border-[#123320]">
                     <i class="fas fa-ticket-alt mr-2 text-base"></i> Ticket
                 </button>
-                <button onclick="generarCierreDelDia()" class="flex-1 bg-[#56070c] hover:bg-[#3d0508] active:scale-95 text-white font-black py-4 rounded-2xl shadow-lg transition flex items-center justify-center text-sm uppercase tracking-wider border border-[#3d0508]">
-                    <i class="fas fa-flag-checkered mr-2 text-base"></i> Cierre del Día
-                </button>
             </div>
         </section>
     </main>
@@ -787,9 +778,6 @@
             <button class="flex-[2] bg-[#56070c] text-white py-3 rounded-xl font-bold text-sm" onclick="confirmarFotoZarpe()"><i class="fas fa-check mr-1"></i> Confirmar</button>
         </div>
     </div>
-
-    <!-- Área de impresión Cierre del Día -->
-    <div id="print-cierre"></div>
 
     <nav class="fixed bottom-0 w-full max-w-md mx-auto bg-white border-t border-gray-200 shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)] z-20 left-1/2 -translate-x-1/2 rounded-t-2xl pb-safe">
         <div class="flex justify-around items-center h-16">

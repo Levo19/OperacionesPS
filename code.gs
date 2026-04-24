@@ -815,6 +815,48 @@ function guardarCierre(payload) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTO-CIERRE DIARIO — se ejecuta a las 8 PM por trigger de tiempo
+// Cierra todas las operaciones que aún estén en estado "Abierta" al final del día.
+// Las operaciones En_Viaje NO se tocan (el capitán debe confirmar llegada manualmente).
+// ─────────────────────────────────────────────────────────────────────────────
+function autoCerrarOpsAbiertas() {
+  const ss       = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const opsSheet = ss.getSheetByName('Operaciones');
+  const data     = opsSheet.getDataRange().getValues();
+  const hoy      = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  let cerradas   = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const idOp   = data[i][0];
+    const fecha  = data[i][1] ? Utilities.formatDate(new Date(data[i][1]), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '';
+    const estado = String(data[i][6] || '');
+    if (fecha !== hoy) continue;
+    if (estado !== 'Abierta') continue;
+
+    opsSheet.getRange(i + 1, 7).setValue('Cerrada');
+    cerradas++;
+  }
+
+  if (cerradas > 0) SpreadsheetApp.flush();
+  Logger.log('autoCerrarOpsAbiertas: ' + cerradas + ' operación(es) cerrada(s) para ' + hoy);
+}
+
+// Ejecuta esta función UNA VEZ desde el editor de GAS para instalar el trigger diario a las 8 PM.
+// Después de correrla, el trigger queda activo para siempre (revísalo en Activadores).
+function instalarTriggerAutoCierre() {
+  // Eliminar triggers anteriores del mismo nombre para evitar duplicados
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'autoCerrarOpsAbiertas') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('autoCerrarOpsAbiertas')
+    .timeBased()
+    .everyDays(1)
+    .atHour(20)   // 8 PM hora del script (verifica zona horaria del proyecto)
+    .create();
+  Logger.log('Trigger instalado: autoCerrarOpsAbiertas todos los días a las 20:00');
+}
+
 // Convertir un pase (aliado) a una compra (agencia).
 // Limpia Id_contactoPase y escribe id_agencia_comprada + monto_comprado (cols 13-15).
 // payload: { id_mov, id_agencia, nombre_agencia, monto }
