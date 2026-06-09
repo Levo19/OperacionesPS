@@ -2643,7 +2643,7 @@ function confirmarAsignacion() {
     // Determine tipo from contactosData
     let contactInfo   = (window.contactosData||[]).find(c => c.nombre === contacto || c.id === contacto);
     let tipoRaw       = contactInfo ? normTipo(contactInfo.tipo) : '';
-    let tipoMovimiento = tipoRaw.includes('aliado')   ? 'Aliado'
+    let tipoMovimiento = tipoRaw.includes('aliado')   ? 'Aliado(PaseIn)'  // normalizado: nunca 'Aliado' pelado (evita pases huérfanos)
                        : tipoRaw.includes('comision') ? 'Comisionado'
                        : 'Agencia'; // default for Agencia or unknown
 

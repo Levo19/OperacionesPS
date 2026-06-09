@@ -469,7 +469,7 @@ function asignarReserva(payload) {
   sheetMov.appendRow([
     newMovId,                                              // col 1  id_mov
     payload.id_operacion,                                 // col 2  id_operacion
-    payload.tipo || 'Agencia',                            // col 3  tipo_movimiento
+    (payload.tipo === 'Aliado' ? 'Aliado(PaseIn)' : (payload.tipo || 'Agencia')), // col 3 tipo_movimiento (candado: 'Aliado' legacy → 'Aliado(PaseIn)')
     payload.id_contacto,                                  // col 4  id_contacto
     payload.nombre_contacto || payload.id_contacto,       // col 5  nombreContacto
     payload.cant_pax,                                     // col 6  cant_pax
