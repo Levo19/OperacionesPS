@@ -38,6 +38,11 @@
   }
   async function logout() { await sb.auth.signOut(); return ok(); }
   async function sesion() { const { data } = await sb.auth.getSession(); return data.session || null; }
+  // estado/horario de la app (controlado desde PS). Callable sin login (anon).
+  async function estadoApp() {
+    try { return await rpc('get_app_estado', { p_app: 'operacionesps' }); }
+    catch (e) { return { existe: false, abierta_ahora: true }; }   // ante fallo, no bloquear
+  }
 
   // ── LECTURAS ────────────────────────────────────────────────
   async function getDashboardData() {
@@ -45,12 +50,12 @@
     catch (e) { return { error: (e && e.message) || 'Error' }; }
   }
   async function getPersonal() {
+    // El login se puebla ANTES de autenticarse → usar el RPC anon-callable
+    // (la tabla `personal` está bajo RLS y devolvería vacío sin sesión).
     try {
-      const { data, error } = await sb.from('personal').select('id,nombre,rol').order('id');
-      if (error) throw error;
-      const norm = s => (s || '').toLowerCase();
-      const personal = (data || []).map(p => ({ id_empleado: p.id, nombre: p.nombre, rol: p.rol }));
-      const operadores = personal.filter(p => norm(p.rol).includes('operador')).map(p => ({ id: p.id_empleado, nombre: p.nombre }));
+      const ops = (await rpc('listar_operadores')) || [];
+      const operadores = ops.map(o => ({ id: o.id, nombre: o.nombre }));
+      const personal   = ops.map(o => ({ id_empleado: o.id, nombre: o.nombre, rol: 'Operador' }));
       return { operadores, personal };
     } catch (e) { return { operadores: [], personal: [] }; }
   }
@@ -161,5 +166,5 @@
     catch (e) { return err(e); }
   }
 
-  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, getDashboardData, getPersonal, post };
+  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post };
 })();

@@ -12,7 +12,7 @@
 // contra Supabase Auth). Probar en navegador antes de dejarlo en true en prod.
 // ============================================================
 (function () {
-  const USE_SUPABASE = false;   // <-- flip a true SOLO tras probar en navegador
+  const USE_SUPABASE = true;    // cutover activo (datos + login + horario via Supabase)
   if (!USE_SUPABASE) { window.__SUPA_CUTOVER__ = false; return; }
   window.__SUPA_CUTOVER__ = true;
 
@@ -37,6 +37,32 @@
     } catch (e) { return _jsonResp({ status: 'error', message: (e && e.message) || 'Error' }); }
     return _origFetch(url, opts);
   };
+
+  // ── (1b) horario/estado de la app desde Supabase (reemplaza el lock 8 PM) ──
+  // Desactiva el lock horario hardcodeado de app.js; ahora manda app_config (editable desde PS).
+  // OJO: hay que reasignar DENTRO de un listener DOMContentLoaded — la *declaración*
+  // `function isJornadaCerrada()` de app.js (que carga después) pisa cualquier asignación
+  // hecha en el top-level del shim. Este listener se registra antes que el de app.js → corre antes.
+  window.addEventListener('DOMContentLoaded', function () { window.isJornadaCerrada = function () { return false; }; });
+  async function gateHorario() {
+    try {
+      const e = await window.SupaAPI.estadoApp();
+      const ol = document.getElementById('lock-overlay');
+      if (!e || e.abierta_ahora) { if (ol) ol.classList.remove('active'); return true; }
+      // cerrada / fuera de horario → mostrar lock con el mensaje configurado
+      if (typeof activarLock === 'function') activarLock();
+      else if (ol) ol.classList.add('active');
+      const fd = document.getElementById('lock-fecha');
+      if (fd) {
+        const txt = e.estado === 'mantenimiento' ? 'En mantenimiento'
+          : e.mensaje ? e.mensaje
+          : (e.hora_apertura && e.hora_cierre) ? ('Horario: ' + e.hora_apertura + ' a ' + e.hora_cierre) : 'Cerrado';
+        fd.textContent = txt;
+      }
+      return false;
+    } catch (err) { return true; }   // ante error, no bloquear
+  }
+  window.addEventListener('DOMContentLoaded', gateHorario);
 
   // ── (2) login con PIN al elegir operador ─────────────────────
   function pedirPin(nombre) {
@@ -80,6 +106,8 @@
         return window.seleccionarOperador(nombre);    // reintentar
       }
       orig(nombre);                                   // completa el login local (myOpName, toast, etc.)
+      gateHorario();                                   // re-evalúa estado/horario tras entrar
+      if (typeof fetchDashboardData === 'function') fetchDashboardData();  // poblar el dashboard ya (no esperar al poll)
     };
   });
 
