@@ -3,6 +3,25 @@
 Migración camino **B** (PWA directo), proyecto Supabase **nuevo** del grupo PS.
 Plan completo: `../PLAN_MIGRACION_SUPABASE.md`.
 
+## ESTADO GLOBAL (2026-06-09) — backend 100% validado contra el Supabase real
+| Pieza | Archivo | Validación |
+|---|---|---|
+| Schema (9 tablas) | `schema.sql` | levanta limpio; FKs ajustadas (caja.movimiento_id y operacion_id = soft-ref) |
+| Backfill Sheets→PG | `backfill.js` | 15/3/84/5/70/494/152/216; skips 0 |
+| Cuadre balances vs GAS | `cuadre.js` | **0 diferencias** (agencias 62866/9105/55761/0, aliados 12, caja 19d 11933/3242) |
+| Auth PIN | `auth.sql` | seed_operador/mi_rol/es_staff/listar_operadores; login 200+token, PIN malo 400 |
+| 5 operadores sembrados | `_seed_real.js` | EMP-07..11, login OK 5/5; PINs temp en `pins.json` (gitignore) |
+| 21 RPCs (writes) | `functions.sql` | **31/31** asserts (`_test_rpcs.js`, ROLLBACK, footprint 0) |
+| RLS + cron + storage | `infra.sql` | anon→0 (deny), staff lee; cron 'auto-cierre-ps' activo; bucket 'operaciones' |
+| Dashboard read | `dashboard.sql` | get_dashboard() **cuadra 0 dif** vs getDashboardData GAS |
+| Data layer frontend | `../supabase-data.js` | window.SupaAPI; mapeo params **78/78** vs firmas reales |
+| Wiring (flag) | `../supabase-shim.js` | reenruta fetch(GAS) a SupaAPI + login PIN; USE_SUPABASE=false |
+
+**ÚNICO PENDIENTE:** probar en navegador y flip `USE_SUPABASE=true` en `supabase-shim.js`. Luego: rotar el password de la DB (se compartió en chat). Migración del PS Panel (lecturas a supabase-js + sembrar a Patricia/Administrador) = fase aparte.
+
+### Orden para levantar el proyecto desde cero
+`schema.sql` → `views.sql` → `functions.sql` → `auth.sql` → `dashboard.sql` → `infra.sql` (las 3 sentencias de pg_cron por separado) → `backfill.js` → `_seed_real.js`.
+
 ## Estado (validado ejecutando Postgres 18 vía PGlite)
 | Artefacto | Qué es | Validado |
 |---|---|---|
