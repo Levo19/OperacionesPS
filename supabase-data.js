@@ -47,7 +47,9 @@
   // ── LECTURAS ────────────────────────────────────────────────
   async function getDashboardData() {
     try { return await rpc('get_dashboard'); }   // ya viene con la forma exacta del GAS
-    catch (e) { return { error: (e && e.message) || 'Error' }; }
+    // status:'error' → app.js toma su rama limpia (_forceRenderEmpty) en vez de
+    // seguir con campos undefined y reventar en renderCatalogos.
+    catch (e) { return { status: 'error', error: (e && e.message) || 'Error' }; }
   }
   async function getPersonal() {
     // El login se puebla ANTES de autenticarse → usar el RPC anon-callable
