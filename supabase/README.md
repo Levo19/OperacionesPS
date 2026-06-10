@@ -10,7 +10,7 @@ Plan completo: `../PLAN_MIGRACION_SUPABASE.md`.
 | `views.sql` → `v_balance_agencias` | cuenta corriente agencias (S/): facturado − (cobros_mov + abonos), ventas − pago_agencia | ✅ cuadra (310/350/te_debe −40; cancelados excluidos; adicionales jsonb sumado) |
 | `views.sql` → `v_balance_aliados` | balance de pases (pax): PaseIn(id_contacto) − PaseOut(contacto_pase) | ✅ cuadra (in 7 / out 3 / neto 4) |
 | `views.sql` → `v_caja_items` | feed de caja clasificado ingreso/egreso + label + día TZ Lima | ✅ Cobro/Abono/Pago/Varios `[S]`=egreso |
-| `functions.sql` → `registrar_movimiento(...)` | RPC con `FOR UPDATE` que valida aforo atómicamente (mata el LockService) | ✅ overbooking bloqueado |
+| `functions.sql` → `registrar_movimiento(...)` | RPC con `FOR UPDATE` que valida aforo atómicamente (mata el LockService). **Excluye `pasado` y `cancelado`** (PaseOut no ocupa el bote, fiel al GAS `CheckCapacidadDisponible`) | ✅ overbooking bloqueado en 10, PaseOut excluido |
 
 ## ⚠️ Reglas críticas del backfill (cazadas ejecutando)
 - **Vacíos → NULL en TODAS las columnas FK** (`operacion_id`, `contacto_id`, `movimiento_id`, `contacto_pase_id`, `agencia_comprada_id`). Un `''` rompe el FK; las vistas usan `coalesce(...,'')` para detectar "sin movimiento" (abono).

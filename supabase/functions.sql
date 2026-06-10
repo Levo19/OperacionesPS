@@ -1,10 +1,15 @@
+-- Aforo fiel al GAS: ocupan el bote los movimientos que NO están 'pasado' ni 'cancelado'
+-- (PaseOut='Pasado' = pax enviado a otra lancha → NO ocupa; Cancelado tampoco).
 create or replace function registrar_movimiento(p_id text,p_op text,p_tipo text,p_contacto text,p_pax int,p_precio numeric,p_monto numeric,p_operador text)
 returns text language plpgsql as $$
 declare v_cap int; v_ocupados int;
 begin
   perform 1 from operaciones where id=p_op for update;          -- lock fila operación
   select e.capacidad_pax into v_cap from operaciones o join embarcaciones e on e.id=o.bote_id where o.id=p_op;
-  select coalesce(sum(cant_pax),0) into v_ocupados from movimientos where operacion_id=p_op and lower(coalesce(estado,'')) not like '%cancel%';
+  select coalesce(sum(cant_pax),0) into v_ocupados from movimientos
+   where operacion_id=p_op
+     and lower(coalesce(estado,'')) not like '%pasado%'
+     and lower(coalesce(estado,'')) not like '%cancel%';
   if v_cap is not null and v_ocupados + p_pax > v_cap then
     raise exception 'AFORO: solo quedan % cupos (cap %, ocupados %)', v_cap-v_ocupados, v_cap, v_ocupados;
   end if;
