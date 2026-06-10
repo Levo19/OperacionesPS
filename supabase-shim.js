@@ -64,97 +64,172 @@
   }
   window.addEventListener('DOMContentLoaded', gateHorario);
 
-  // ── AUTODIAGNÓSTICO visible (en el tag de versión) ───────────
-  // Muestra dónde se rompe: SupaAPI cargado? operadores llegan? error?
-  window.addEventListener('DOMContentLoaded', async function () {
-    const tag = document.getElementById('ver-tag');
-    const ver = (typeof OPS_VERSION !== 'undefined') ? OPS_VERSION : 'v?';
-    const set = (s) => { if (tag) tag.textContent = ver + ' ' + s; };
-    if (!window.SupaAPI) { set('SupaAPI:NO'); return; }
-    set('cargando…');
-    try {
-      const r = await window.SupaAPI.listarOperadores();
-      const ops = (r && r.operadores) || [];
-      set('ops:' + ops.length);
-      // POPULAR el login directamente (no depender del fetch interceptado de app.js,
-      // que no transiciona la pantalla aunque la data llegue).
-      if (ops.length) {
-        window.catalogosData = window.catalogosData || {};
-        window.catalogosData.operadores = ops;
-        if (typeof _loginEstado === 'function') _loginEstado('listo');
-      }
-    } catch (e) { set('ERR:' + ((e && e.message) || 'x').slice(0, 24)); }
-  });
+  // ════════════════════════════════════════════════════════════
+  //  LOGIN MODERNO (selección de usuario + teclado PIN)
+  //  Paleta guinda #56070c / dorado #e8b840. Sonidos + animaciones.
+  // ════════════════════════════════════════════════════════════
+  let origSeleccionar = null;
 
-  // ── (1c) forzar login si no hay sesión Supabase ──────────────
-  // app.js restaura el operador guardado (sot_operador) del login viejo por-nombre
-  // y se SALTA el modal → nunca se abre sesión Supabase → todos los RPCs dan NO_AUTH
-  // y el muelle queda "cargando" para siempre. Si no hay sesión, limpiamos el
-  // operador rancio y abrimos el login (que ahora pide PIN).
-  window.addEventListener('DOMContentLoaded', async function () {
-    try {
-      const s = await window.SupaAPI.sesion();
-      if (!s) {
-        try { localStorage.removeItem('sot_operador'); } catch (e) {}
-        if (typeof window.myOpName !== 'undefined') window.myOpName = null;
-        if (typeof mostrarModalLogin === 'function') mostrarModalLogin(false);
-      }
-    } catch (e) {}
-  });
+  // ── sonido (WebAudio, iOS-safe) ──
+  let _ac;
+  function ac() { try { if (!_ac) _ac = new (window.AudioContext || window.webkitAudioContext)(); if (_ac.state === 'suspended') _ac.resume(); } catch (e) {} return _ac; }
+  function beep(freq, dur, type, vol) {
+    const a = ac(); if (!a) return;
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'sine'; o.frequency.value = freq; o.connect(g); g.connect(a.destination);
+    const t = a.currentTime; g.gain.setValueAtTime(vol || 0.05, t); g.gain.exponentialRampToValueAtTime(0.0001, t + (dur || 0.12));
+    o.start(t); o.stop(t + (dur || 0.12));
+  }
+  const sTap = () => beep(420, 0.05, 'sine', 0.035);
+  const sOk  = () => { beep(680, 0.1, 'sine', 0.05); setTimeout(() => beep(1020, 0.16, 'sine', 0.05), 95); };
+  const sErr = () => { beep(170, 0.22, 'square', 0.05); };
+  const ini  = (n) => (n || '?').split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-  // ── (2) login con PIN al elegir operador ─────────────────────
-  function pedirPin(nombre) {
-    return new Promise((resolve) => {
-      let ov = document.createElement('div');
-      ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:99999';
-      ov.innerHTML =
-        '<div style="background:#0f172a;border:1px solid rgba(255,255,255,.15);border-radius:18px;padding:22px;width:min(92vw,340px);color:#fff;font-family:inherit;text-align:center">' +
-        '<div style="font-weight:800;font-size:1.05rem;margin-bottom:4px">Hola, ' + nombre + '</div>' +
-        '<div style="opacity:.7;font-size:.85rem;margin-bottom:14px">Ingresa tu PIN</div>' +
-        '<input id="_pin_in" type="tel" inputmode="numeric" autocomplete="off" maxlength="8" ' +
-        'style="width:100%;text-align:center;font-size:1.6rem;letter-spacing:.4em;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;margin-bottom:6px">' +
-        '<div id="_pin_err" style="color:#f87171;font-size:.8rem;height:1.1em;margin-bottom:10px"></div>' +
-        '<div style="display:flex;gap:8px">' +
-        '<button id="_pin_x" style="flex:1;padding:11px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#fff;font-weight:700">Cancelar</button>' +
-        '<button id="_pin_ok" style="flex:2;padding:11px;border-radius:12px;border:0;background:#22c55e;color:#06270f;font-weight:800">Entrar</button>' +
-        '</div></div>';
-      document.body.appendChild(ov);
-      const inp = ov.querySelector('#_pin_in'); const errEl = ov.querySelector('#_pin_err');
-      setTimeout(() => inp.focus(), 50);
-      const close = (v) => { ov.remove(); resolve(v); };
-      ov.querySelector('#_pin_x').onclick = () => close(null);
-      const submit = () => { const v = inp.value.trim(); if (!v) { errEl.textContent = 'Escribe tu PIN'; return; } close(v); };
-      ov.querySelector('#_pin_ok').onclick = submit;
-      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-    });
+  function injectCSS() {
+    if (document.getElementById('sl-css')) return;
+    const st = document.createElement('style'); st.id = 'sl-css';
+    st.textContent = `
+      #modal-login{display:none!important}
+      .sl-ov{position:fixed;top:0;left:0;width:100%;height:100%;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+        background:radial-gradient(circle at 50% -8%,#6b0e12 0%,#2e0406 46%,#0a0608 100%);color:#fff;font-family:inherit;padding:max(34px,8vh) 18px 28px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+      .sl-ov.sl-hide{display:none}
+      .sl-logo{font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:#e8b840;font-weight:800;margin-bottom:6px;text-align:center}
+      .sl-h{font-size:23px;font-weight:900;text-align:center;margin:0 0 3px}
+      .sl-sub{font-size:13px;color:rgba(255,255,255,.6);text-align:center;margin-bottom:24px}
+      .sl-last{display:flex;flex-direction:column;align-items:center;gap:9px;margin-bottom:8px;cursor:pointer;animation:slpop .4s ease}
+      .sl-last .sl-av{width:92px;height:92px;font-size:33px;box-shadow:0 0 0 3px rgba(232,184,64,.5),0 10px 30px rgba(0,0,0,.5)}
+      .sl-last .sl-nm{font-size:16px;font-weight:800}
+      .sl-cont{font-size:11px;color:#e8b840;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+      .sl-div{display:flex;align-items:center;gap:10px;width:100%;max-width:380px;margin:18px 0 14px;color:rgba(255,255,255,.35);font-size:11px;text-transform:uppercase;letter-spacing:.1em}
+      .sl-div::before,.sl-div::after{content:"";flex:1;height:1px;background:rgba(255,255,255,.12)}
+      .sl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:100%;max-width:380px}
+      .sl-card{display:flex;flex-direction:column;align-items:center;gap:7px;padding:15px 6px;border-radius:18px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);cursor:pointer;transition:transform .12s,background .2s,border-color .2s}
+      .sl-card:active{transform:scale(.92);background:rgba(232,184,64,.12);border-color:rgba(232,184,64,.4)}
+      .sl-av{width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;background:linear-gradient(135deg,#a51d23,#56070c);color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.45)}
+      .sl-av.gold{background:linear-gradient(135deg,#f0c659,#c8920f);color:#2e0406}
+      .sl-nm{font-size:12px;font-weight:700;text-align:center;line-height:1.2}
+      .sl-pinwrap{display:flex;flex-direction:column;align-items:center;width:100%;max-width:330px;margin:0 auto;animation:slslide .35s ease}
+      .sl-dots{display:flex;gap:15px;margin:20px 0 26px}
+      .sl-dot{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.3);transition:all .15s}
+      .sl-dot.on{background:#e8b840;border-color:#e8b840;transform:scale(1.15);box-shadow:0 0 10px rgba(232,184,64,.6)}
+      .sl-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:15px;width:100%}
+      .sl-key{aspect-ratio:1;max-width:76px;width:100%;margin:0 auto;border-radius:50%;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#fff;font-size:25px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .1s,background .15s;-webkit-tap-highlight-color:transparent;user-select:none}
+      .sl-key:active{transform:scale(.88);background:rgba(232,184,64,.25)}
+      .sl-key.sl-ghost{background:none;border:none;cursor:default}
+      .sl-back{position:absolute;top:20px;left:18px;background:none;border:none;color:#fff;font-size:26px;cursor:pointer;opacity:.7;padding:6px}
+      .sl-err{color:#fca5a5;font-size:13px;height:18px;margin-top:14px;font-weight:600}
+      .sl-shake{animation:slshake .4s}
+      .sl-okflash{animation:slok .5s ease}
+      @keyframes slshake{0%,100%{transform:translateX(0)}20%{transform:translateX(-10px)}40%{transform:translateX(10px)}60%{transform:translateX(-7px)}80%{transform:translateX(7px)}}
+      @keyframes slpop{from{transform:scale(.8);opacity:0}to{transform:scale(1);opacity:1}}
+      @keyframes slslide{from{transform:translateX(28px);opacity:0}to{transform:translateX(0);opacity:1}}
+      @keyframes slok{0%{box-shadow:0 0 0 0 rgba(74,222,128,0)}50%{box-shadow:0 0 0 14px rgba(74,222,128,.25)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+    `;
+    document.head.appendChild(st);
   }
 
-  window.addEventListener('DOMContentLoaded', function () {
-    const orig = window.seleccionarOperador;
-    if (typeof orig !== 'function') return;
-    window.seleccionarOperador = async function (nombre) {
-      const ops = (window.catalogosData && window.catalogosData.operadores) || [];
-      const op = ops.find(o => o.nombre === nombre);
-      const empId = (op && op.id) || nombre;
-      const pin = await pedirPin(nombre);
-      if (pin === null) return;                       // canceló
-      const r = await window.SupaAPI.login(empId, pin);
-      if (!r || r.status !== 'success') {
-        if (typeof mostrarToast === 'function') mostrarToast('❌ PIN incorrecto', 'error');
-        return window.seleccionarOperador(nombre);    // reintentar
-      }
-      orig(nombre);                                   // completa el login local (myOpName, toast, etc.)
-      gateHorario();                                   // re-evalúa estado/horario tras entrar
-      if (typeof fetchDashboardData === 'function') fetchDashboardData();  // poblar el dashboard ya (no esperar al poll)
-    };
-  });
+  let _ops = [], _sel = null, _pin = '', _busy = false;
 
-  // al cerrar sesión local, cerrar también la de Supabase
-  window.addEventListener('DOMContentLoaded', function () {
-    const origOut = window.cerrarSesion || window.logout;
-    if (typeof origOut === 'function') {
-      const name = window.cerrarSesion ? 'cerrarSesion' : 'logout';
-      window[name] = function () { try { window.SupaAPI.logout(); } catch (e) {} return origOut.apply(this, arguments); };
+  function ensureOverlay() {
+    let ov = document.getElementById('sl-ov');
+    if (!ov) { ov = document.createElement('div'); ov.id = 'sl-ov'; ov.className = 'sl-ov sl-hide'; document.body.appendChild(ov); }
+    return ov;
+  }
+  const hideLogin = () => { const ov = document.getElementById('sl-ov'); if (ov) ov.classList.add('sl-hide'); };
+
+  function renderPick() {
+    _sel = null; _pin = '';
+    const ov = ensureOverlay();
+    const lastId = (() => { try { return localStorage.getItem('sot_last_op_id'); } catch (e) { return null; } })();
+    const last = lastId ? _ops.find(o => o.id === lastId) : null;
+    const others = last ? _ops.filter(o => o.id !== last.id) : _ops;
+    let html = `<div class="sl-logo">Operaciones PS</div><div class="sl-h">¿Quién eres?</div><div class="sl-sub">Toca tu usuario para entrar</div>`;
+    if (last) {
+      html += `<div class="sl-last" data-id="${last.id}"><div class="sl-av gold">${ini(last.nombre)}</div><div class="sl-nm">${last.nombre}</div><div class="sl-cont">▸ Continuar</div></div>`;
+      if (others.length) html += `<div class="sl-div">otros</div>`;
+    }
+    html += `<div class="sl-grid">` + others.map(o => `<div class="sl-card" data-id="${o.id}"><div class="sl-av">${ini(o.nombre)}</div><div class="sl-nm">${o.nombre}</div></div>`).join('') + `</div>`;
+    ov.innerHTML = html;
+    ov.querySelectorAll('[data-id]').forEach(el => el.addEventListener('click', () => { sTap(); pickUser(el.getAttribute('data-id')); }));
+    ov.classList.remove('sl-hide');
+  }
+
+  function renderPin() {
+    const ov = ensureOverlay();
+    ov.innerHTML =
+      `<button class="sl-back" id="sl-back">←</button>` +
+      `<div style="margin-top:8px" class="sl-av gold">${ini(_sel.nombre)}</div>` +
+      `<div class="sl-h" style="margin-top:12px">${_sel.nombre}</div>` +
+      `<div class="sl-sub">Ingresa tu PIN</div>` +
+      `<div class="sl-pinwrap"><div class="sl-dots" id="sl-dots">${[0,1,2,3].map(()=>'<div class="sl-dot"></div>').join('')}</div>` +
+      `<div class="sl-keys">` + ['1','2','3','4','5','6','7','8','9'].map(d=>`<button class="sl-key" data-k="${d}">${d}</button>`).join('') +
+      `<button class="sl-key sl-ghost"></button><button class="sl-key" data-k="0">0</button><button class="sl-key" data-k="del">⌫</button>` +
+      `</div><div class="sl-err" id="sl-err"></div></div>`;
+    ov.querySelector('#sl-back').addEventListener('click', () => { sTap(); renderPick(); });
+    ov.querySelectorAll('[data-k]').forEach(b => b.addEventListener('click', () => keyPress(b.getAttribute('data-k'))));
+    ov.classList.remove('sl-hide');
+  }
+
+  function pickUser(id) { _sel = _ops.find(o => o.id === id); if (!_sel) return; _pin = ''; renderPin(); }
+
+  function paintDots(shake) {
+    const dots = document.querySelectorAll('#sl-dots .sl-dot');
+    dots.forEach((d, i) => d.classList.toggle('on', i < _pin.length));
+    if (shake) { const w = document.getElementById('sl-dots'); if (w) { w.classList.add('sl-shake'); setTimeout(() => w.classList.remove('sl-shake'), 420); } }
+  }
+
+  async function keyPress(k) {
+    if (_busy) return;
+    if (k === 'del') { _pin = _pin.slice(0, -1); sTap(); paintDots(); return; }
+    if (_pin.length >= 4) return;
+    _pin += k; sTap(); paintDots();
+    if (_pin.length === 4) { _busy = true; await submitPin(); _busy = false; }
+  }
+
+  async function submitPin() {
+    const errEl = document.getElementById('sl-err');
+    const r = await window.SupaAPI.login(_sel.id, _pin);
+    if (!r || r.status !== 'success') {
+      sErr(); paintDots(true);
+      if (errEl) errEl.textContent = 'PIN incorrecto';
+      _pin = ''; setTimeout(paintDots, 450);
+      return;
+    }
+    sOk();
+    const ov = document.getElementById('sl-ov'); if (ov) ov.classList.add('sl-okflash');
+    try { localStorage.setItem('sot_last_op_id', _sel.id); } catch (e) {}
+    setTimeout(() => {
+      hideLogin();
+      if (typeof origSeleccionar === 'function') origSeleccionar(_sel.nombre);   // setea myOpName, sot_operador, label, toast
+      gateHorario();
+      if (typeof fetchDashboardData === 'function') fetchDashboardData();
+    }, 320);
+  }
+
+  async function abrirLogin() {
+    injectCSS(); ensureOverlay();
+    if (!_ops.length) {
+      try { const res = await window.SupaAPI.listarOperadores(); _ops = (res && res.operadores) || []; } catch (e) { _ops = []; }
+    }
+    renderPick();
+  }
+
+  window.addEventListener('DOMContentLoaded', async function () {
+    injectCSS();
+    origSeleccionar = window.seleccionarOperador;          // el real de app.js
+    window.mostrarModalLogin = function () { abrirLogin(); };   // cualquier intento de login → mi overlay
+    // cerrar sesión Supabase al cerrar sesión local
+    ['cerrarSesion', 'logout'].forEach(n => {
+      const o = window[n];
+      if (typeof o === 'function') window[n] = function () { try { window.SupaAPI.logout(); } catch (e) {} try { localStorage.removeItem('sot_last_op_id'); } catch (e) {} return o.apply(this, arguments); };
+    });
+    // precargar operadores y, si no hay sesión, abrir el login moderno
+    try { const res = await window.SupaAPI.listarOperadores(); _ops = (res && res.operadores) || []; } catch (e) {}
+    const tag = document.getElementById('ver-tag'); if (tag && typeof OPS_VERSION !== 'undefined') tag.textContent = OPS_VERSION;
+    let sesion = null; try { sesion = await window.SupaAPI.sesion(); } catch (e) {}
+    if (!sesion) {
+      try { localStorage.removeItem('sot_operador'); } catch (e) {}
+      abrirLogin();
     }
   });
 })();
