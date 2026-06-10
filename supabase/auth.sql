@@ -18,6 +18,15 @@ create or replace function es_staff() returns boolean
   language sql stable security definer set search_path = public, auth as
 $$ select exists(select 1 from app_usuarios where auth_uid = auth.uid() and activo) $$;
 
+-- Lista pública de operadores (para poblar el login ANTES de autenticarse).
+-- Solo nombre + email sintético; sin PIN ni datos sensibles. Callable por anon.
+create or replace function listar_operadores()
+  returns table(id text, nombre text, email text)
+  language sql stable security definer set search_path=public as
+$$ select id, nombre, lower(id)||'@paracas.local' from app_usuarios
+   where rol='Operador' and activo order by nombre $$;
+grant execute on function listar_operadores() to anon, authenticated;
+
 -- Alta/actualizacion idempotente de un operador con PIN.
 -- Crea (o re-apunta) el usuario en auth.users con email {id}@paracas.local y
 -- password=p_pin cifrado bcrypt, y lo mapea en app_usuarios. Re-ejecutable:
