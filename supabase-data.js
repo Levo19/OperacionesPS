@@ -34,7 +34,14 @@
     String(s).split(',').forEach(p => { const i = p.indexOf(':'); if (i > 0) { const k = p.slice(0, i).trim().toLowerCase(); const v = parseFloat(p.slice(i + 1)); if (k && !isNaN(v)) o[k] = v; } });
     return o;
   };
-  const rpc = async (fn, args) => { const { data, error } = await sb.rpc(fn, args || {}); if (error) throw error; return data; };
+  // TODO el data path va por fetch directo a PostgREST (con el token de sesión),
+  // NO por sb.rpc — el cliente supabase-js se cuelga en algunos navegadores.
+  // El cliente queda SOLO para auth (signIn/getSession/signOut).
+  const rpc = async (fn, args) => {
+    let token;
+    try { const { data } = await sb.auth.getSession(); token = data && data.session && data.session.access_token; } catch (e) {}
+    return restRpc(fn, args, token);
+  };
 
   // ── AUTH ────────────────────────────────────────────────────
   async function listarOperadores() {
