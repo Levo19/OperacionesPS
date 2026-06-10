@@ -21,9 +21,13 @@
   async function restRpc(fn, body, token) {
     const headers = { apikey: SUPABASE_ANON, 'Content-Type': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
-    const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'POST', headers, body: JSON.stringify(body || {}) });
-    if (!r.ok) { let m = 'Error'; try { m = (await r.json()).message || m; } catch (e) {} throw new Error(m); }
-    const txt = await r.text(); return txt ? JSON.parse(txt) : null;
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 15000);   // nunca colgar infinito
+    try {
+      const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'POST', headers, body: JSON.stringify(body || {}), signal: ctrl.signal });
+      if (!r.ok) { let m = 'Error'; try { m = (await r.json()).message || m; } catch (e) {} throw new Error(m); }
+      const txt = await r.text(); return txt ? JSON.parse(txt) : null;
+    } finally { clearTimeout(tid); }
   }
 
   const ok  = (extra) => Object.assign({ status: 'success' }, extra || {});
