@@ -12,6 +12,27 @@ Plan completo: `../PLAN_MIGRACION_SUPABASE.md`.
 | `views.sql` → `v_caja_items` | feed de caja clasificado ingreso/egreso + label + día TZ Lima | ✅ Cobro/Abono/Pago/Varios `[S]`=egreso |
 | `functions.sql` → `registrar_movimiento(...)` | RPC con `FOR UPDATE` que valida aforo atómicamente (mata el LockService). **Excluye `pasado` y `cancelado`** (PaseOut no ocupa el bote, fiel al GAS `CheckCapacidadDisponible`) | ✅ overbooking bloqueado en 10, PaseOut excluido |
 
+## ✅ Backfill + cuadre REAL (2026-06-09)
+`backfill.js` carga `dump.json` (volcado vía GAS `dump_operaciones`) al Postgres real.
+`cuadre.js` compara las 3 vistas contra los endpoints GAS en vivo (fuente de verdad Sheets).
+**Resultado: 0 diferencias al centavo.**
+
+| Tabla | filas | | Vista vs GAS | cuadra |
+|---|---|---|---|---|
+| personal | 15 | | agencias (34) facturado 62866 / cobrado 9105 / te_deben 55761 / le_debo 0 | ✅ |
+| embarcaciones | 3 | | aliados (12) | ✅ |
+| contactos | 84 | | caja (19 días) ingresos 11933 / egresos 3242 | ✅ |
+| operaciones | 70 | | | |
+| movimientos | 494 | | | |
+| caja_operador | 152 | | | |
+| reservas | 216 | | | |
+
+**Bugs cazados en la revisión senior del backfill:**
+1. PK/columnas con nombre real por hoja: `id_operacion` (no `id`), `id_reserva`+`fecha_tour`/`nombre_cliente_final`, caja `Id_Contacto`/`timestamp_transaccion` (mayúsculas). Sin esto: 0 operaciones, 0 reservas, caja con contacto/ts NULL.
+2. `fecha` es timestamp ISO con `Z` → cortar a `YYYY-MM-DD` para columnas `date` (el `05:00Z` = medianoche Lima).
+3. **`caja_operador.movimiento_id` debe ser soft-ref (sin FK)**: un cobro cuyo mov fue purgado (histórico) referenciaba un id huérfano; la FK forzaba `null` → la vista lo leía como **abono** (falso +450). Igual criterio que `operacion_id`.
+4. Vista agencias: filtro final espeja `.filter(a=>a.facturado||...)` de GAS → descarta agencias todo-en-cero (mov de cargo 0).
+
 ## ⚠️ Reglas críticas del backfill (cazadas ejecutando)
 - **Vacíos → NULL en TODAS las columnas FK** (`operacion_id`, `contacto_id`, `movimiento_id`, `contacto_pase_id`, `agencia_comprada_id`). Un `''` rompe el FK; las vistas usan `coalesce(...,'')` para detectar "sin movimiento" (abono).
 - **`tipo` de contacto** normalizado a minúscula/trim (`'Agencia '` → `'agencia'`).

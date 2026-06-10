@@ -42,7 +42,9 @@ select c.id, c.nombre,
   coalesce(cm.cobrado_mov,0)+coalesce(ab.abonado,0) as cobrado,
   coalesce(v.comprado,0) as comprado, coalesce(p.pagado,0) as pagado,
   coalesce(f.facturado,0)-(coalesce(cm.cobrado_mov,0)+coalesce(ab.abonado,0)) as te_debe,
-  coalesce(v.comprado,0)-coalesce(p.pagado,0) as le_debo
+  coalesce(v.comprado,0)-coalesce(p.pagado,0) as le_debo,
+  (coalesce(f.facturado,0)-(coalesce(cm.cobrado_mov,0)+coalesce(ab.abonado,0)))
+    -(coalesce(v.comprado,0)-coalesce(p.pagado,0)) as neto
 from contactos c
 left join fact f on f.ag_id=c.id
 left join cobros_mov cm on cm.ag_id=c.id
@@ -50,7 +52,11 @@ left join abonos ab on ab.ag_id=c.id
 left join ventas v on v.ag_id=c.id
 left join pagos p on p.ag_id=c.id
 where c.tipo='agencia'
-  and coalesce(f.facturado,v.comprado,cm.cobrado_mov,ab.abonado,p.pagado) is not null;
+  -- espeja el filtro de GAS (.filter(a=>a.facturado||a.cobrado||a.comprado||a.pagado)): descarta agencias todo-en-cero
+  and ( coalesce(f.facturado,0)<>0
+     or coalesce(cm.cobrado_mov,0)+coalesce(ab.abonado,0)<>0
+     or coalesce(v.comprado,0)<>0
+     or coalesce(p.pagado,0)<>0 );
 create or replace view v_balance_aliados as
 with pin as (
   select m.contacto_id as ali_id, sum(m.cant_pax) as pax_in

@@ -68,7 +68,7 @@ create table caja_operador (
   foto_url      text,
   operador      text,
   ts            timestamptz default now(),
-  movimiento_id text references movimientos(id)
+  movimiento_id text                              -- soft ref: un mov historico purgado puede seguir referenciado por su cobro
 );
 create table reservas (
   id          text primary key,
