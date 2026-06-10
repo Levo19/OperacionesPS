@@ -93,6 +93,7 @@
       .sl-ov{position:fixed;top:0;left:0;width:100%;height:100%;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
         background:radial-gradient(circle at 50% -8%,#6b0e12 0%,#2e0406 46%,#0a0608 100%);color:#fff;font-family:inherit;padding:max(34px,8vh) 18px 28px;overflow-y:auto;-webkit-overflow-scrolling:touch}
       .sl-ov.sl-hide{display:none}
+      .sl-brand{width:76px;height:76px;border-radius:22px;margin-bottom:14px;box-shadow:0 10px 30px rgba(0,0,0,.55);display:block}
       .sl-logo{font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:#e8b840;font-weight:800;margin-bottom:6px;text-align:center}
       .sl-h{font-size:23px;font-weight:900;text-align:center;margin:0 0 3px}
       .sl-sub{font-size:13px;color:rgba(255,255,255,.6);text-align:center;margin-bottom:24px}
@@ -143,7 +144,8 @@
     const lastId = (() => { try { return localStorage.getItem('sot_last_op_id'); } catch (e) { return null; } })();
     const last = lastId ? _ops.find(o => o.id === lastId) : null;
     const others = last ? _ops.filter(o => o.id !== last.id) : _ops;
-    let html = `<div class="sl-logo">Operaciones PS</div><div class="sl-h">¿Quién eres?</div><div class="sl-sub">Toca tu usuario para entrar</div>`;
+    let html = `<img class="sl-brand" src="icon.svg" alt="OPS">` +
+               `<div class="sl-logo">Operaciones PS</div><div class="sl-h">¿Quién eres?</div><div class="sl-sub">Toca tu usuario para entrar</div>`;
     if (last) {
       html += `<div class="sl-last" data-id="${last.id}"><div class="sl-av gold">${ini(last.nombre)}</div><div class="sl-nm">${last.nombre}</div><div class="sl-cont">▸ Continuar</div></div>`;
       if (others.length) html += `<div class="sl-div">otros</div>`;
