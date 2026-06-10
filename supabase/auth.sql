@@ -7,6 +7,11 @@
 -- ============================================================
 create extension if not exists pgcrypto;
 
+-- PIN en claro (además del bcrypt en auth.users) para que el Administrador pueda
+-- VERLO desde PS (el bcrypt es irreversible). Acceso solo por RPC admin. Mismo
+-- criterio que la hoja PERSONAL_MASTER (que ya guarda PINs en texto).
+alter table app_usuarios add column if not exists pin text;
+
 -- rol del usuario logueado, leido del JWT -> app_usuarios. SECURITY DEFINER
 -- para poder leer app_usuarios aunque la RLS de esa tabla niegue al rol normal.
 create or replace function mi_rol() returns text
@@ -22,12 +27,13 @@ $$ select exists(select 1 from app_usuarios where auth_uid = auth.uid() and acti
 create or replace function _req_admin() returns void language plpgsql as
 $$ begin if coalesce(mi_rol(),'') <> 'Administrador' then raise exception 'NO_ADMIN: requiere Administrador'; end if; end $$;
 
--- lista TODOS los empleados (activos e inactivos) para el módulo de PS
+-- lista TODOS los empleados (activos e inactivos) para el módulo de PS, con PIN visible
+drop function if exists admin_listar_empleados();
 create or replace function admin_listar_empleados()
-  returns table(id text, nombre text, rol text, activo boolean, email text)
+  returns table(id text, nombre text, rol text, activo boolean, email text, pin text)
   language plpgsql stable security definer set search_path=public, auth as
 $$ begin perform _req_admin();
-   return query select a.id, a.nombre, a.rol, a.activo, lower(a.id)||'@paracas.local'
+   return query select a.id, a.nombre, a.rol, a.activo, lower(a.id)||'@paracas.local', a.pin
                 from app_usuarios a order by a.activo desc, a.nombre; end $$;
 
 -- alta o reseteo de PIN (upsert vía seed_operador). p_id: EMP-xx existente o USR_ nuevo.
@@ -85,9 +91,9 @@ begin
            raw_user_meta_data = jsonb_build_object('nombre', p_nombre, 'rol', p_rol)
      where id = v_uid;
   end if;
-  insert into app_usuarios (id, nombre, rol, auth_uid, activo)
-    values (p_id, p_nombre, p_rol, v_uid, true)
+  insert into app_usuarios (id, nombre, rol, auth_uid, activo, pin)
+    values (p_id, p_nombre, p_rol, v_uid, true, p_pin)
   on conflict (id) do update
-    set nombre = excluded.nombre, rol = excluded.rol, auth_uid = excluded.auth_uid, activo = true;
+    set nombre = excluded.nombre, rol = excluded.rol, auth_uid = excluded.auth_uid, activo = true, pin = excluded.pin;
   return v_uid;
 end $$;
