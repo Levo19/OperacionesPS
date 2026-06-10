@@ -64,6 +64,22 @@
   }
   window.addEventListener('DOMContentLoaded', gateHorario);
 
+  // ── (1c) forzar login si no hay sesión Supabase ──────────────
+  // app.js restaura el operador guardado (sot_operador) del login viejo por-nombre
+  // y se SALTA el modal → nunca se abre sesión Supabase → todos los RPCs dan NO_AUTH
+  // y el muelle queda "cargando" para siempre. Si no hay sesión, limpiamos el
+  // operador rancio y abrimos el login (que ahora pide PIN).
+  window.addEventListener('DOMContentLoaded', async function () {
+    try {
+      const s = await window.SupaAPI.sesion();
+      if (!s) {
+        try { localStorage.removeItem('sot_operador'); } catch (e) {}
+        if (typeof window.myOpName !== 'undefined') window.myOpName = null;
+        if (typeof mostrarModalLogin === 'function') mostrarModalLogin(false);
+      }
+    } catch (e) {}
+  });
+
   // ── (2) login con PIN al elegir operador ─────────────────────
   function pedirPin(nombre) {
     return new Promise((resolve) => {
