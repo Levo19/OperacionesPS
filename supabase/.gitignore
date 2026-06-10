@@ -1,4 +1,6 @@
 .pgpass
 dump.json
+pins.json
 node_modules/
 package-lock.json
+_test_*.js

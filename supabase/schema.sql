@@ -82,10 +82,14 @@ create table reservas (
   cliente     text,
   creado_at   timestamptz default now()
 );
+-- Identidad de login = PERSONAL_MASTER del PS Panel (NO operaciones.personal,
+-- que son capitanes/guias). Por eso `id` es texto libre (USR_…), sin FK a personal.
 create table app_usuarios (
-  id       text primary key references personal(id),
-  auth_uid uuid unique,
-  rol      text
+  id        text primary key,         -- id de PERSONAL_MASTER (USR_…)
+  nombre    text,
+  rol       text,                     -- rol de PERSONAL_MASTER (admin/operador/…)
+  auth_uid  uuid unique,              -- enlaza con auth.users(id)
+  activo    boolean default true
 );
 create index idx_mov_operacion  on movimientos(operacion_id);
 create index idx_mov_contacto   on movimientos(contacto_id);
