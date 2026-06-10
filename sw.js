@@ -1,5 +1,5 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v23';
+const CACHE_NAME = 'ops-v24';
 const SHELL = [
     './index.html',
     './app.js',
@@ -37,8 +37,13 @@ self.addEventListener('fetch', e => {
         return;
     }
 
-    // Llamadas a GAS / Supabase → siempre red (nunca cachear respuestas del servidor)
-    if (url.includes('script.google.com') || url.includes('googleapis.com') || url.includes('supabase.co')) {
+    // Supabase → NO interceptar: que el navegador la maneje nativo. Si el SW hace
+    // respondWith(fetch(...)), el abort/timeout de la página no se propaga y la
+    // petición queda colgada ("Conectando..." infinito). Sin respondWith = nativo.
+    if (url.includes('supabase.co')) return;
+
+    // Llamadas a GAS → siempre red (nunca cachear respuestas del servidor)
+    if (url.includes('script.google.com') || url.includes('googleapis.com')) {
         e.respondWith(fetch(e.request).catch(() =>
             new Response(JSON.stringify({ error: 'Sin conexión' }), {
                 headers: { 'Content-Type': 'application/json' }
