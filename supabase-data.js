@@ -10,8 +10,21 @@
   const SUPABASE_URL = 'https://lintmcxqxnrholslatul.supabase.co';
   const SUPABASE_ANON = 'sb_publishable_9dpGbh-aKwTxC8gvOk8Muw_aSpMby0G';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
-    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ops_ps_auth' }
+    auth: {
+      persistSession: true, autoRefreshToken: true, storageKey: 'ops_ps_auth',
+      // lock passthrough: evita el cuelgue de supabase-js con navigator.locks
+      lock: (name, acquireTimeout, fn) => fn()
+    }
   });
+  // fetch directo a PostgREST (sin pasar por el cliente) — para llamadas anon
+  // (lista de login, estado de app) que deben funcionar sí o sí, sin auth-init.
+  async function restRpc(fn, body, token) {
+    const headers = { apikey: SUPABASE_ANON, 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'POST', headers, body: JSON.stringify(body || {}) });
+    if (!r.ok) { let m = 'Error'; try { m = (await r.json()).message || m; } catch (e) {} throw new Error(m); }
+    const txt = await r.text(); return txt ? JSON.parse(txt) : null;
+  }
 
   const ok  = (extra) => Object.assign({ status: 'success' }, extra || {});
   const err = (e)     => ({ status: 'error', message: (e && e.message) || String(e) || 'Error' });
@@ -25,7 +38,7 @@
 
   // ── AUTH ────────────────────────────────────────────────────
   async function listarOperadores() {
-    try { return ok({ operadores: (await rpc('listar_operadores')) || [] }); }
+    try { return ok({ operadores: (await restRpc('listar_operadores')) || [] }); }
     catch (e) { return err(e); }
   }
   // login por PIN: el operador elige su nombre (con su id EMP-xx) y teclea el PIN
@@ -38,9 +51,9 @@
   }
   async function logout() { await sb.auth.signOut(); return ok(); }
   async function sesion() { const { data } = await sb.auth.getSession(); return data.session || null; }
-  // estado/horario de la app (controlado desde PS). Callable sin login (anon).
+  // estado/horario de la app (controlado desde PS). Callable sin login (anon, fetch directo).
   async function estadoApp() {
-    try { return await rpc('get_app_estado', { p_app: 'operacionesps' }); }
+    try { return await restRpc('get_app_estado', { p_app: 'operacionesps' }); }
     catch (e) { return { existe: false, abierta_ahora: true }; }   // ante fallo, no bloquear
   }
 
@@ -55,7 +68,7 @@
     // El login se puebla ANTES de autenticarse → usar el RPC anon-callable
     // (la tabla `personal` está bajo RLS y devolvería vacío sin sesión).
     try {
-      const ops = (await rpc('listar_operadores')) || [];
+      const ops = (await restRpc('listar_operadores')) || [];
       const operadores = ops.map(o => ({ id: o.id, nombre: o.nombre }));
       const personal   = ops.map(o => ({ id_empleado: o.id, nombre: o.nombre, rol: 'Operador' }));
       return { operadores, personal };
