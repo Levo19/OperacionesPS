@@ -40,7 +40,9 @@ $$ begin perform _req_admin();
 create or replace function admin_set_pin(p_id text, p_nombre text, p_rol text, p_pin text)
   returns uuid language plpgsql security definer set search_path=public, auth, extensions as
 $$ begin perform _req_admin();
-   if length(coalesce(p_pin,'')) < 4 then raise exception 'PIN_CORTO: mínimo 4 dígitos'; end if;
+   -- exactamente 4 dígitos: el login del muelle hace auto-submit a 4; un PIN más
+   -- largo dejaría al operador sin poder entrar. Todo el ecosistema PS usa 4 dígitos.
+   if coalesce(p_pin,'') !~ '^\d{4}$' then raise exception 'PIN_FORMATO: deben ser 4 dígitos'; end if;
    return seed_operador(p_id, p_nombre, p_rol, p_pin); end $$;
 
 -- activar/desactivar (es_staff() ya filtra por activo → desactivado no lee ni escribe)
