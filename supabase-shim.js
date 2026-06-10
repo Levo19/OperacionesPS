@@ -64,6 +64,21 @@
   }
   window.addEventListener('DOMContentLoaded', gateHorario);
 
+  // ── AUTODIAGNÓSTICO visible (en el tag de versión) ───────────
+  // Muestra dónde se rompe: SupaAPI cargado? operadores llegan? error?
+  window.addEventListener('DOMContentLoaded', async function () {
+    const tag = document.getElementById('ver-tag');
+    const ver = (typeof OPS_VERSION !== 'undefined') ? OPS_VERSION : 'v?';
+    const set = (s) => { if (tag) tag.textContent = ver + ' ' + s; };
+    if (!window.SupaAPI) { set('SupaAPI:NO'); return; }
+    set('cargando…');
+    try {
+      const r = await window.SupaAPI.listarOperadores();
+      const n = (r && r.operadores && r.operadores.length) || 0;
+      set('ops:' + n + (r && r.status === 'success' ? '' : ' (' + ((r && r.message) || '?') + ')'));
+    } catch (e) { set('ERR:' + ((e && e.message) || 'x').slice(0, 24)); }
+  });
+
   // ── (1c) forzar login si no hay sesión Supabase ──────────────
   // app.js restaura el operador guardado (sot_operador) del login viejo por-nombre
   // y se SALTA el modal → nunca se abre sesión Supabase → todos los RPCs dan NO_AUTH
