@@ -822,6 +822,10 @@
             <div class="nav-item flex flex-col items-center justify-center w-full h-full text-gray-400 transition cursor-pointer" onclick="switchTab('tab-caja', 'Finanzas', this)"><i class="fas fa-chart-line text-xl mb-1 duration-200 icon"></i><span class="text-[10px] font-bold uppercase tracking-wide">Finanzas</span></div>
         </div>
     </nav>
+    <!-- Cutover a Supabase (camino B). El shim no hace nada hasta USE_SUPABASE=true en supabase-shim.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-data.js"></script>
+    <script src="supabase-shim.js"></script>
     <script src="app.js"></script>
     <script>
         if ('serviceWorker' in navigator) {

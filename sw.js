@@ -1,8 +1,10 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v16';
+const CACHE_NAME = 'ops-v17';
 const SHELL = [
     './index.html',
     './app.js',
+    './supabase-data.js',
+    './supabase-shim.js',
     './manifest.json',
     './icon.svg'
 ];
@@ -35,8 +37,8 @@ self.addEventListener('fetch', e => {
         return;
     }
 
-    // Llamadas a GAS → siempre red (nunca cachear respuestas del servidor)
-    if (url.includes('script.google.com') || url.includes('googleapis.com')) {
+    // Llamadas a GAS / Supabase → siempre red (nunca cachear respuestas del servidor)
+    if (url.includes('script.google.com') || url.includes('googleapis.com') || url.includes('supabase.co')) {
         e.respondWith(fetch(e.request).catch(() =>
             new Response(JSON.stringify({ error: 'Sin conexión' }), {
                 headers: { 'Content-Type': 'application/json' }
