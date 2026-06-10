@@ -155,3 +155,58 @@ begin
     'kpis', jsonb_build_object('pax_total',v_pax,'ingresos_operador',v_ing,'deuda_comisionados',v_deuda,
       'caja_efectivo',v_efectivo,'caja_transferencia',v_transfer,'operaciones_count',v_count,'semaforo',v_semaforo));
 end $$;
+
+-- KPIs de lanchas de un día (para dashboard) — NO suma adicionales, caja sin fallback.
+-- Réplica de getLanchasKPIs. Ramas PaseIN/PaseOUT/Aliado se dejan fieles aunque los
+-- tipos reales sean 'Aliado(PaseIn/Out)' (no matchean → pendientes quedan en 0, igual que GAS).
+create or replace function get_kpis_ops(p_fecha date) returns jsonb
+  language plpgsql stable security definer set search_path=public, auth as
+$$
+declare r jsonb; v_chips jsonb; v_ef numeric; v_tr numeric; v_nops int;
+begin
+  perform _req_staff();
+  select count(*) into v_nops from operaciones where fecha=p_fecha;
+  with mo as (
+    select m.*, coalesce(c.precio_defecto,0) pdef
+    from movimientos m left join contactos c on c.id=m.contacto_id
+    where m.operacion_id in (select id from operaciones where fecha=p_fecha) and m.estado<>'Cancelado'
+  )
+  select jsonb_build_object(
+    'operaciones_hoy', v_nops,
+    'pax_total', coalesce(sum(cant_pax),0),
+    'ingresos_directo', coalesce(sum(monto_total) filter (where tipo='Directo'),0),
+    'ingresos_agencia', coalesce(sum(monto_total) filter (where tipo='Agencia'),0),
+    'ingresos_operador', coalesce(sum(case when tipo in ('Directo','Agencia') then monto_total
+                                           when tipo='Comisionado' then pdef*cant_pax else 0 end),0),
+    'deuda_comisionados', coalesce(sum(case when tipo='Comisionado' then greatest(0,(precio_unit*cant_pax)-(pdef*cant_pax)) else 0 end),0),
+    'pendiente_paseIN', coalesce(sum(monto_total) filter (where tipo='PaseIN'),0),
+    'pendiente_aliados', coalesce(sum(case when tipo='PaseOUT' then greatest(0,monto_total-monto_comprado)
+                                          when tipo='Aliado' then monto_total else 0 end),0)
+  ) into r from mo;
+  -- por_tipo
+  select coalesce(jsonb_object_agg(tipo, px),'{}'::jsonb) into v_chips
+    from (select tipo, sum(cant_pax) px from movimientos
+          where operacion_id in (select id from operaciones where fecha=p_fecha) and estado<>'Cancelado'
+          group by tipo) s;
+  -- caja (solo ops del día, sin fallback)
+  select coalesce(sum(monto) filter (where lower(coalesce(metodo_pago,'')) like '%efectivo%' or lower(coalesce(metodo_pago,''))='cash'),0),
+         coalesce(sum(monto) filter (where not (lower(coalesce(metodo_pago,'')) like '%efectivo%' or lower(coalesce(metodo_pago,''))='cash')),0)
+    into v_ef, v_tr from caja_operador where operacion_id in (select id from operaciones where fecha=p_fecha);
+  return r || jsonb_build_object('caja_efectivo',v_ef,'caja_transferencia',v_tr,'por_tipo',v_chips);
+end $$;
+
+-- histórico 7 días (hoy y 6 atrás, TZ Lima). ingresos_hotel lo agrega el frontend (GAS).
+create or replace function get_historico() returns jsonb
+  language plpgsql stable security definer set search_path=public, auth as
+$$
+declare v jsonb := '[]'::jsonb; d int; f date; k jsonb;
+begin
+  perform _req_staff();
+  for d in reverse 6..0 loop
+    f := (now() at time zone 'America/Lima')::date - d;
+    k := get_kpis_ops(f);
+    v := v || jsonb_build_object('fecha', to_char(f,'YYYY-MM-DD'),
+      'ingresos_lanchas', k->'ingresos_operador', 'pax', k->'pax_total');
+  end loop;
+  return v;
+end $$;
