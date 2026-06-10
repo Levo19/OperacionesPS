@@ -18,6 +18,30 @@ create or replace function es_staff() returns boolean
   language sql stable security definer set search_path = public, auth as
 $$ select exists(select 1 from app_usuarios where auth_uid = auth.uid() and activo) $$;
 
+-- ── Gestión de empleados desde PS (solo Administrador) ──────
+create or replace function _req_admin() returns void language plpgsql as
+$$ begin if coalesce(mi_rol(),'') <> 'Administrador' then raise exception 'NO_ADMIN: requiere Administrador'; end if; end $$;
+
+-- lista TODOS los empleados (activos e inactivos) para el módulo de PS
+create or replace function admin_listar_empleados()
+  returns table(id text, nombre text, rol text, activo boolean, email text)
+  language plpgsql stable security definer set search_path=public, auth as
+$$ begin perform _req_admin();
+   return query select a.id, a.nombre, a.rol, a.activo, lower(a.id)||'@paracas.local'
+                from app_usuarios a order by a.activo desc, a.nombre; end $$;
+
+-- alta o reseteo de PIN (upsert vía seed_operador). p_id: EMP-xx existente o USR_ nuevo.
+create or replace function admin_set_pin(p_id text, p_nombre text, p_rol text, p_pin text)
+  returns uuid language plpgsql security definer set search_path=public, auth, extensions as
+$$ begin perform _req_admin();
+   if length(coalesce(p_pin,'')) < 4 then raise exception 'PIN_CORTO: mínimo 4 dígitos'; end if;
+   return seed_operador(p_id, p_nombre, p_rol, p_pin); end $$;
+
+-- activar/desactivar (es_staff() ya filtra por activo → desactivado no lee ni escribe)
+create or replace function admin_toggle_activo(p_id text, p_activo boolean)
+  returns void language plpgsql security definer set search_path=public, auth as
+$$ begin perform _req_admin(); update app_usuarios set activo=p_activo where id=p_id; end $$;
+
 -- Lista pública de operadores (para poblar el login ANTES de autenticarse).
 -- Solo nombre + email sintético; sin PIN ni datos sensibles. Callable por anon.
 create or replace function listar_operadores()
