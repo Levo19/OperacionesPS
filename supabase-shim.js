@@ -74,8 +74,15 @@
     set('cargando…');
     try {
       const r = await window.SupaAPI.listarOperadores();
-      const n = (r && r.operadores && r.operadores.length) || 0;
-      set('ops:' + n + (r && r.status === 'success' ? '' : ' (' + ((r && r.message) || '?') + ')'));
+      const ops = (r && r.operadores) || [];
+      set('ops:' + ops.length);
+      // POPULAR el login directamente (no depender del fetch interceptado de app.js,
+      // que no transiciona la pantalla aunque la data llegue).
+      if (ops.length) {
+        window.catalogosData = window.catalogosData || {};
+        window.catalogosData.operadores = ops;
+        if (typeof _loginEstado === 'function') _loginEstado('listo');
+      }
     } catch (e) { set('ERR:' + ((e && e.message) || 'x').slice(0, 24)); }
   });
 
