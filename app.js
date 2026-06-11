@@ -494,6 +494,25 @@ function _cerrarOpsAntiguas() {
     bs.addEventListener('click', e => { if (e.target === bs) bs.remove(); });
 }
 
+// ── DEBUG temporal: muestra en pantalla los errores que normalmente se tragan ──
+function _mostrarErrorDebug(donde, e) {
+  try {
+    var box = document.getElementById('_dbg_err_box');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = '_dbg_err_box';
+      box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#7f1d1d;color:#fff;font:12px/1.4 monospace;padding:10px 12px;max-height:45vh;overflow:auto;white-space:pre-wrap;box-shadow:0 -4px 20px rgba(0,0,0,.4)';
+      box.onclick = function(){ box.remove(); };
+      (document.body || document.documentElement).appendChild(box);
+    }
+    var msg = (e && e.message) || String(e);
+    var stack = (e && e.stack) ? ('\n' + String(e.stack).split('\n').slice(0,4).join('\n')) : '';
+    box.textContent += '❌ ' + donde + ': ' + msg + stack + '\n';
+  } catch(_) {}
+}
+window.addEventListener('error', function(ev){ _mostrarErrorDebug('JS uncaught', ev.error || ev.message); });
+window.addEventListener('unhandledrejection', function(ev){ _mostrarErrorDebug('Promesa', ev.reason); });
+
 function fetchDashboardData() {
     toggleSpinner(true);
     // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
@@ -529,11 +548,11 @@ function fetchDashboardData() {
             window.pasesExternosData = (data.pases_externos || []).filter(p => esFechaHoy(p.timestamp));
             window.cajaData          = data.movimientos_dia || [];
 
-            try { renderCatalogos(data.catalogos); } catch(e) { console.error('renderCatalogos:', e); }
-            try { _cerrarOpsAntiguas(); } catch(e) { console.error('_cerrarOpsAntiguas:', e); }
-            try { renderOperaciones(window.operacionesData); } catch(e) { console.error('renderOperaciones:', e); }
-            try { renderReservas(window.reservasData); } catch(e) { console.error('renderReservas:', e); }
-            try { renderCaja(window.cajaData); } catch(e) { console.error('renderCaja:', e); }
+            try { renderCatalogos(data.catalogos); } catch(e) { console.error('renderCatalogos:', e); _mostrarErrorDebug('renderCatalogos', e); }
+            try { _cerrarOpsAntiguas(); } catch(e) { console.error('_cerrarOpsAntiguas:', e); _mostrarErrorDebug('_cerrarOpsAntiguas', e); }
+            try { renderOperaciones(window.operacionesData); } catch(e) { console.error('renderOperaciones:', e); _mostrarErrorDebug('renderOperaciones', e); }
+            try { renderReservas(window.reservasData); } catch(e) { console.error('renderReservas:', e); _mostrarErrorDebug('renderReservas', e); }
+            try { renderCaja(window.cajaData); } catch(e) { console.error('renderCaja:', e); _mostrarErrorDebug('renderCaja', e); }
             try { actualizarModalSiAbierto(); } catch(e) { console.error('actualizarModal:', e); }
             // Si el login estaba esperando operadores, ahora ya los tiene
             try { _loginEstado('listo'); } catch(e) {}
