@@ -49,16 +49,23 @@
       const e = await window.SupaAPI.estadoApp();
       const ol = document.getElementById('lock-overlay');
       if (!e || e.abierta_ahora) { if (ol) ol.classList.remove('active'); return true; }
-      // cerrada / fuera de horario → mostrar lock con el mensaje configurado
+      // cerrada / fuera de horario → mostrar lock con el HORARIO DINÁMICO (Supabase)
       if (typeof activarLock === 'function') activarLock();
       else if (ol) ol.classList.add('active');
-      const fd = document.getElementById('lock-fecha');
-      if (fd) {
-        const txt = e.estado === 'mantenimiento' ? 'En mantenimiento'
+      // Texto principal dinámico (reemplaza el "8:00 PM" hardcodeado)
+      const msgEl = document.getElementById('lock-msg');
+      if (msgEl) {
+        msgEl.innerHTML = e.estado === 'mantenimiento'
+            ? 'El sistema está <b style="color:#e8b840">en mantenimiento</b>.'
           : e.mensaje ? e.mensaje
-          : (e.hora_apertura && e.hora_cierre) ? ('Horario: ' + e.hora_apertura + ' a ' + e.hora_cierre) : 'Cerrado';
-        fd.textContent = txt;
+          : (e.hora_cierre)
+              ? ('Horario de operaciones hasta las <b style="color:#e8b840">' + e.hora_cierre + '</b>.'
+                 + (e.hora_apertura ? '<br>Reabre a las <b style="color:#e8b840">' + e.hora_apertura + '</b>.' : ''))
+          : 'No se puede registrar actividad fuera del horario de operaciones.';
       }
+      // Subtítulo: rango configurado (o la fecha que ya puso activarLock)
+      const fd = document.getElementById('lock-fecha');
+      if (fd && e.hora_apertura && e.hora_cierre) fd.textContent = 'Horario: ' + e.hora_apertura + ' a ' + e.hora_cierre;
       return false;
     } catch (err) { return true; }   // ante error, no bloquear
   }

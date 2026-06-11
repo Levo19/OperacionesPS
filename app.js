@@ -217,7 +217,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const ahora = new Date();
     const ocho  = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate(), 20, 0, 0);
     const msHasta8 = ocho - ahora;
-    if (msHasta8 > 0) setTimeout(activarLock, msHasta8);
+    if (!window.__SUPA_CUTOVER__ && msHasta8 > 0) setTimeout(activarLock, msHasta8);
 
     if (!myOpName) {
         mostrarModalLogin(false);
@@ -525,7 +525,7 @@ setTimeout(function(){
   try {
     var oc = document.getElementById('operaciones-container');
     if (oc && /Cargando muelles/.test(oc.textContent)) {
-      _mostrarErrorDebug('WATCHDOG (muelle instrumentado v31)',
+      _mostrarErrorDebug('WATCHDOG (muelle instrumentado v32)',
         new Error('Sigue en "Cargando" tras 9s.\nRastro fetchDashboardData → ' +
           (window._FDDTRACE.length ? window._FDDTRACE.join('  |  ') : 'NUNCA se ejecutó (la app no llegó a pedir datos — login/init/cache lo bloqueó antes)')));
     }
