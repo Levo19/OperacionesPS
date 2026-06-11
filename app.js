@@ -512,8 +512,22 @@ function _mostrarErrorDebug(donde, e) {
 }
 window.addEventListener('error', function(ev){ _mostrarErrorDebug('JS uncaught', ev.error || ev.message); });
 window.addEventListener('unhandledrejection', function(ev){ _mostrarErrorDebug('Promesa', ev.reason); });
+window._FDDTRACE = [];
+function _dbg(m){ try { window._FDDTRACE.push(window._FDDTRACE.length + ': ' + m); } catch(_){} }
+// Watchdog: si a los 9s el muelle sigue en "Cargando", mostrar diagnóstico (versión + rastro del flujo)
+setTimeout(function(){
+  try {
+    var oc = document.getElementById('operaciones-container');
+    if (oc && /Cargando muelles/.test(oc.textContent)) {
+      _mostrarErrorDebug('WATCHDOG (muelle instrumentado v30)',
+        new Error('Sigue en "Cargando" tras 9s.\nRastro fetchDashboardData → ' +
+          (window._FDDTRACE.length ? window._FDDTRACE.join('  |  ') : 'NUNCA se ejecutó (la app no llegó a pedir datos — login/init/cache lo bloqueó antes)')));
+    }
+  } catch(_){}
+}, 9000);
 
 function fetchDashboardData() {
+    _dbg('inicio');
     toggleSpinner(true);
     // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
     let safetyTimer = setTimeout(() => {
@@ -536,8 +550,10 @@ function fetchDashboardData() {
             clearTimeout(safetyTimer);
             toggleSpinner(false);
             ocultarLoadingOverlay();
+            _dbg('respuesta status=' + (data && data.status) + ' ops=' + ((data && data.operaciones_abiertas || []).length) + ' caja=' + ((data && data.movimientos_dia || []).length));
             if(data.status === 'error') {
                 console.error("Error backend:", data.error);
+                _mostrarErrorDebug('backend status=error', new Error(data.error || 'error'));
                 _forceRenderEmpty();
                 return;
             }
@@ -557,12 +573,15 @@ function fetchDashboardData() {
             // Si el login estaba esperando operadores, ahora ya los tiene
             try { _loginEstado('listo'); } catch(e) {}
             _saveDashboardCache();
+            _dbg('render OK');
         })
         .catch(err => {
             clearTimeout(safetyTimer);
             clearTimeout(abortTimer);
             toggleSpinner(false);
             ocultarLoadingOverlay();
+            _dbg('CATCH ' + (err && err.message));
+            _mostrarErrorDebug('fetchDashboardData CATCH', err);
             console.warn('[SOT] fetchDashboardData error:', err.message);
             _forceRenderEmpty();
             // Fallback offline: renderizar con datos de caché si existen
