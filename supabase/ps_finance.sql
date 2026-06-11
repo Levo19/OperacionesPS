@@ -91,8 +91,13 @@ begin
     from caja_operador k join contactos c on c.id=k.contacto_id and c.tipo='agencia'
     where k.categoria='Pago Agencia'
   ),
+  sini as (  -- saldo inicial (arrastre): SIEMPRE cuenta; gated solo por hasta, no por desde
+    select contacto_id ag, monto si
+    from saldos_iniciales
+    where tipo='agencia' and (p_hasta is null or fecha_corte <= p_hasta)
+  ),
   ag_ids as (
-    select distinct ag from (select contacto_id ag from cargos union select ag from abonos union select ag from ventas union select ag from pagos) z
+    select distinct ag from (select contacto_id ag from cargos union select ag from abonos union select ag from ventas union select ag from pagos union select ag from sini) z
   ),
   built as (
     select a.ag id, coalesce(c.nombre,a.ag) nombre,
@@ -111,12 +116,16 @@ begin
           'pagos',coalesce((select jsonb_agg(jsonb_build_object('monto',monto,'operador',operador,'hora',hora,'fecha',fecha)) from pagos where mid=ve.id),'[]'::jsonb))
           order by ve.fecha,ve.hora) from ventas ve where ve.ag=a.ag),'[]'::jsonb) ventas,
       coalesce((select jsonb_agg(jsonb_build_object('monto',monto,'operador',operador,'hora',hora,'fecha',fecha,'metodo',metodo_pago) order by fecha,hora) from abonos where ag=a.ag),'[]'::jsonb) abonos,
-      coalesce((select sum(monto) from abonos where ag=a.ag),0) abonado
+      coalesce((select sum(monto) from abonos where ag=a.ag),0) abonado,
+      coalesce((select si from sini where ag=a.ag),0) saldo_inicial
     from ag_ids a left join contactos c on c.id=a.ag
   ),
   fin as (
-    select *, facturado-cobrado te_debe, comprado-pagado le_debo, (facturado-cobrado)-(comprado-pagado) neto
-    from built where facturado<>0 or cobrado<>0 or comprado<>0 or pagado<>0
+    select *,
+      (facturado-cobrado) + greatest(saldo_inicial,0) te_debe,
+      (comprado-pagado)  + greatest(-saldo_inicial,0) le_debo,
+      (facturado-cobrado)-(comprado-pagado)+saldo_inicial neto
+    from built where facturado<>0 or cobrado<>0 or comprado<>0 or pagado<>0 or saldo_inicial<>0
   )
   select coalesce(jsonb_agg(to_jsonb(fin) order by abs(neto) desc),'[]'::jsonb),
     coalesce(sum(te_debe) filter (where te_debe>0.005),0), coalesce(sum(le_debo) filter (where le_debo>0.005),0),
@@ -162,17 +171,28 @@ begin
     from mv where mv.tipo like '%PaseOut%' and coalesce(contacto_pase_id,'')<>'' and contacto_pase_id !~ '^CON-00' and tipo_pase='aliado'
   ),
   movs as (select * from pin union all select * from pout),
-  ali_ids as (select distinct ali, max(nombre) nombre from movs group by ali),
+  sini_a as (  -- saldo inicial PAX (arrastre): gated solo por hasta
+    select s.contacto_id ali, coalesce(c.nombre, s.contacto_id) nombre, s.monto si
+    from saldos_iniciales s left join contactos c on c.id=s.contacto_id
+    where s.tipo='aliado' and (p_hasta is null or s.fecha_corte <= p_hasta)
+  ),
+  ali_ids as (
+    select ali, max(nombre) nombre from (
+      select ali, nombre from movs
+      union all select ali, nombre from sini_a
+    ) z group by ali
+  ),
   built as (
     select a.ali id, coalesce(a.nombre,a.ali) nombre,
       coalesce((select sum(pax) from movs where ali=a.ali and dir='in'),0) pax_in,
       coalesce((select sum(pax) from movs where ali=a.ali and dir='out'),0) pax_out,
       coalesce((select jsonb_agg(jsonb_build_object('fecha',fecha,'hora',hora,'embarcacion',bote,'capitan',capitan,
-        'directo',directo,'dir',dir,'pax',pax,'origen',origen,'id_mov',mov) order by fecha) from movs where ali=a.ali),'[]'::jsonb) movimientos
+        'directo',directo,'dir',dir,'pax',pax,'origen',origen,'id_mov',mov) order by fecha) from movs where ali=a.ali),'[]'::jsonb) movimientos,
+      coalesce((select si from sini_a where ali=a.ali),0) saldo_inicial
     from ali_ids a
   ),
-  fin as (select *, pax_in-pax_out neto from built where pax_in<>0 or pax_out<>0)
-  select coalesce(jsonb_agg(jsonb_build_object('id',id,'nombre',nombre,'pax_in',pax_in,'pax_out',pax_out,'neto',neto,'movimientos',movimientos) order by abs(neto) desc),'[]'::jsonb),
+  fin as (select *, pax_in-pax_out+saldo_inicial neto from built where pax_in<>0 or pax_out<>0 or saldo_inicial<>0)
+  select coalesce(jsonb_agg(jsonb_build_object('id',id,'nombre',nombre,'pax_in',pax_in,'pax_out',pax_out,'neto',neto,'saldo_inicial',saldo_inicial,'movimientos',movimientos) order by abs(neto) desc),'[]'::jsonb),
     coalesce(sum(neto) filter (where neto>0),0), coalesce(-sum(neto) filter (where neto<0),0),
     count(*) filter (where neto>0), count(*) filter (where neto<0), count(*) filter (where neto=0)
   into v_ali, v_td, v_ld, v_ntd, v_nld, v_nman from fin;
