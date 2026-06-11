@@ -199,10 +199,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Poblar memoria desde caché (sin renderizar — evita mostrar datos rancios)
+    _dbg('DCL inicio');
     _loadDashboardCache();
+    _dbg('DCL cache OK · jornadaCerrada=' + isJornadaCerrada() + ' · cutover=' + !!window.__SUPA_CUTOVER__);
 
-    // Activar lock si ya son las 8 PM
-    if (isJornadaCerrada()) {
+    // Activar lock si ya son las 8 PM — PERO no con cutover Supabase activo.
+    // El horario lo maneja el shim vía Supabase app_config (gateHorario); el lock
+    // hardcodeado de las 8PM cortaba el arranque (return) y dejaba el muelle en
+    // "Cargando" de noche, porque fetchDashboardData nunca llegaba a ejecutarse.
+    if (!window.__SUPA_CUTOVER__ && isJornadaCerrada()) {
         ocultarLoadingOverlay();
         activarLock();
         return; // no continuar cargando la app
@@ -223,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!sessionDate) localStorage.setItem('sot_session_date', hoyStr);
     }
 
+    _dbg('DCL pre-fetch');
     fetchPersonalRapido(); // precarga operadores para que el login funcione de inmediato
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 10000);
@@ -519,7 +525,7 @@ setTimeout(function(){
   try {
     var oc = document.getElementById('operaciones-container');
     if (oc && /Cargando muelles/.test(oc.textContent)) {
-      _mostrarErrorDebug('WATCHDOG (muelle instrumentado v30)',
+      _mostrarErrorDebug('WATCHDOG (muelle instrumentado v31)',
         new Error('Sigue en "Cargando" tras 9s.\nRastro fetchDashboardData → ' +
           (window._FDDTRACE.length ? window._FDDTRACE.join('  |  ') : 'NUNCA se ejecutó (la app no llegó a pedir datos — login/init/cache lo bloqueó antes)')));
     }
