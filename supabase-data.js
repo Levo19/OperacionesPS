@@ -105,13 +105,15 @@
   const handlers = {
     nueva_reserva: async p => ({ id_reserva: await rpc('crear_reserva', {
       p_fecha: p.fecha, p_hora: p.hora || null, p_contacto: p.id_contacto || null,
-      p_cliente: p.cliente || null, p_pax: parseInt(p.cant_pax) || 0, p_monto: parseFloat(p.monto) || 0, p_creador: p.creador || 'App' }),
+      p_cliente: p.cliente || null, p_pax: parseInt(p.cant_pax) || 0, p_monto: parseFloat(p.monto) || 0, p_creador: p.creador || 'App',
+      p_local_id: p.localId || null }),
       message: '✅ Reserva originada con éxito.' }),
 
     registrar_movimiento_pax: async p => ({ id_mov: await rpc('registrar_movimiento', {
       p_op: p.id_operacion, p_tipo: p.tipo, p_contacto: p.id_contacto || p.contacto || null,
       p_nombre: p.nombre_contacto || p.contacto || null, p_pax: parseInt(p.pax) || 0,
-      p_precio: parseFloat(p.precio_unitario) || 0, p_monto: parseFloat(p.monto_total) || 0, p_operador: p.creador || 'App' }),
+      p_precio: parseFloat(p.precio_unitario) || 0, p_monto: parseFloat(p.monto_total) || 0, p_operador: p.creador || 'App',
+      p_local_id: p.localId || null }),
       message: '✅ Abordaje directo registrado en Manifiesto.' }),
 
     editar_movimiento_pax: async p => ({ id_mov: await rpc('editar_movimiento', {
@@ -128,7 +130,7 @@
       const id = await rpc('registrar_transaccion', {
         p_op: p.id_operacion || null, p_contacto: p.id_contacto || null, p_categoria: p.categoria || 'Cobro',
         p_monto: parseFloat(p.monto) || 0, p_metodo: p.metodo_pago || 'Efectivo', p_comentarios: p.comentarios || null,
-        p_foto_url: fotoUrl || null, p_operador: p.operador || '', p_mov: p.id_movimiento || null });
+        p_foto_url: fotoUrl || null, p_operador: p.operador || '', p_mov: p.id_movimiento || null, p_local_id: p.localId || null });
       return { id_transaccion: id, foto_url: fotoUrl, message: '✅ Transacción registrada.' };
     },
 
@@ -139,12 +141,12 @@
 
     abrir_operacion: async p => ({ message: '✅ Operación abierta con éxito.', id_operacion: await rpc('abrir_operacion', {
       p_bote: p.id_bote, p_capitan: p.id_capitan || null, p_guia: p.id_guia || null,
-      p_hora: p.hora_salida || null, p_destino: p.destino || null, p_creador: p.creador || 'App' }) }),
+      p_hora: p.hora_salida || null, p_destino: p.destino || null, p_creador: p.creador || 'App', p_local_id: p.localId || null }) }),
 
     asignar_reserva: async p => ({ message: '✅ Pasajeros asignados al Bote.', id_mov: await rpc('asignar_reserva', {
       p_reserva: p.id_reserva, p_op: p.id_operacion, p_tipo: p.tipo || 'Agencia', p_contacto: p.id_contacto || null,
       p_nombre: p.nombre_contacto || p.id_contacto || null, p_pax: parseInt(p.cant_pax) || 0,
-      p_precio: parseFloat(p.precio_unitario) || 0, p_monto: parseFloat(p.monto_total) || 0, p_creador: p.creador || 'App' }) }),
+      p_precio: parseFloat(p.precio_unitario) || 0, p_monto: parseFloat(p.monto_total) || 0, p_creador: p.creador || 'App', p_local_id: p.localId || null }) }),
 
     zarpar_operacion:  async p => { await rpc('zarpar_operacion', { p_op: p.id_operacion }); return { message: '✅ Lancha Zarpada con éxito.' }; },
     confirmar_llegada: async p => { await rpc('confirmar_llegada', { p_op: p.id_operacion }); return { message: '✅ Llegada confirmada. Recursos liberados.' }; },
@@ -167,7 +169,7 @@
     pase_desde_reserva: async p => ({ message: '✅ Pase registrado correctamente.', id_mov: await rpc('pase_desde_reserva', {
       p_reserva: p.id_reserva, p_contacto_orig: p.id_contacto_original || null, p_nombre_orig: p.nombre_contacto_original || null,
       p_aliado: p.aliado_id || p.aliado, p_pax: parseInt(p.cant_pax) || 0,
-      p_precio: parseFloat(p.precio_unitario) || 0, p_monto: parseFloat(p.monto_total) || 0, p_creador: p.creador || 'App' }) }),
+      p_precio: parseFloat(p.precio_unitario) || 0, p_monto: parseFloat(p.monto_total) || 0, p_creador: p.creador || 'App', p_local_id: p.localId || null }) }),
 
     editar_operacion: async p => { await rpc('editar_operacion', {
       p_op: p.id_operacion, p_capitan: p.id_capitan ?? null, p_guia: p.id_guia ?? null, p_hora: p.hora_salida ?? null });

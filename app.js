@@ -525,7 +525,7 @@ setTimeout(function(){
   try {
     var oc = document.getElementById('operaciones-container');
     if (oc && /Cargando muelles/.test(oc.textContent)) {
-      _mostrarErrorDebug('WATCHDOG (muelle instrumentado v32)',
+      _mostrarErrorDebug('WATCHDOG (muelle instrumentado v33)',
         new Error('Sigue en "Cargando" tras 9s.\nRastro fetchDashboardData → ' +
           (window._FDDTRACE.length ? window._FDDTRACE.join('  |  ') : 'NUNCA se ejecutó (la app no llegó a pedir datos — login/init/cache lo bloqueó antes)')));
     }
@@ -1858,7 +1858,7 @@ function confirmarAbrirBote() {
     renderOperaciones(window.operacionesData);
     cerrarModales();
 
-    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, hora_salida, destino, creador: myOpName }).then(() => setTimeout(fetchDashboardDataBg, 5000));
+    fetchPostBg('abrir_operacion', { id_bote, id_capitan, id_guia, hora_salida, destino, creador: myOpName, localId: 'temp-op-' + Date.now() + '-' + Math.random().toString(36).slice(2,8) }).then(() => setTimeout(fetchDashboardDataBg, 5000));
 }
 
 function confirmarZarpe(id_op) {
@@ -2472,6 +2472,7 @@ function confirmarVentaDirecta() {
         creador: myOpName
     };
     if(id_mov) payload.id_mov = id_mov;
+    if(newTempId) payload.localId = newTempId;   // clave de idempotencia (no duplicar en reintento/cola offline)
 
     // Timer local: si GAS tarda >8s, quitar "guardando" visualmente (el dato ya está en GAS)
     let _confirmTimer = null;
@@ -2643,7 +2644,7 @@ function confirmarNuevaReserva() {
     fetchPostBg('nueva_reserva', {
         fecha: fecha, hora: hora, tipo: tipo,
         id_contacto: id_contacto, cliente: nombreCliente, cant_pax: pax, monto: parseFloat(precio).toFixed(2),
-        creador: myOpName
+        creador: myOpName, localId: 'temp-res-' + Date.now() + '-' + Math.random().toString(36).slice(2,8)
     }).then(() => {
         document.getElementById('input-crm-pax').value = ''; document.getElementById('input-crm-precio').value = '';
         setTimeout(fetchDashboardDataBg, 5000);
@@ -2732,7 +2733,8 @@ function confirmarAsignacion() {
         tipo: tipoMovimiento,
         monto_total: monto,
         precio_unitario: paxNum > 0 ? (monto / paxNum).toFixed(2) : '0',
-        creador: myOpName
+        creador: myOpName,
+        localId: 'temp-asig-' + Date.now() + '-' + Math.random().toString(36).slice(2,8)
     }).then(res => {
         if(res.status === 'error') alert(res.message);
         fetchDashboardData();
@@ -3075,7 +3077,7 @@ function confirmarCaja() {
             fetchPostBg('registrar_transaccion', {
                 id_operacion: idOp, id_contacto: idContacto, id_movimiento: idMov,
                 categoria: cat, monto: amount, metodo_pago: metodo,
-                comentarios: comentario, foto_base64: foto_base64 || '', operador: myOpName
+                comentarios: comentario, foto_base64: foto_base64 || '', operador: myOpName, localId: tId
             }).then(res => {
                 let idx = (window.cajaData || []).findIndex(c => c.id === tId);
                 if (idx !== -1) {
@@ -3159,7 +3161,8 @@ function confirmarCaja() {
             metodo_pago:   metodo,
             comentarios:   comentario,
             foto_base64:   foto_base64 || '',
-            operador:      myOpName
+            operador:      myOpName,
+            localId:       tempId
         }).then(res => {
             let idx = (window.cajaData || []).findIndex(c => c.id === tempId);
             if (idx !== -1) {
@@ -3759,7 +3762,8 @@ function confirmarPaseDesdeReserva() {
         nombre_contacto_original: nombreContactoReal,
         precio_unitario: precioUnit,
         monto_total: montoTotal,
-        creador: myOpName
+        creador: myOpName,
+        localId: tempPaseId
     }).then(res => {
         if(res.status === 'error') { alert(res.message); return; }
         // Eliminar el temp optimista ANTES del BG fetch para evitar que se re-inyecte como duplicado.
