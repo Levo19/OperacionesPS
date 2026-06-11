@@ -199,9 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Poblar memoria desde caché (sin renderizar — evita mostrar datos rancios)
-    _dbg('DCL inicio');
     _loadDashboardCache();
-    _dbg('DCL cache OK · jornadaCerrada=' + isJornadaCerrada() + ' · cutover=' + !!window.__SUPA_CUTOVER__);
 
     // Activar lock si ya son las 8 PM — PERO no con cutover Supabase activo.
     // El horario lo maneja el shim vía Supabase app_config (gateHorario); el lock
@@ -228,7 +226,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!sessionDate) localStorage.setItem('sot_session_date', hoyStr);
     }
 
-    _dbg('DCL pre-fetch');
     fetchPersonalRapido(); // precarga operadores para que el login funcione de inmediato
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 10000);
@@ -500,40 +497,7 @@ function _cerrarOpsAntiguas() {
     bs.addEventListener('click', e => { if (e.target === bs) bs.remove(); });
 }
 
-// ── DEBUG temporal: muestra en pantalla los errores que normalmente se tragan ──
-function _mostrarErrorDebug(donde, e) {
-  try {
-    var box = document.getElementById('_dbg_err_box');
-    if (!box) {
-      box = document.createElement('div');
-      box.id = '_dbg_err_box';
-      box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#7f1d1d;color:#fff;font:12px/1.4 monospace;padding:10px 12px;max-height:45vh;overflow:auto;white-space:pre-wrap;box-shadow:0 -4px 20px rgba(0,0,0,.4)';
-      box.onclick = function(){ box.remove(); };
-      (document.body || document.documentElement).appendChild(box);
-    }
-    var msg = (e && e.message) || String(e);
-    var stack = (e && e.stack) ? ('\n' + String(e.stack).split('\n').slice(0,4).join('\n')) : '';
-    box.textContent += '❌ ' + donde + ': ' + msg + stack + '\n';
-  } catch(_) {}
-}
-window.addEventListener('error', function(ev){ _mostrarErrorDebug('JS uncaught', ev.error || ev.message); });
-window.addEventListener('unhandledrejection', function(ev){ _mostrarErrorDebug('Promesa', ev.reason); });
-window._FDDTRACE = [];
-function _dbg(m){ try { window._FDDTRACE.push(window._FDDTRACE.length + ': ' + m); } catch(_){} }
-// Watchdog: si a los 9s el muelle sigue en "Cargando", mostrar diagnóstico (versión + rastro del flujo)
-setTimeout(function(){
-  try {
-    var oc = document.getElementById('operaciones-container');
-    if (oc && /Cargando muelles/.test(oc.textContent)) {
-      _mostrarErrorDebug('WATCHDOG (muelle instrumentado v33)',
-        new Error('Sigue en "Cargando" tras 9s.\nRastro fetchDashboardData → ' +
-          (window._FDDTRACE.length ? window._FDDTRACE.join('  |  ') : 'NUNCA se ejecutó (la app no llegó a pedir datos — login/init/cache lo bloqueó antes)')));
-    }
-  } catch(_){}
-}, 9000);
-
 function fetchDashboardData() {
-    _dbg('inicio');
     toggleSpinner(true);
     // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
     let safetyTimer = setTimeout(() => {
@@ -556,10 +520,8 @@ function fetchDashboardData() {
             clearTimeout(safetyTimer);
             toggleSpinner(false);
             ocultarLoadingOverlay();
-            _dbg('respuesta status=' + (data && data.status) + ' ops=' + ((data && data.operaciones_abiertas || []).length) + ' caja=' + ((data && data.movimientos_dia || []).length));
             if(data.status === 'error') {
                 console.error("Error backend:", data.error);
-                _mostrarErrorDebug('backend status=error', new Error(data.error || 'error'));
                 _forceRenderEmpty();
                 return;
             }
@@ -570,24 +532,21 @@ function fetchDashboardData() {
             window.pasesExternosData = (data.pases_externos || []).filter(p => esFechaHoy(p.timestamp));
             window.cajaData          = data.movimientos_dia || [];
 
-            try { renderCatalogos(data.catalogos); } catch(e) { console.error('renderCatalogos:', e); _mostrarErrorDebug('renderCatalogos', e); }
-            try { _cerrarOpsAntiguas(); } catch(e) { console.error('_cerrarOpsAntiguas:', e); _mostrarErrorDebug('_cerrarOpsAntiguas', e); }
-            try { renderOperaciones(window.operacionesData); } catch(e) { console.error('renderOperaciones:', e); _mostrarErrorDebug('renderOperaciones', e); }
-            try { renderReservas(window.reservasData); } catch(e) { console.error('renderReservas:', e); _mostrarErrorDebug('renderReservas', e); }
-            try { renderCaja(window.cajaData); } catch(e) { console.error('renderCaja:', e); _mostrarErrorDebug('renderCaja', e); }
+            try { renderCatalogos(data.catalogos); } catch(e) { console.error('renderCatalogos:', e); }
+            try { _cerrarOpsAntiguas(); } catch(e) { console.error('_cerrarOpsAntiguas:', e); }
+            try { renderOperaciones(window.operacionesData); } catch(e) { console.error('renderOperaciones:', e); }
+            try { renderReservas(window.reservasData); } catch(e) { console.error('renderReservas:', e); }
+            try { renderCaja(window.cajaData); } catch(e) { console.error('renderCaja:', e); }
             try { actualizarModalSiAbierto(); } catch(e) { console.error('actualizarModal:', e); }
             // Si el login estaba esperando operadores, ahora ya los tiene
             try { _loginEstado('listo'); } catch(e) {}
             _saveDashboardCache();
-            _dbg('render OK');
         })
         .catch(err => {
             clearTimeout(safetyTimer);
             clearTimeout(abortTimer);
             toggleSpinner(false);
             ocultarLoadingOverlay();
-            _dbg('CATCH ' + (err && err.message));
-            _mostrarErrorDebug('fetchDashboardData CATCH', err);
             console.warn('[SOT] fetchDashboardData error:', err.message);
             _forceRenderEmpty();
             // Fallback offline: renderizar con datos de caché si existen
