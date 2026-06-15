@@ -1263,6 +1263,22 @@ function _resFechaLegible(f) {
     return f === manana ? `mañana · ${etiqueta}` : etiqueta;
 }
 function _resEsc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function _resArg(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+// minutos desde medianoche, tolerando 12h '08:00 AM'/'02:00 PM', 24h '14:00' y 'Libre' (→ al final)
+function _resHoraMin(h) {
+    let m = String(h || '').match(/(\d{1,2}):(\d{2})\s*([ap])\.?\s*m/i);
+    if (m) { let hh = parseInt(m[1]) % 12; if (/p/i.test(m[3])) hh += 12; return hh * 60 + parseInt(m[2]); }
+    let m2 = String(h || '').match(/^(\d{1,2}):(\d{2})/);
+    if (m2) return parseInt(m2[1]) * 60 + parseInt(m2[2]);
+    return 99999;
+}
+// separa '08:00 AM' → { t:'08:00', ap:'AM' } para mostrar hora grande + meridiano chico
+function _resHoraDisp(h) {
+    let m = String(h || '').match(/(\d{1,2}:\d{2})\s*([ap])\.?\s*m/i);
+    if (m) return { t: m[1], ap: m[2].toUpperCase() + 'M' };
+    let s = String(h || '').trim();
+    return { t: (s && s !== '—') ? s : '—', ap: '' };
+}
 let _resAc = null;
 function _resBeep(freqs, opts) {
     try {
@@ -1299,25 +1315,23 @@ function _resAutorChip(res) {
 function _resCardHoy(res) {
     let isSyncing   = res.id === 'Creando...';
     let isAsignando = !!res._asignando;
-    let clienteEsc  = (res.cliente || '').replace(/'/g, "\\'");
-    let contactoEsc = (res.contacto || '').replace(/'/g, "\\'");
-    let hora = res.hora || '—';
+    let clienteEsc  = _resArg(res.cliente);
+    let contactoEsc = _resArg(res.contacto);
+    let hd = _resHoraDisp(res.hora);
     let pasoHora = false;
-    let hm = String(res.hora || '').match(/(\d{1,2}):(\d{2})/);
-    if (hm && !isSyncing && !isAsignando) {
-        let now = new Date();
-        pasoHora = (now.getHours() * 60 + now.getMinutes()) > (parseInt(hm[1]) * 60 + parseInt(hm[2]));
+    if (!isSyncing && !isAsignando) {
+        let hMin = _resHoraMin(res.hora);
+        if (hMin < 1440) { let now = new Date(); pasoHora = (now.getHours() * 60 + now.getMinutes()) > hMin; }
     }
     let border = isAsignando ? 'border-green-400 bg-green-50' : isSyncing ? 'border-yellow-300 bg-yellow-50' : pasoHora ? 'border-amber-300 bg-amber-50' : 'border-blue-500 bg-white';
     let btnCls = (isSyncing || isAsignando) ? 'pointer-events-none bg-green-400 text-white' : 'bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600 active:scale-95';
     let btnIcon = isAsignando ? 'fa-ship fa-pulse' : isSyncing ? 'fa-sync-alt fa-spin' : 'fa-clipboard-check';
     let btnText = isAsignando ? '¡Abordando!' : isSyncing ? 'Registrando…' : 'Subir a lancha';
-    let fp = `hoy|${res.id}|${isAsignando ? 1 : 0}|${isSyncing ? 1 : 0}|${res.pax}|${res.cliente}|${hora}|${pasoHora ? 1 : 0}`;
-    return `<div class="${border} border border-l-[5px] rounded-2xl shadow-sm p-3.5 mb-2.5 card-enter relative overflow-hidden" data-res-id="${res.id}" data-res-fp="${fp}">
+    return `<div class="${border} border border-l-[5px] rounded-2xl shadow-sm p-3.5 mb-2.5 card-enter relative overflow-hidden" data-res-id="${res.id}">
         ${isSyncing ? '<div class="absolute top-2 right-3 text-[9px] text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i>Nube</div>' : ''}
         <div class="flex items-center gap-3">
             <div class="text-center shrink-0 ${pasoHora ? 'text-amber-600' : 'text-blue-600'}" style="min-width:64px">
-                <div class="font-black text-2xl leading-none">${_resEsc(hora)}</div>
+                <div class="font-black text-2xl leading-none">${_resEsc(hd.t)}${hd.ap ? `<span class="text-[10px] font-bold ml-0.5 align-top">${hd.ap}</span>` : ''}</div>
                 <div class="text-[8px] font-bold uppercase tracking-wider mt-1 ${pasoHora ? 'text-amber-500' : 'text-gray-400'}">${pasoHora ? '⚠ ya pasó' : 'reservó'}</div>
             </div>
             <div class="flex-1 min-w-0">
@@ -1343,9 +1357,9 @@ function _resCardDone(res) {
     let badge = pasado
         ? '<span class="text-[9px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full shrink-0">✓ pasado</span>'
         : '<span class="text-[9px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full shrink-0">✓ a bordo</span>';
-    let fp = `done|${res.id}|${res.estado}|${res.cliente}|${res.hora}`;
-    return `<div class="bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 mb-2 flex items-center gap-3 card-enter" data-res-id="${res.id}" data-res-fp="${fp}">
-        <div class="font-bold text-sm text-gray-400 line-through shrink-0" style="min-width:54px;text-align:center">${_resEsc(res.hora || '—')}</div>
+    let hd = _resHoraDisp(res.hora);
+    return `<div class="bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 mb-2 flex items-center gap-3 card-enter" data-res-id="${res.id}">
+        <div class="font-bold text-sm text-gray-400 line-through shrink-0" style="min-width:56px;text-align:center">${_resEsc(hd.t)}${hd.ap ? `<span class="text-[8px] ml-0.5">${hd.ap}</span>` : ''}</div>
         <div class="flex-1 min-w-0">
             <div class="font-bold text-gray-500 text-sm line-through truncate">${_resEsc(res.cliente)}</div>
             <div class="text-[9px] text-gray-400">${res.pax} PAX · ${_resEsc((res.contacto || '').replace('_', ' '))}</div>
@@ -1356,11 +1370,11 @@ function _resCardDone(res) {
 
 // Tarjeta futura / vencida (compacta, solo lectura)
 function _resCardFutura(res, vencida) {
-    let fp = `${vencida ? 'venc' : 'fut'}|${res.id}|${res.cliente}|${res.hora}|${res.pax}`;
     let tone = vencida ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-gray-100 shadow-sm';
-    return `<div class="${tone} border rounded-xl px-3.5 py-2.5 mb-2 flex items-center gap-3 card-enter" data-res-id="${res.id}" data-res-fp="${fp}">
-        <div class="text-center shrink-0 ${vencida ? 'text-gray-400' : 'text-emerald-600'}" style="min-width:54px">
-            <div class="font-black text-sm leading-none">${_resEsc(res.hora || '—')}</div>
+    let hd = _resHoraDisp(res.hora);
+    return `<div class="${tone} border rounded-xl px-3.5 py-2.5 mb-2 flex items-center gap-3 card-enter" data-res-id="${res.id}">
+        <div class="text-center shrink-0 ${vencida ? 'text-gray-400' : 'text-emerald-600'}" style="min-width:56px">
+            <div class="font-black text-sm leading-none">${_resEsc(hd.t)}${hd.ap ? `<span class="text-[8px] ml-0.5 font-bold">${hd.ap}</span>` : ''}</div>
             ${vencida ? '' : '<div class="text-[8px] text-emerald-500 font-bold mt-0.5">✓ ok</div>'}
         </div>
         <div class="flex-1 min-w-0">
@@ -1372,7 +1386,7 @@ function _resCardFutura(res, vencida) {
 }
 
 function _resHeader(icon, titulo, sub) {
-    return `<div class="sticky top-0 z-10 px-3 py-2 mb-2 rounded-xl shadow-sm flex items-center justify-between" style="background:linear-gradient(135deg,#2563eb,#3b82f6)">
+    return `<div class="px-3 py-2 mb-2 rounded-xl shadow-sm flex items-center justify-between" style="background:linear-gradient(135deg,#2563eb,#3b82f6)">
         <span class="text-white font-extrabold text-sm">${icon} ${titulo}</span>
         ${sub ? `<span class="text-blue-100 text-[10px] font-bold whitespace-nowrap">${sub}</span>` : ''}
     </div>`;
@@ -1398,10 +1412,10 @@ function renderReservas(reservas) {
         else if (f > hoy) { if (esMia(r) || crear) futuras.push(r); }   // futura mía
         else if (esMia(r)) vencidas.push(r);                            // pasada mía sin embarcar
     });
-    const byHora = (a, b) => String(a.hora || '~').localeCompare(String(b.hora || '~'));
+    const byHora = (a, b) => _resHoraMin(a.hora) - _resHoraMin(b.hora);
     hoyPend.sort(byHora);
     hoyDone.sort(byHora);
-    futuras.sort((a, b) => (_resFechaISO(a.fecha) + (a.hora || '~')).localeCompare(_resFechaISO(b.fecha) + (b.hora || '~')));
+    futuras.sort((a, b) => { let d = _resFechaISO(a.fecha).localeCompare(_resFechaISO(b.fecha)); return d !== 0 ? d : _resHoraMin(a.hora) - _resHoraMin(b.hora); });
     vencidas.sort((a, b) => _resFechaISO(b.fecha).localeCompare(_resFechaISO(a.fecha)));
 
     const vOpen = !!window._resVencidasOpen;
@@ -2687,6 +2701,7 @@ function confirmarNuevaReserva() {
         creado_por: myOpName
     };
     window.reservasData.unshift(resTemp);
+    try { resOk(); resHap([15, 40, 15]); } catch(e) {}   // reserva registrada ✓
     renderReservas(window.reservasData);
     cerrarModales();
 
