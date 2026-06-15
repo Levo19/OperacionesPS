@@ -99,8 +99,8 @@ begin
     if found then return v_existing; end if;
   end if;
   v_id := coalesce(p_id, gen_id('RES-','seq_res'));
-  insert into reservas(id,fecha,hora,contacto_id,cliente,pax,estado,creado_at,local_id)
-    values(v_id,p_fecha,p_hora,nullif(p_contacto,''),p_cliente,p_pax,'Pendiente',now(),p_local_id)
+  insert into reservas(id,fecha,hora,contacto_id,cliente,pax,estado,creado_at,creado_por,local_id)
+    values(v_id,p_fecha,p_hora,nullif(p_contacto,''),p_cliente,p_pax,'Pendiente',now(),nullif(p_creador,''),p_local_id)
     on conflict (local_id) where local_id is not null do nothing;
   if not found and p_local_id is not null then
     select id into v_id from reservas where local_id = p_local_id;

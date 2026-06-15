@@ -1247,118 +1247,208 @@ function renderOperaciones(operaciones) {
 }
 
 // ── Helpers DOM-diffing reservas ─────────────────────────────────────────────
-function _resCardFP(res, hoy, formatLocal) {
-    let f = String(res.fecha || '').trim();
-    let isHoy = f === hoy || f === formatLocal || !res.fecha;
-    return `${res.id}|${res._asignando?1:0}|${res.pax}|${res.cliente}|${res.hora||''}|${isHoy?1:0}`;
+// ── Reservas · helpers (fecha robusta + feedback sonoro/háptico) ─────────────
+function _resFechaISO(f) {
+    let s = String(f || '').trim();
+    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);          // dd/mm/yyyy → yyyy-MM-dd
+    if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    return s.slice(0, 10);                                       // ya viene yyyy-MM-dd
+}
+function _resFechaLegible(f) {
+    let parts = String(f || '').split('-'); if (parts.length !== 3) return f || '';
+    let tz = (new Date()).getTimezoneOffset() * 60000;
+    let manana = (new Date(Date.now() - tz + 86400000)).toISOString().split('T')[0];
+    let meses = ['', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    let etiqueta = `${parseInt(parts[2])} ${meses[parseInt(parts[1])] || ''}`;
+    return f === manana ? `mañana · ${etiqueta}` : etiqueta;
+}
+function _resEsc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+let _resAc = null;
+function _resBeep(freqs, opts) {
+    try {
+        _resAc = _resAc || new (window.AudioContext || window.webkitAudioContext)();
+        if (_resAc.state === 'suspended') _resAc.resume();
+        const o = opts || {}, dur = o.dur || 0.1, type = o.type || 'sine', gain = o.gain || 0.05;
+        let t = _resAc.currentTime;
+        (Array.isArray(freqs) ? freqs : [freqs]).forEach(fr => {
+            const osc = _resAc.createOscillator(), gn = _resAc.createGain();
+            osc.type = type; osc.frequency.value = fr;
+            gn.gain.setValueAtTime(0.0001, t); gn.gain.exponentialRampToValueAtTime(gain, t + 0.01);
+            gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+            osc.connect(gn); gn.connect(_resAc.destination); osc.start(t); osc.stop(t + dur); t += dur * 0.8;
+        });
+    } catch (e) {}
+}
+function resTap() { _resBeep(620, { dur: 0.05, gain: 0.04 }); }
+function resOk()  { _resBeep([660, 990, 1320], { type: 'triangle', dur: 0.11 }); }
+function resHap(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+function toggleVencidas() {
+    window._resVencidasOpen = !window._resVencidasOpen;
+    resTap(); resHap(8);
+    const c = document.getElementById('reservas-container');
+    if (c) { c._fp = null; renderReservas(window.reservasData || []); }
+}
+function _resAutorChip(res) {
+    let autor = String(res.creado_por || '').trim();
+    if (!autor) return '';
+    let mio = autor.toLowerCase() === String(myOpName || '').trim().toLowerCase();
+    return `<span class="text-[9px] text-gray-400 font-semibold whitespace-nowrap"><i class="fas fa-user-pen text-[8px] mr-0.5"></i>${mio ? 'por ti' : 'por ' + _resEsc(autor)}</span>`;
 }
 
-function _resCardHTML(res, hoy, formatLocal) {
-    let fp         = _resCardFP(res, hoy, formatLocal);
-    let isSyncing  = res.id === 'Creando...';
+// Tarjeta HOY · POR EMBARCAR (héroe = hora + familia, con CTA)
+function _resCardHoy(res) {
+    let isSyncing   = res.id === 'Creando...';
     let isAsignando = !!res._asignando;
-    let f          = String(res.fecha || '').trim();
-    let isHoy      = f === hoy || f === formatLocal || !res.fecha;
-    let isFuture   = !isHoy && !isSyncing && !isAsignando;
-
-    let cardClasses = isAsignando
-        ? 'bg-green-50 border-green-400 border-l-[4px] opacity-80 animate-pulse border-y border-r'
-        : isSyncing
-            ? 'bg-yellow-50 border-yellow-300 border-l-[4px] opacity-90 animate-pulse border-y border-r'
-            : isFuture
-                ? 'opacity-60 grayscale bg-gray-50 border-gray-200 border'
-                : 'bg-white border-blue-500 border-l-[4px] border-y border-r border-y-gray-100 border-r-gray-100';
-    let btnClasses = (isSyncing || isAsignando)
-        ? 'pointer-events-none bg-green-400 text-white font-bold'
-        : isFuture
-            ? 'pointer-events-none opacity-50 bg-gray-300 border-gray-300 text-gray-500'
-            : 'bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600';
-    let btnIcon = isAsignando ? 'fa-ship fa-pulse' : isSyncing ? 'fa-sync-alt fa-spin' : isFuture ? 'fa-lock' : 'fa-clipboard-check';
-    let btnText = isAsignando ? '¡Abordando!' : isSyncing ? 'Registrando...' : isFuture ? 'No disponible hoy' : 'Abordar Lancha';
-    let tagFecha = isHoy
-        ? `<span class="bg-green-100 text-green-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-green-200">HOY</span>`
-        : `<span class="bg-yellow-100 text-yellow-800 text-[9px] px-2 py-0.5 rounded font-bold mr-1 border border-yellow-200">${res.fecha}</span>`;
-    let clienteEsc = (res.cliente || '').replace(/'/g, "\\'");
+    let clienteEsc  = (res.cliente || '').replace(/'/g, "\\'");
     let contactoEsc = (res.contacto || '').replace(/'/g, "\\'");
+    let hora = res.hora || '—';
+    let pasoHora = false;
+    let hm = String(res.hora || '').match(/(\d{1,2}):(\d{2})/);
+    if (hm && !isSyncing && !isAsignando) {
+        let now = new Date();
+        pasoHora = (now.getHours() * 60 + now.getMinutes()) > (parseInt(hm[1]) * 60 + parseInt(hm[2]));
+    }
+    let border = isAsignando ? 'border-green-400 bg-green-50' : isSyncing ? 'border-yellow-300 bg-yellow-50' : pasoHora ? 'border-amber-300 bg-amber-50' : 'border-blue-500 bg-white';
+    let btnCls = (isSyncing || isAsignando) ? 'pointer-events-none bg-green-400 text-white' : 'bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600 active:scale-95';
+    let btnIcon = isAsignando ? 'fa-ship fa-pulse' : isSyncing ? 'fa-sync-alt fa-spin' : 'fa-clipboard-check';
+    let btnText = isAsignando ? '¡Abordando!' : isSyncing ? 'Registrando…' : 'Subir a lancha';
+    let fp = `hoy|${res.id}|${isAsignando ? 1 : 0}|${isSyncing ? 1 : 0}|${res.pax}|${res.cliente}|${hora}|${pasoHora ? 1 : 0}`;
+    return `<div class="${border} border border-l-[5px] rounded-2xl shadow-sm p-3.5 mb-2.5 card-enter relative overflow-hidden" data-res-id="${res.id}" data-res-fp="${fp}">
+        ${isSyncing ? '<div class="absolute top-2 right-3 text-[9px] text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i>Nube</div>' : ''}
+        <div class="flex items-center gap-3">
+            <div class="text-center shrink-0 ${pasoHora ? 'text-amber-600' : 'text-blue-600'}" style="min-width:64px">
+                <div class="font-black text-2xl leading-none">${_resEsc(hora)}</div>
+                <div class="text-[8px] font-bold uppercase tracking-wider mt-1 ${pasoHora ? 'text-amber-500' : 'text-gray-400'}">${pasoHora ? '⚠ ya pasó' : 'reservó'}</div>
+            </div>
+            <div class="flex-1 min-w-0">
+                <h3 class="font-extrabold text-gray-800 text-base leading-tight truncate">${_resEsc(res.cliente)}</h3>
+                <div class="flex items-center gap-2 mt-1 flex-wrap">
+                    <span class="text-[10px] text-gray-600 font-bold"><i class="fas fa-users text-[9px] mr-0.5 text-blue-400"></i>${res.pax} PAX</span>
+                    ${res.monto ? `<span class="text-[10px] text-gray-500 font-bold">S/ ${res.monto}</span>` : ''}
+                    <span class="text-[9px] text-gray-400 truncate"><i class="fas fa-building text-[8px] mr-0.5"></i>${_resEsc((res.contacto || '').replace('_', ' '))}</span>
+                    ${_resAutorChip(res)}
+                </div>
+            </div>
+        </div>
+        <div class="flex mt-3 gap-2">
+            <button class="flex-[2] py-2.5 rounded-xl text-sm font-bold transition border ${btnCls}" onclick="resTap();resHap(10);prepararAsignacion('${res.id}', '${clienteEsc}', '${res.pax}', '${contactoEsc}')"><i class="fas ${btnIcon} mr-1"></i>${btnText}</button>
+            ${(!isSyncing && !isAsignando) ? `<button class="px-3 py-2.5 rounded-xl text-[11px] font-bold bg-purple-100 text-purple-700 border border-purple-200 hover:bg-purple-200 transition active:scale-95" onclick="resTap();resHap(10);abrirPaseDesdeReserva('${res.id}', '${clienteEsc}', '${res.pax}', '${contactoEsc}')"><i class="fas fa-share-square mr-1"></i>Pasar</button>` : ''}
+        </div>
+    </div>`;
+}
 
-    return `<div class="${cardClasses} rounded-2xl shadow-sm p-4 block mb-3 transition-all relative overflow-hidden" data-res-id="${res.id}" data-res-fp="${fp}">
-        ${isSyncing ? '<div class="absolute top-2 right-3 text-[10px] items-center text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i> Nube</div>' : ''}
-        <div class="flex justify-between items-start relative z-10">
-            <div>
-                <h3 class="font-extrabold text-gray-800 text-lg">${res.cliente}</h3>
-                <p class="text-[10px] text-gray-500 mt-1 uppercase font-bold tracking-wider flex items-center">${tagFecha} <i class="fas fa-building text-xs mx-1 text-gray-400"></i> ${(res.contacto||'').replace('_',' ')}</p>
-            </div>
-            <div class="text-right">
-                <span class="font-black text-2xl text-blue-600">${res.pax} <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">PAX</span></span>
-                <p class="text-[10px] text-gray-400 mt-0 font-bold uppercase tracking-widest">${res.hora || 'Libre'}</p>
-            </div>
+// Tarjeta HOY · YA EMBARCÓ (tachada, sin CTA)
+function _resCardDone(res) {
+    let pasado = String(res.estado || '').toLowerCase() === 'pasado';
+    let badge = pasado
+        ? '<span class="text-[9px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full shrink-0">✓ pasado</span>'
+        : '<span class="text-[9px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full shrink-0">✓ a bordo</span>';
+    let fp = `done|${res.id}|${res.estado}|${res.cliente}|${res.hora}`;
+    return `<div class="bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 mb-2 flex items-center gap-3 card-enter" data-res-id="${res.id}" data-res-fp="${fp}">
+        <div class="font-bold text-sm text-gray-400 line-through shrink-0" style="min-width:54px;text-align:center">${_resEsc(res.hora || '—')}</div>
+        <div class="flex-1 min-w-0">
+            <div class="font-bold text-gray-500 text-sm line-through truncate">${_resEsc(res.cliente)}</div>
+            <div class="text-[9px] text-gray-400">${res.pax} PAX · ${_resEsc((res.contacto || '').replace('_', ' '))}</div>
         </div>
-        <div class="flex mt-4 space-x-2 relative z-10">
-            <button class="flex-[2] py-2.5 rounded-xl text-sm font-bold transition active:scale-95 border ${btnClasses}" onclick="prepararAsignacion('${res.id}', '${clienteEsc}', '${res.pax}', '${contactoEsc}')"><i class="fas ${btnIcon} mr-1"></i> ${btnText}</button>
-            ${!isSyncing && !isAsignando ? `<button class="px-3 py-2.5 rounded-xl text-[11px] font-bold bg-purple-100 text-purple-700 border border-purple-200 hover:bg-purple-200 transition active:scale-95" onclick="abrirPaseDesdeReserva('${res.id}', '${clienteEsc}', '${res.pax}', '${contactoEsc}')"><i class="fas fa-share-square mr-1"></i>Pasar</button>` : ''}
+        ${badge}
+    </div>`;
+}
+
+// Tarjeta futura / vencida (compacta, solo lectura)
+function _resCardFutura(res, vencida) {
+    let fp = `${vencida ? 'venc' : 'fut'}|${res.id}|${res.cliente}|${res.hora}|${res.pax}`;
+    let tone = vencida ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-gray-100 shadow-sm';
+    return `<div class="${tone} border rounded-xl px-3.5 py-2.5 mb-2 flex items-center gap-3 card-enter" data-res-id="${res.id}" data-res-fp="${fp}">
+        <div class="text-center shrink-0 ${vencida ? 'text-gray-400' : 'text-emerald-600'}" style="min-width:54px">
+            <div class="font-black text-sm leading-none">${_resEsc(res.hora || '—')}</div>
+            ${vencida ? '' : '<div class="text-[8px] text-emerald-500 font-bold mt-0.5">✓ ok</div>'}
         </div>
+        <div class="flex-1 min-w-0">
+            <div class="font-bold ${vencida ? 'text-gray-500' : 'text-gray-800'} text-sm truncate">${_resEsc(res.cliente)}</div>
+            <div class="text-[9px] text-gray-400">${res.pax} PAX${res.monto ? ' · S/ ' + res.monto : ''} · ${_resEsc((res.contacto || '').replace('_', ' '))}</div>
+        </div>
+        ${vencida ? '<span class="text-[9px] font-bold text-amber-600 shrink-0">vencida</span>' : ''}
+    </div>`;
+}
+
+function _resHeader(icon, titulo, sub) {
+    return `<div class="sticky top-0 z-10 px-3 py-2 mb-2 rounded-xl shadow-sm flex items-center justify-between" style="background:linear-gradient(135deg,#2563eb,#3b82f6)">
+        <span class="text-white font-extrabold text-sm">${icon} ${titulo}</span>
+        ${sub ? `<span class="text-blue-100 text-[10px] font-bold whitespace-nowrap">${sub}</span>` : ''}
     </div>`;
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
 function renderReservas(reservas) {
     const container = document.getElementById('reservas-container');
-    let hoy = getHoyLocal();
-    let hoyPartes = hoy.split('-');
-    let formatLocal = `${hoyPartes[2]}/${hoyPartes[1]}/${hoyPartes[0]}`;
+    if (!container) return;
+    const hoy = getHoyLocal();
+    const yo  = String(myOpName || '').trim().toLowerCase();
+    const estadoDe  = r => String(r.estado || '').toLowerCase();
+    const esBoarded = r => estadoDe(r) === 'asignado' || estadoDe(r) === 'pasado';
+    const esMia     = r => !!yo && String(r.creado_por || '').trim().toLowerCase() === yo;
 
-    let resAMostrar = reservas.filter(r => {
-        let isSyncing = r.id === 'Creando...';
-        let f = String(r.fecha || '').trim();
-        let isHoy = f === hoy || f === formatLocal || !r.fecha;
-        let isMine = String(r.creado_por || '').trim().toLowerCase() === String(myOpName || '').trim().toLowerCase();
-        return isHoy || isMine || isSyncing;
+    // ── Bucketeo: hoy-por-embarcar / hoy-ya-embarcó / mis-futuras / vencidas-mías ──
+    let hoyPend = [], hoyDone = [], futuras = [], vencidas = [];
+    (reservas || []).forEach(r => {
+        let crear = r.id === 'Creando...';
+        let f = _resFechaISO(r.fecha) || hoy;
+        if (esBoarded(r)) { if (f === hoy) hoyDone.push(r); return; }   // ya embarcó: solo las de hoy, abajo
+        if (f === hoy) hoyPend.push(r);                                 // pendiente de hoy (cualquier operador)
+        else if (f > hoy) { if (esMia(r) || crear) futuras.push(r); }   // futura mía
+        else if (esMia(r)) vencidas.push(r);                            // pasada mía sin embarcar
     });
+    const byHora = (a, b) => String(a.hora || '~').localeCompare(String(b.hora || '~'));
+    hoyPend.sort(byHora);
+    hoyDone.sort(byHora);
+    futuras.sort((a, b) => (_resFechaISO(a.fecha) + (a.hora || '~')).localeCompare(_resFechaISO(b.fecha) + (b.hora || '~')));
+    vencidas.sort((a, b) => _resFechaISO(b.fecha).localeCompare(_resFechaISO(a.fecha)));
 
-    // Container FP
-    let fp = resAMostrar.map(r => _resCardFP(r, hoy, formatLocal)).join(';');
+    const vOpen = !!window._resVencidasOpen;
+    const fp = JSON.stringify({
+        a: hoyPend.map(r => `${r.id}|${r._asignando ? 1 : 0}|${r.id === 'Creando...' ? 1 : 0}|${r.pax}|${r.cliente}|${r.hora || ''}`),
+        b: hoyDone.map(r => `${r.id}|${r.estado}|${r.cliente}|${r.hora || ''}`),
+        c: futuras.map(r => `${r.id}|${r.cliente}|${r.hora || ''}|${r.pax}|${_resFechaISO(r.fecha)}`),
+        d: vencidas.map(r => r.id), v: vOpen
+    });
     if (container._fp === fp) return;
     container._fp = fp;
 
-    if (!resAMostrar || resAMostrar.length === 0) {
-        container.innerHTML = `<div class="text-center py-8 text-gray-500"><i class="fas fa-clipboard-list text-4xl mb-3 opacity-20 block"></i> No hay pasajeros pendientes hoy.</div>`;
-        return;
-    }
-
-    // Eliminar cualquier elemento que no sea una card (spinner inicial, mensajes vacíos, etc.)
-    container.querySelectorAll(':scope > :not([data-res-id])').forEach(el => el.remove());
-
-    // Recopilar cards existentes
-    let existing = new Map();
-    container.querySelectorAll('[data-res-id]').forEach(el => existing.set(el.dataset.resId, el));
-
-    // Eliminar cards que ya no están
-    let newIds = new Set(resAMostrar.map(r => r.id));
-    existing.forEach((el, id) => { if (!newIds.has(id)) el.remove(); });
-
-    // Actualizar o crear cada card
-    resAMostrar.forEach(res => {
-        let cardFp  = _resCardFP(res, hoy, formatLocal);
-        let existEl = existing.get(res.id);
-        if (existEl) {
-            if (existEl.dataset.resFp !== cardFp) {
-                let tmp = document.createElement('div');
-                tmp.innerHTML = _resCardHTML(res, hoy, formatLocal).trim();
-                let newEl = tmp.firstElementChild;
-                existEl.replaceWith(newEl);
-                existing.set(res.id, newEl);
-            }
-        } else {
-            let tmp = document.createElement('div');
-            tmp.innerHTML = _resCardHTML(res, hoy, formatLocal).trim();
-            let newEl = tmp.firstElementChild;
-            newEl.classList.add('card-enter');
-            existing.set(res.id, newEl);
+    let html = '';
+    // ── SECCIÓN: RESERVAS DE HOY ──
+    html += _resHeader('🛟', 'Reservas de hoy', `${hoyPend.length} por embarcar${hoyDone.length ? ' · ' + hoyDone.length + ' listas' : ''}`);
+    if (!hoyPend.length && !hoyDone.length) {
+        html += `<div class="text-center py-6 text-gray-400 text-sm"><i class="fas fa-water text-2xl mb-2 block opacity-30"></i>Nadie por embarcar hoy 🌊</div>`;
+    } else {
+        html += hoyPend.map(_resCardHoy).join('');
+        if (!hoyPend.length && hoyDone.length) html += `<div class="text-center py-3 text-emerald-500 text-xs font-bold">✓ ¡Todos embarcados!</div>`;
+        if (hoyDone.length) {
+            html += `<div class="flex items-center gap-2 my-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider"><div class="flex-1 h-px bg-gray-200"></div>✓ ya embarcaron (${hoyDone.length})<div class="flex-1 h-px bg-gray-200"></div></div>`;
+            html += hoyDone.map(_resCardDone).join('');
         }
-    });
-
-    // Re-ordenar sin recrear nodos
-    resAMostrar.forEach(res => container.appendChild(existing.get(res.id)));
+    }
+    // ── SECCIÓN: MIS RESERVAS A FUTURO ──
+    html += `<div class="mt-5">`;
+    html += _resHeader('🗓', 'Mis reservas a futuro', futuras.length ? `${futuras.length} · registradas ✓` : '');
+    if (!futuras.length) {
+        html += `<div class="text-center py-5 text-gray-400 text-xs">Aún no registras reservas a futuro.</div>`;
+    } else {
+        let curFecha = '';
+        futuras.forEach(r => {
+            let f = _resFechaISO(r.fecha);
+            if (f !== curFecha) { curFecha = f; html += `<div class="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider mt-2 mb-1 px-1">${_resFechaLegible(f)}</div>`; }
+            html += _resCardFutura(r, false);
+        });
+    }
+    html += `</div>`;
+    // ── CAJÓN: VENCIDAS (mías, sin embarcar) ──
+    if (vencidas.length) {
+        html += `<button onclick="toggleVencidas()" class="w-full mt-5 mb-1 flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 active:scale-95 transition">
+            <span class="text-xs font-bold"><i class="fas fa-triangle-exclamation mr-1.5"></i>${vencidas.length} vencida${vencidas.length > 1 ? 's' : ''} (tuyas, sin embarcar)</span>
+            <i class="fas fa-chevron-${vOpen ? 'up' : 'down'} text-xs"></i></button>`;
+        if (vOpen) html += `<div class="pt-1">` + vencidas.map(r => _resCardFutura(r, true)).join('') + `</div>`;
+    }
+    container.innerHTML = html;
 }
 
 function renderFinanzas() { renderCaja(window.cajaData); }
@@ -2662,6 +2752,7 @@ function confirmarAsignacion() {
     // Optimistic: mark reserva card as "abordando"
     let resIdx = (window.reservasData||[]).findIndex(r => r.id === id_reserva);
     if(resIdx !== -1) window.reservasData[resIdx]._asignando = true;
+    try { resOk(); resHap([15, 40, 15]); } catch(e) {}   // feedback de abordaje confirmado
     renderReservas(window.reservasData);
 
     // Optimistic: add temp item to manifest

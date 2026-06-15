@@ -64,12 +64,15 @@ begin
     where op.estado in ('Abierta','En_Viaje') or (op.estado='Cerrada' and op.fecha=v_hoy)
   ) s;
 
-  -- sala de espera: reservas Pendiente
+  -- sala de espera: Pendientes (todas) + las de HOY ya tomadas (Asignado/Pasado)
+  -- para poder tacharlas abajo. creado_por = quién la registró.
   select coalesce(jsonb_agg(jsonb_build_object(
       'id',r.id,'cliente',r.cliente,'pax',r.pax,'estado',r.estado,
       'hora',r.hora,'contacto',r.contacto_id,'monto',coalesce(r.monto,0),
-      'fecha',to_char(r.fecha,'YYYY-MM-DD'),'creado_por','')),'[]'::jsonb)
-    into v_sala from reservas r where r.estado='Pendiente';
+      'fecha',to_char(r.fecha,'YYYY-MM-DD'),'creado_por',coalesce(r.creado_por,'')) order by r.hora),'[]'::jsonb)
+    into v_sala from reservas r
+    where r.estado='Pendiente'
+       or (r.fecha = v_hoy and r.estado in ('Asignado','Pasado'));
 
   -- movimientos_dia: TODO Caja_Operador (el front filtra por día)
   select coalesce(jsonb_agg(jsonb_build_object(

@@ -101,8 +101,8 @@ $$
 declare v_id text := coalesce(p_id, gen_id('RES-','seq_res'));
 begin
   perform _req_staff();
-  insert into reservas(id,fecha,hora,contacto_id,cliente,pax,estado,creado_at)
-    values(v_id,p_fecha,p_hora,nullif(p_contacto,''),p_cliente,p_pax,'Pendiente',now());
+  insert into reservas(id,fecha,hora,contacto_id,cliente,pax,estado,creado_at,creado_por)
+    values(v_id,p_fecha,p_hora,nullif(p_contacto,''),p_cliente,p_pax,'Pendiente',now(),nullif(p_creador,''));
   return v_id;
 end $$;
 
