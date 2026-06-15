@@ -60,8 +60,10 @@ grant execute on function registrar_movimiento(text,text,text,text,int,numeric,n
 -- 3) abrir_operacion — idempotente
 -- ============================================================
 drop function if exists abrir_operacion(text,text,text,text,text,text,text);
+drop function if exists abrir_operacion(text,text,text,text,text,text,text,text);
 create or replace function abrir_operacion(
-    p_bote text, p_capitan text, p_guia text, p_hora text, p_destino text, p_creador text, p_id text default null, p_local_id text default null)
+    p_bote text, p_capitan text, p_guia text, p_hora text, p_destino text, p_creador text,
+    p_id text default null, p_local_id text default null, p_fecha date default null)
   returns text language plpgsql security definer set search_path=public as
 $$
 declare v_id text; v_existing text;
@@ -73,7 +75,7 @@ begin
   end if;
   v_id := coalesce(p_id, gen_id('OP-','seq_op'));
   insert into operaciones(id,fecha,hora_salida,bote_id,capitan_id,guia_id,estado,creado_por,destino,creado_at,local_id)
-    values(v_id,(now() at time zone 'America/Lima')::date,p_hora,p_bote,
+    values(v_id, coalesce(p_fecha,(now() at time zone 'America/Lima')::date), p_hora, p_bote,
            nullif(p_capitan,''),nullif(p_guia,''),'Abierta',p_creador,nullif(p_destino,''),now(),p_local_id)
     on conflict (local_id) where local_id is not null do nothing;
   if not found and p_local_id is not null then
@@ -81,7 +83,7 @@ begin
   end if;
   return v_id;
 end $$;
-grant execute on function abrir_operacion(text,text,text,text,text,text,text,text) to anon, authenticated;
+grant execute on function abrir_operacion(text,text,text,text,text,text,text,text,date) to anon, authenticated;
 
 -- ============================================================
 -- 4) crear_reserva — idempotente
