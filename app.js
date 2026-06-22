@@ -1303,6 +1303,8 @@ function resHap(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch 
 
 // ════════════════ BOLETA RÁPIDA (muelle · solo si el admin la habilitó) ════════════════
 let _facM = null;
+// ícono "boleta" (estilo recibo) en SVG — se pinta dorado vía CSS
+const _FAC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 6.5v11"/></svg>';
 async function _facMuelleInit() {
   try {
     if (!window.SupaAPI || !window.SupaAPI.facturacionMuelle) return;
@@ -1311,14 +1313,15 @@ async function _facMuelleInit() {
     if (on) {
       if (!btn) {
         btn = document.createElement('button');
-        btn.id = 'fab-boleta';
-        btn.innerHTML = '🧾';
-        btn.title = 'Emitir boleta';
-        btn.style.cssText = 'position:fixed;right:16px;bottom:84px;z-index:9000;width:54px;height:54px;border-radius:50%;border:none;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-size:24px;box-shadow:0 6px 18px rgba(34,197,94,.45);cursor:pointer';
+        btn.id = 'fab-boleta'; btn.className = 'fac-fab'; btn.title = 'Emitir boleta';
+        btn.innerHTML = '<span class="fac-fab-inner">' + _FAC_ICON + '</span>';
         btn.onclick = abrirBoletaMuelle;
-        document.body.appendChild(btn);
+        document.body.appendChild(btn);   // se crea solo si el admin autorizó → efecto de aparición
+      } else if (btn.style.display === 'none') {
+        btn.style.display = '';
+        const inner = btn.querySelector('.fac-fab-inner');   // re-dispara la animación de aparición
+        if (inner) { inner.style.animation = 'none'; void inner.offsetWidth; inner.style.animation = ''; }
       }
-      btn.style.display = 'flex';
     } else if (btn) { btn.style.display = 'none'; }
   } catch (e) {}
 }
@@ -1360,7 +1363,7 @@ async function _facMEmitir() {
     exonerado: S.exonerado, operador: myOpName, localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }); }
   catch (e) { r = { status: 'error', message: e.message }; }
   if (r && r.status !== 'error' && (r.id || r.numero)) { resOk(); resHap([15,40,15]); S.resultado = Object.assign({}, r, { _tel: S.tel.trim(), _nombre: S.nombre.trim() }); _facMRender(); }
-  else { _facMErr((r && r.message || 'No se pudo emitir').replace(/^.*?:\s*/, '')); if (btn) { btn.disabled = false; btn.textContent = '🧾 Emitir boleta'; } }
+  else { _facMErr((r && r.message || 'No se pudo emitir').replace(/^.*?:\s*/, '')); if (btn) { btn.disabled = false; btn.textContent = 'Emitir boleta'; } }
 }
 function _facMRender() {
   let ov = document.getElementById('facm-ov');
@@ -1375,26 +1378,26 @@ function _facMRender() {
     const tel = String(R._tel || '').replace(/\D/g, '');
     const waMsg = encodeURIComponent('Hola ' + (R._nombre || '') + ', tu comprobante ' + R.serie + '-' + String(R.numero).padStart(6, '0') + (realPdf ? ': ' + pdfUrl : ' por S/ ' + (R.total || 0).toFixed(2)));
     const waHref = tel ? 'https://wa.me/' + (tel.length === 9 ? '51' + tel : tel) + '?text=' + waMsg : '';
-    inner = `<div style="text-align:center;padding:24px 14px">
-      <div style="font-size:46px">✅</div>
-      <div style="font-weight:900;font-size:20px;color:#16a34a;margin:8px 0">${R.serie}-${String(R.numero).padStart(6,'0')}</div>
+    inner = `<div style="text-align:center;padding:22px 14px">
+      <div style="width:62px;height:62px;margin:0 auto 6px;border-radius:50%;background:linear-gradient(140deg,#7a1015,#56070c);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(86,7,12,.4)"><svg viewBox="0 0 24 24" fill="none" stroke="#e8b840" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="width:30px;height:30px"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <div style="font-weight:900;font-size:21px;color:#56070c;margin:8px 0;letter-spacing:.02em">${R.serie}-${String(R.numero).padStart(6,'0')}</div>
       <div style="color:#6b7280;font-size:13px">Total S/ ${(R.total||0).toFixed(2)} · ${realPdf ? R.estado : '(demo)'}</div>
-      ${realPdf ? `<a href="${pdfUrl.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="resTap()" style="display:block;margin:14px 0 0;padding:11px;border-radius:12px;background:#dcfce7;color:#166534;font-weight:800;text-decoration:none">📄 Ver / descargar PDF</a>` : ''}
+      ${realPdf ? `<a href="${pdfUrl.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="resTap()" style="display:block;margin:14px 0 0;padding:11px;border-radius:12px;background:#fdf2f2;color:#56070c;border:1px solid #f0c4c6;font-weight:800;text-decoration:none">📄 Ver / descargar PDF</a>` : ''}
       ${waHref ? `<a href="${waHref}" target="_blank" rel="noopener" onclick="resOk()" style="display:block;margin:10px 0 0;padding:12px;border-radius:12px;background:#25D366;color:#fff;font-weight:800;text-decoration:none">💬 Enviar por WhatsApp</a>` : ''}
       <div style="display:flex;gap:8px;margin-top:14px">
-        <button onclick="_facM.resultado=null;_facMRender()" style="flex:1;padding:12px;border-radius:12px;border:1px solid #d1d5db;background:#fff;font-weight:700">Otra</button>
-        <button onclick="cerrarBoletaMuelle()" style="flex:1;padding:12px;border-radius:12px;border:none;background:#16a34a;color:#fff;font-weight:800">Listo</button>
+        <button onclick="_facM.resultado=null;_facMRender()" style="flex:1;padding:12px;border-radius:12px;border:1px solid #e0c9cb;background:#fff;color:#56070c;font-weight:800">Otra</button>
+        <button onclick="cerrarBoletaMuelle()" style="flex:1;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800">Listo</button>
       </div></div>`;
   } else {
     inner = `
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <button onclick="_facM.tipo=2;_facMRender()" style="flex:1;padding:10px;border-radius:10px;font-weight:800;border:1px solid ${S.tipo===2?'#16a34a':'#e5e7eb'};background:${S.tipo===2?'#dcfce7':'#fff'};color:${S.tipo===2?'#166534':'#6b7280'}">Boleta</button>
-      <button onclick="_facM.tipo=1;_facM.docTipo='6';_facMRender()" style="flex:1;padding:10px;border-radius:10px;font-weight:800;border:1px solid ${S.tipo===1?'#16a34a':'#e5e7eb'};background:${S.tipo===1?'#dcfce7':'#fff'};color:${S.tipo===1?'#166534':'#6b7280'}">Factura</button>
+      <button onclick="_facM.tipo=2;_facMRender()" style="flex:1;padding:10px;border-radius:10px;font-weight:800;border:1px solid ${S.tipo===2?'#56070c':'#e5e7eb'};background:${S.tipo===2?'#fdf2f2':'#fff'};color:${S.tipo===2?'#56070c':'#6b7280'}">Boleta</button>
+      <button onclick="_facM.tipo=1;_facM.docTipo='6';_facMRender()" style="flex:1;padding:10px;border-radius:10px;font-weight:800;border:1px solid ${S.tipo===1?'#56070c':'#e5e7eb'};background:${S.tipo===1?'#fdf2f2':'#fff'};color:${S.tipo===1?'#56070c':'#6b7280'}">Factura</button>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <select id="facm-dt" style="flex:0 0 80px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;font-weight:700">${DOCS.map(d=>`<option value="${d[0]}"${S.docTipo===d[0]?' selected':''}>${d[1]}</option>`).join('')}</select>
       <input id="facm-doc" inputmode="numeric" placeholder="N° doc" value="${(S.doc||'').replace(/"/g,'&quot;')}" ${S.docTipo==='0'?'disabled':''} style="flex:1;padding:10px;border:1px solid #e5e7eb;border-radius:10px">
-      <button id="facm-buscar" ${S.docTipo==='0'?'disabled':''} style="flex:0 0 44px;border:1px solid #e5e7eb;border-radius:10px;background:#f0fdf4;color:#16a34a;font-size:16px;cursor:pointer">🔎</button>
+      <button id="facm-buscar" ${S.docTipo==='0'?'disabled':''} style="flex:0 0 44px;border:1px solid #f0c4c6;border-radius:10px;background:#fdf2f2;color:#56070c;font-size:16px;cursor:pointer">🔎</button>
     </div>
     <input id="facm-nom" placeholder="Nombre del cliente" value="${(S.nombre||'').replace(/"/g,'&quot;')}" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
     <input id="facm-tel" inputmode="tel" placeholder="WhatsApp (opcional, para enviar la boleta)" value="${(S.tel||'').replace(/"/g,'&quot;')}" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
@@ -1405,10 +1408,10 @@ function _facMRender() {
     </div>
     <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#6b7280;margin-bottom:10px"><input type="checkbox" id="facm-exo" ${S.exonerado?'checked':''}> Extranjero · exonerado IGV</label>
     <div style="display:flex;justify-content:space-between;font-weight:900;font-size:17px;margin-bottom:12px;padding:8px 2px;border-top:1px dashed #e5e7eb"><span>TOTAL</span><span id="facm-tt">S/ ${t.total.toFixed(2)}</span></div>
-    <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-weight:800;font-size:15px">🧾 Emitir boleta</button>`;
+    <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;box-shadow:0 6px 16px rgba(86,7,12,.32)">Emitir boleta</button>`;
   }
   ov.innerHTML = `<div style="width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;max-height:92vh;overflow-y:auto;animation:slideUp .25s ease${S.shake?';animation:siShakeM .42s':''}">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"><div style="font-size:22px">🧾</div><div style="flex:1;font-weight:900;font-size:17px;color:#111">Emitir boleta</div><button onclick="cerrarBoletaMuelle()" style="font-size:24px;color:#9ca3af;background:none;border:none">×</button></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(140deg,#7a1015,#56070c);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(86,7,12,.3)"><span style="color:#e8b840;display:flex">${_FAC_ICON.replace('<svg ', '<svg width="21" height="21" ')}</span></div><div style="flex:1;font-weight:900;font-size:17px;color:#3d0508">Emitir boleta</div><button onclick="cerrarBoletaMuelle()" style="font-size:24px;color:#9ca3af;background:none;border:none">×</button></div>
     ${inner}</div>`;
   const g = id => ov.querySelector('#' + id);
   if (g('facm-dt')) g('facm-dt').onchange = e => { S.docTipo = e.target.value; _facMRender(); };
