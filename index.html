@@ -23,6 +23,8 @@
         .tab-content { display: none; padding-bottom: 90px; }
         .tab-content.active { display: block; animation: fadeIn 0.2s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        @keyframes siShakeM { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-8px)} 40%{transform:translateX(8px)} 60%{transform:translateX(-5px)} 80%{transform:translateX(5px)} }
         @keyframes cardEnter { from { opacity: 0; transform: translateY(-12px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
         .card-enter { animation: cardEnter 0.32s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
         @keyframes rowEnter { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
@@ -829,7 +831,7 @@
     <div id="ver-tag" style="position:fixed;bottom:3px;right:6px;font-size:9px;color:rgba(255,255,255,.28);z-index:99999;pointer-events:none;font-family:monospace;letter-spacing:.05em;"></div>
     <script src="app.js"></script>
     <script>
-        const OPS_VERSION = 'v36';
+        const OPS_VERSION = 'v37';
         try { document.getElementById('ver-tag').textContent = OPS_VERSION; } catch(e) {}
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {

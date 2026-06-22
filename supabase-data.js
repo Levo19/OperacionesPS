@@ -184,8 +184,18 @@
     guardar_cierre: async p => {
       const url = await subirArchivo('cierres/' + (p.nombre || 'Cierre ' + stamp()) + '.html', new Blob([p.html], { type: 'text/html' }), 'text/html');
       return { url, nombre: p.nombre };
-    }
+    },
+
+    emitir_comprobante: async p => await rpc('emitir_comprobante', {
+      p_tipo: p.tipo, p_serie: p.serie, p_cliente_doc_tipo: p.cliente_doc_tipo || null, p_cliente_doc: p.cliente_doc || null,
+      p_cliente_nombre: p.cliente_nombre, p_cliente_email: p.cliente_email || null, p_items: p.items || [],
+      p_exonerado: !!p.exonerado, p_moneda: 'PEN', p_origen: 'muelle', p_creado_por: p.operador || 'App',
+      p_local_id: p.localId || null, p_cliente_tel: p.cliente_tel || null })
   };
+
+  // lecturas de facturación (toggle + catálogo) para el muelle
+  async function facturacionMuelle() { try { return !!(await rpc('get_facturacion_muelle')); } catch (e) { return false; } }
+  async function listarServiciosFac() { try { return (await rpc('listar_servicios')) || []; } catch (e) { return []; } }
 
   async function post(action, payload) {
     const h = handlers[action];
@@ -194,5 +204,5 @@
     catch (e) { return err(e); }
   }
 
-  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post };
+  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac };
 })();
