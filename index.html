@@ -31,8 +31,29 @@
         .row-enter { animation: rowEnter 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
         @keyframes cobrarAppear { from { opacity: 0; transform: scaleY(0.85) translateY(-4px); } to { opacity: 1; transform: scaleY(1) translateY(0); } }
         .cobrar-btn-appear { animation: cobrarAppear 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both; transform-origin: top; }
+        /* ── Barra inferior · movimiento elegante guinda/dorado ── */
+        .nav-item { position: relative; overflow: hidden; }
+        .nav-item::before { /* barrita dorada→guinda que se desliza bajo el activo */
+            content: ''; position: absolute; top: 0; left: 50%; width: 34px; height: 3px;
+            border-radius: 0 0 5px 5px; background: linear-gradient(90deg, #e8b840, #56070c);
+            transform: translateX(-50%) scaleX(0); transform-origin: center;
+            transition: transform .42s cubic-bezier(.34, 1.56, .64, 1);
+        }
+        .nav-item.active::before { transform: translateX(-50%) scaleX(1); }
+        .nav-item::after { /* destello al tocar */
+            content: ''; position: absolute; top: 50%; left: 50%; width: 8px; height: 8px;
+            border-radius: 50%; background: rgba(86,7,12,.18);
+            transform: translate(-50%, -50%) scale(0); opacity: 0;
+        }
+        .nav-item.tapped::after { animation: navTap .5s ease-out; }
+        @keyframes navTap { 0% { transform: translate(-50%,-50%) scale(0); opacity: .7; } 100% { transform: translate(-50%,-50%) scale(9); opacity: 0; } }
         .nav-item.active { color: #56070c; }
-        .nav-item.active .icon { transform: scale(1.15); }
+        .nav-item .icon { transition: transform .42s cubic-bezier(.34, 1.56, .64, 1), color .25s ease; will-change: transform; }
+        .nav-item.active .icon { transform: scale(1.2) translateY(-2px); }
+        .nav-item:not(.active):hover .icon { transform: translateY(-2px); }
+        .nav-item:active .icon { transform: scale(.84); }
+        .nav-item span { transition: opacity .25s ease, font-weight .25s ease; }
+        .nav-item:not(.active) span { opacity: .75; }
 
         /* ── Colores empresa #56070c ───────────────── */
         .bg-blue-600, .bg-blue-500 { background-color: #56070c !important; }
@@ -869,7 +890,7 @@
     <div id="ver-tag" style="position:fixed;bottom:3px;right:6px;font-size:9px;color:rgba(255,255,255,.28);z-index:99999;pointer-events:none;font-family:monospace;letter-spacing:.05em;"></div>
     <script src="app.js"></script>
     <script>
-        const OPS_VERSION = 'v40';
+        const OPS_VERSION = 'v41';
         try { document.getElementById('ver-tag').textContent = OPS_VERSION; } catch(e) {}
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {

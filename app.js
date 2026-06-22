@@ -437,6 +437,9 @@ function switchTab(tabId, title, btnElement) {
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     btnElement.classList.add('active');
     document.getElementById('app-title').innerText = title;
+    // feedback táctil + destello (mismo lenguaje del FAB)
+    try { resTap(); resHap(8); } catch (e) {}
+    btnElement.classList.remove('tapped'); void btnElement.offsetWidth; btnElement.classList.add('tapped');
 }
 
 function switchFinanzas(seccion, btnEl) {
