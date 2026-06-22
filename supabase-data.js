@@ -196,6 +196,7 @@
   // lecturas de facturación (toggle + catálogo) para el muelle
   async function facturacionMuelle() { try { return !!(await rpc('get_facturacion_muelle')); } catch (e) { return false; } }
   async function listarServiciosFac() { try { return (await rpc('listar_servicios')) || []; } catch (e) { return []; } }
+  async function consultarDocumento(tipo, numero) { try { return await rpc('consultar_documento', { p_tipo: tipo, p_numero: numero }); } catch (e) { return { ok: false, motivo: 'error' }; } }
 
   async function post(action, payload) {
     const h = handlers[action];
@@ -204,5 +205,5 @@
     catch (e) { return err(e); }
   }
 
-  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac };
+  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento };
 })();

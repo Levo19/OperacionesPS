@@ -1326,11 +1326,22 @@ async function abrirBoletaMuelle() {
   resTap(); resHap(10);
   let servicios = [];
   try { servicios = (window.SupaAPI && window.SupaAPI.listarServiciosFac) ? await window.SupaAPI.listarServiciosFac() : []; } catch (e) {}
-  _facM = { servicios, tipo: 2, docTipo: '1', doc: '', nombre: '', servicio: (servicios[0]||{}).nombre || 'Tour Islas Ballestas',
+  _facM = { servicios, tipo: 2, docTipo: '1', doc: '', nombre: '', tel: '', servicio: (servicios[0]||{}).nombre || 'Tour Islas Ballestas',
     precio: (servicios[0]||{}).precio || 0, pax: 1, exonerado: false, resultado: null, shake: false };
   _facMRender();
 }
 function cerrarBoletaMuelle() { const ov = document.getElementById('facm-ov'); if (ov) ov.style.display = 'none'; resHap(8); }
+async function _facMBuscar() {
+  const S = _facM; if (!S.doc.trim()) return; resTap(); resHap(8);
+  if (!window.SupaAPI || !window.SupaAPI.consultarDocumento) return;
+  try {
+    const d = await window.SupaAPI.consultarDocumento(S.docTipo, S.doc.trim());
+    if (d && d.ok && d.nombre) { S.nombre = d.nombre; resOk(); _facMRender(); mostrarToast('✓ ' + d.nombre, 'success'); }
+    else if (d && d.motivo === 'tipo_manual') mostrarToast('CE/Pasaporte: escribe el nombre', 'info');
+    else if (d && d.motivo === 'sin_config') mostrarToast('Escribe el nombre (lookup sin token aún)', 'info');
+    else mostrarToast('Sin datos — escribe el nombre', 'info');
+  } catch (e) {}
+}
 function _facMTotal() { const total = (parseFloat(_facM.pax)||0) * (parseFloat(_facM.precio)||0); const grav = _facM.exonerado?0:Math.round(total/1.18*100)/100; return { total: Math.round(total*100)/100, grav, igv: _facM.exonerado?0:Math.round((total-grav)*100)/100 }; }
 function _facMErr(m) { resErr(); resHap([60,30,60]); mostrarToast('⚠️ ' + m, 'error'); if (_facM){ _facM.shake=true; _facMRender(); setTimeout(()=>{ if(_facM){_facM.shake=false;_facMRender();} },450); } }
 async function _facMEmitir() {
@@ -1342,10 +1353,11 @@ async function _facMEmitir() {
   let r;
   try { r = await window.SupaAPI.post('emitir_comprobante', { tipo: S.tipo, serie: S.tipo === 1 ? 'F001' : 'B001',
     cliente_doc_tipo: S.docTipo, cliente_doc: S.docTipo === '0' ? '' : S.doc.trim(), cliente_nombre: S.nombre.trim(),
+    cliente_tel: S.tel.trim(),
     items: [{ descripcion: S.servicio, cantidad: parseFloat(S.pax) || 0, precio: parseFloat(S.precio) || 0 }],
     exonerado: S.exonerado, operador: myOpName, localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }); }
   catch (e) { r = { status: 'error', message: e.message }; }
-  if (r && r.status !== 'error' && (r.id || r.numero)) { resOk(); resHap([15,40,15]); S.resultado = r; _facMRender(); }
+  if (r && r.status !== 'error' && (r.id || r.numero)) { resOk(); resHap([15,40,15]); S.resultado = Object.assign({}, r, { _tel: S.tel.trim(), _nombre: S.nombre.trim() }); _facMRender(); }
   else { _facMErr((r && r.message || 'No se pudo emitir').replace(/^.*?:\s*/, '')); if (btn) { btn.disabled = false; btn.textContent = '🧾 Emitir boleta'; } }
 }
 function _facMRender() {
@@ -1357,11 +1369,17 @@ function _facMRender() {
   let inner;
   if (S.resultado) {
     const R = S.resultado;
+    const pdfUrl = String(R.pdf || ''); const realPdf = /^https?:\/\//.test(pdfUrl);
+    const tel = String(R._tel || '').replace(/\D/g, '');
+    const waMsg = encodeURIComponent('Hola ' + (R._nombre || '') + ', tu comprobante ' + R.serie + '-' + String(R.numero).padStart(6, '0') + (realPdf ? ': ' + pdfUrl : ' por S/ ' + (R.total || 0).toFixed(2)));
+    const waHref = tel ? 'https://wa.me/' + (tel.length === 9 ? '51' + tel : tel) + '?text=' + waMsg : '';
     inner = `<div style="text-align:center;padding:24px 14px">
       <div style="font-size:46px">✅</div>
       <div style="font-weight:900;font-size:20px;color:#16a34a;margin:8px 0">${R.serie}-${String(R.numero).padStart(6,'0')}</div>
-      <div style="color:#6b7280;font-size:13px">Total S/ ${(R.total||0).toFixed(2)} · (demo)</div>
-      <div style="display:flex;gap:8px;margin-top:18px">
+      <div style="color:#6b7280;font-size:13px">Total S/ ${(R.total||0).toFixed(2)} · ${realPdf ? R.estado : '(demo)'}</div>
+      ${realPdf ? `<a href="${pdfUrl.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="resTap()" style="display:block;margin:14px 0 0;padding:11px;border-radius:12px;background:#dcfce7;color:#166534;font-weight:800;text-decoration:none">📄 Ver / descargar PDF</a>` : ''}
+      ${waHref ? `<a href="${waHref}" target="_blank" rel="noopener" onclick="resOk()" style="display:block;margin:10px 0 0;padding:12px;border-radius:12px;background:#25D366;color:#fff;font-weight:800;text-decoration:none">💬 Enviar por WhatsApp</a>` : ''}
+      <div style="display:flex;gap:8px;margin-top:14px">
         <button onclick="_facM.resultado=null;_facMRender()" style="flex:1;padding:12px;border-radius:12px;border:1px solid #d1d5db;background:#fff;font-weight:700">Otra</button>
         <button onclick="cerrarBoletaMuelle()" style="flex:1;padding:12px;border-radius:12px;border:none;background:#16a34a;color:#fff;font-weight:800">Listo</button>
       </div></div>`;
@@ -1374,8 +1392,10 @@ function _facMRender() {
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <select id="facm-dt" style="flex:0 0 80px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;font-weight:700">${DOCS.map(d=>`<option value="${d[0]}"${S.docTipo===d[0]?' selected':''}>${d[1]}</option>`).join('')}</select>
       <input id="facm-doc" inputmode="numeric" placeholder="N° doc" value="${(S.doc||'').replace(/"/g,'&quot;')}" ${S.docTipo==='0'?'disabled':''} style="flex:1;padding:10px;border:1px solid #e5e7eb;border-radius:10px">
+      <button id="facm-buscar" ${S.docTipo==='0'?'disabled':''} style="flex:0 0 44px;border:1px solid #e5e7eb;border-radius:10px;background:#f0fdf4;color:#16a34a;font-size:16px;cursor:pointer">🔎</button>
     </div>
     <input id="facm-nom" placeholder="Nombre del cliente" value="${(S.nombre||'').replace(/"/g,'&quot;')}" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
+    <input id="facm-tel" inputmode="tel" placeholder="WhatsApp (opcional, para enviar la boleta)" value="${(S.tel||'').replace(/"/g,'&quot;')}" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
     <select id="facm-svc" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px;font-weight:700">${(S.servicios.length?S.servicios:[{nombre:'Tour Islas Ballestas',precio:S.precio}]).map(sv=>`<option value="${sv.nombre}|${sv.precio}"${S.servicio===sv.nombre?' selected':''}>${sv.nombre} · S/${sv.precio}</option>`).join('')}</select>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <div style="flex:1"><div style="font-size:11px;color:#6b7280;font-weight:700">PAX</div><input id="facm-pax" type="number" inputmode="numeric" value="${S.pax}" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;text-align:center;font-weight:800"></div>
@@ -1391,7 +1411,9 @@ function _facMRender() {
   const g = id => ov.querySelector('#' + id);
   if (g('facm-dt')) g('facm-dt').onchange = e => { S.docTipo = e.target.value; _facMRender(); };
   if (g('facm-doc')) g('facm-doc').oninput = e => { S.doc = e.target.value; };
+  if (g('facm-buscar')) g('facm-buscar').onclick = _facMBuscar;
   if (g('facm-nom')) g('facm-nom').oninput = e => { S.nombre = e.target.value; };
+  if (g('facm-tel')) g('facm-tel').oninput = e => { S.tel = e.target.value; };
   if (g('facm-svc')) g('facm-svc').onchange = e => { const v = e.target.value.split('|'); S.servicio = v[0]; S.precio = parseFloat(v[1]) || S.precio; _facMRender(); };
   const upd = () => { const tt = g('facm-tt'); if (tt) tt.textContent = 'S/ ' + _facMTotal().total.toFixed(2); };
   if (g('facm-pax')) g('facm-pax').oninput = e => { S.pax = e.target.value; upd(); };
