@@ -1324,9 +1324,11 @@ async function _facMuelleInit() {
 }
 async function abrirBoletaMuelle() {
   resTap(); resHap(10);
-  let servicios = [];
+  let servicios = [], cfg = {};
   try { servicios = (window.SupaAPI && window.SupaAPI.listarServiciosFac) ? await window.SupaAPI.listarServiciosFac() : []; } catch (e) {}
-  _facM = { servicios, tipo: 2, docTipo: '1', doc: '', nombre: '', tel: '', servicio: (servicios[0]||{}).nombre || 'Tour Islas Ballestas',
+  try { cfg = (window.SupaAPI && window.SupaAPI.facturacionConfig) ? await window.SupaAPI.facturacionConfig() : {}; } catch (e) {}
+  _facM = { servicios, serieB: cfg.serie_boleta || 'B002', serieF: cfg.serie_factura || 'F002',
+    tipo: 2, docTipo: '1', doc: '', nombre: '', tel: '', servicio: (servicios[0]||{}).nombre || 'Tour Islas Ballestas',
     precio: (servicios[0]||{}).precio || 0, pax: 1, exonerado: false, resultado: null, shake: false };
   _facMRender();
 }
@@ -1351,7 +1353,7 @@ async function _facMEmitir() {
   if (!(parseFloat(S.pax) > 0) || !(parseFloat(S.precio) > 0)) return _facMErr('PAX y precio deben ser > 0');
   const btn = document.getElementById('facm-emitir'); if (btn) { btn.disabled = true; btn.textContent = 'Emitiendo…'; }
   let r;
-  try { r = await window.SupaAPI.post('emitir_comprobante', { tipo: S.tipo, serie: S.tipo === 1 ? 'F001' : 'B001',
+  try { r = await window.SupaAPI.post('emitir_comprobante', { tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
     cliente_doc_tipo: S.docTipo, cliente_doc: S.docTipo === '0' ? '' : S.doc.trim(), cliente_nombre: S.nombre.trim(),
     cliente_tel: S.tel.trim(),
     items: [{ descripcion: S.servicio, cantidad: parseFloat(S.pax) || 0, precio: parseFloat(S.precio) || 0 }],
