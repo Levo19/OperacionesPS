@@ -141,6 +141,17 @@
     @media (prefers-reduced-motion: reduce) {
         #fab-boleta .fac-fab-inner, #fab-boleta.fac-fab::before, #fab-boleta .fac-fab-inner::after { animation: facFabIn .4s ease both; }
     }
+    /* ── Modal boleta: animaciones del nuevo flujo ── */
+    @keyframes facmPlusOne { 0%{opacity:0;transform:translateX(-50%) translateY(0) scale(.5)} 22%{opacity:1} 100%{opacity:0;transform:translateX(-50%) translateY(-78px) scale(1.35)} }
+    .facm-plusone { position:absolute; left:50%; bottom:78px; font-weight:900; font-size:30px; color:#56070c; pointer-events:none; z-index:6; animation: facmPlusOne 1.1s cubic-bezier(.2,.7,.3,1) forwards; text-shadow:0 2px 6px rgba(86,7,12,.25); }
+    @keyframes facmExpand { from{opacity:0;max-height:0;transform:translateY(-6px)} to{opacity:1;max-height:120px;transform:translateY(0)} }
+    .facm-expand { animation: facmExpand .28s ease both; overflow:hidden; }
+    @keyframes facmRowIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    .facm-row { animation: facmRowIn .3s cubic-bezier(.22,.61,.36,1) both; }
+    @keyframes facmDropIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+    .facm-drop-item { animation: facmDropIn .2s ease both; }
+    .facm-step { transition: transform .12s ease, background .15s ease; }
+    .facm-step:active { transform: scale(.85); }
     </style>
 </head>
 <body class="font-sans antialiased text-gray-800">
@@ -890,7 +901,7 @@
     <div id="ver-tag" style="position:fixed;bottom:3px;right:6px;font-size:9px;color:rgba(255,255,255,.28);z-index:99999;pointer-events:none;font-family:monospace;letter-spacing:.05em;"></div>
     <script src="app.js"></script>
     <script>
-        const OPS_VERSION = 'v41';
+        const OPS_VERSION = 'v42';
         try { document.getElementById('ver-tag').textContent = OPS_VERSION; } catch(e) {}
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {

@@ -196,8 +196,12 @@
   // lecturas de facturación (toggle + catálogo) para el muelle
   async function facturacionMuelle() { try { return !!(await rpc('get_facturacion_muelle')); } catch (e) { return false; } }
   async function listarServiciosFac() { try { return (await rpc('listar_servicios')) || []; } catch (e) { return []; } }
-  async function consultarDocumento(tipo, numero) { try { return await rpc('consultar_documento', { p_tipo: tipo, p_numero: numero }); } catch (e) { return { ok: false, motivo: 'error' }; } }
+  async function consultarDocumento(numero, tipo) { try { return await rpc('consultar_documento', { p_numero: numero, p_tipo: tipo || null }); } catch (e) { return { ok: false, motivo: 'error' }; } }
   async function facturacionConfig() { try { return (await rpc('get_facturacion_config')) || {}; } catch (e) { return {}; } }
+  async function facturacionBootstrap() { try { return (await rpc('get_facturacion_bootstrap')) || {}; } catch (e) { return {}; } }
+  async function buscarContactosFac(q) { try { return (await rpc('buscar_contactos_fac', { p_q: q })) || []; } catch (e) { return []; } }
+  async function listarComprobantesDia(usuario) { try { return (await rpc('listar_comprobantes_dia', { p_usuario: usuario || null })) || []; } catch (e) { return []; } }
+  async function solicitarAnulacion(id, motivo, por) { try { return await rpc('solicitar_anulacion', { p_id: id, p_motivo: motivo, p_por: por || null }); } catch (e) { return { ok: false, message: e.message }; } }
 
   async function post(action, payload) {
     const h = handlers[action];
@@ -206,5 +210,5 @@
     catch (e) { return err(e); }
   }
 
-  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento, facturacionConfig };
+  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento, facturacionConfig, facturacionBootstrap, buscarContactosFac, listarComprobantesDia, solicitarAnulacion };
 })();
