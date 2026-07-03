@@ -1370,6 +1370,97 @@ async function abrirBoletaMuelle() {
   _facMRender();
 }
 function cerrarBoletaMuelle() { const ov = document.getElementById('facm-ov'); if (ov) ov.style.display = 'none'; resHap(8); }
+
+// ════════════════ JALAR ZARPE CON IA (foto → Claude vision → facturar) ════════════════
+let _zar = null;
+function _zarEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function abrirZarpe(idOperacion){
+  let b = {}; try { b = await window.SupaAPI.facturacionBootstrap() || {}; } catch(_){}
+  _zar = { idOperacion: idOperacion||'', serieB: (b.serie_boleta||'B002'), serieF: (b.serie_factura||'F002'), precioDef: Number(b.precio_defecto)||30,
+           fase:'foto', pax:[], analizando:false, emitiendo:false, servicio:'Tour Islas Ballestas' };
+  _zarRender();
+}
+function cerrarZarpe(){ const ov=document.getElementById('zar-ov'); if(ov) ov.style.display='none'; fx('sel'); }
+async function _zarFoto(input){
+  const f = input && input.files && input.files[0]; if(!f) return;
+  const S=_zar; S.analizando=true; _zarRender();
+  try{
+    const b64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=rej; r.readAsDataURL(f); });
+    const out = await window.SupaAPI.extraerZarpe(b64, f.type||'image/jpeg');
+    if(out && out.ok && Array.isArray(out.pasajeros)){
+      S.pax = out.pasajeros.map((p,i)=>({ _i:i, sel:true, nombre:p.nombre||'', tipo_doc:p.tipo_doc||'', documento:p.documento||'', empresa:p.empresa||'', precio:S.precioDef, estado:'' }));
+      S.fase='lista'; fx('done');
+    } else { fx('err'); mostrarToast('⚠️ No se pudo leer el zarpe: '+((out&&out.motivo)||'error'),'error'); }
+  }catch(e){ fx('err'); mostrarToast('⚠️ Error al analizar la foto','error'); }
+  S.analizando=false; _zarRender();
+}
+function _zarSet(i,k,v){ const p=_zar.pax.find(x=>x._i===i); if(p){ p[k]=v; if(k==='sel'){} } }
+function _zarToggle(i){ const p=_zar.pax.find(x=>x._i===i); if(p){ p.sel=!p.sel; fx('tap'); _zarRender(); } }
+// emite un CPE por cada pasajero seleccionado (boleta; si tiene RUC+empresa → factura a esa agencia)
+async function _zarEmitir(){
+  const S=_zar; if(S.emitiendo) return;
+  const sel = S.pax.filter(p=>p.sel && p.estado!=='facturado');
+  if(!sel.length) return (fx('err'), mostrarToast('Selecciona al menos un pasajero','error'));
+  S.emitiendo=true; _zarRender();
+  let ok=0, fail=0;
+  for(const p of sel){
+    const esFactura = p.tipo_doc==='6' && /^\d{11}$/.test(p.documento||'');
+    const localId = 'zar-'+(S.idOperacion||'x')+'-'+p._i+'-'+Date.now();
+    try{
+      const r = await window.SupaAPI.post('emitir_comprobante',{
+        tipo: esFactura?1:2, serie: esFactura?S.serieF:S.serieB,
+        cliente_doc_tipo: p.tipo_doc||'0', cliente_doc: p.documento||'', cliente_nombre: p.empresa||p.nombre||'CLIENTE VARIOS',
+        cliente_dir:'', es_extranjero: p.tipo_doc==='7', items:[{descripcion:S.servicio,cantidad:1,precio:parseFloat(p.precio)||S.precioDef}],
+        exonerado:false, exportacion:false, operador: myOpName, operacion_ref:S.idOperacion, localId
+      });
+      if(r && r.status!=='error' && (r.id||r.numero) && r.estado!=='rechazada'){
+        p.estado='facturado'; p.cpe=r.serie+'-'+r.numero; ok++;
+        // registrar el pax en el zarpe digitalizado + ligar el CPE
+        try{ const rz=await window.SupaAPI.registrarZarpePax(S.idOperacion,[{documento:p.documento,tipo_doc:p.tipo_doc,nombre:p.nombre,empresa:p.empresa}],myOpName); }catch(_){}
+      } else { p.estado='error'; fail++; }
+    }catch(e){ p.estado='error'; fail++; }
+    _zarRender();
+  }
+  S.emitiendo=false;
+  fx(fail?'warn':'emit');
+  mostrarToast(`✅ ${ok} emitidos${fail?` · ⚠️ ${fail} con error`:''}`, fail?'error':'success');
+  _zarRender();
+}
+function _zarRender(){
+  let ov=document.getElementById('zar-ov');
+  if(!ov){ ov=document.createElement('div'); ov.id='zar-ov'; ov.style.cssText='position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center'; ov.onclick=e=>{if(e.target===ov)cerrarZarpe();}; document.body.appendChild(ov); }
+  ov.style.display='flex'; const S=_zar;
+  let body;
+  if(S.fase==='foto'){
+    body = `<div style="text-align:center;padding:20px 6px">
+      <div style="font-size:15px;font-weight:800;color:#3d0508;margin-bottom:6px">📸 Jalar zarpe</div>
+      <div style="font-size:12px;color:#9b6b6e;margin-bottom:16px">Toma o sube la foto del zarpe. La IA lee los documentos y prepara los comprobantes.</div>
+      ${S.analizando ? `<div style="padding:24px;color:#56070c;font-weight:800">🤖 Analizando con IA…</div>` :
+        `<label style="display:block;padding:16px;border:2px dashed #e0c9cb;border-radius:14px;color:#56070c;font-weight:800;cursor:pointer">📷 Tomar / subir foto<input type="file" accept="image/*" capture="environment" onchange="_zarFoto(this)" style="display:none"></label>`}
+    </div>`;
+  } else {
+    const filas = S.pax.map(p=>{
+      const chip = p.estado==='facturado'?'<span style="font-size:9px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:6px;padding:1px 6px">🟢 '+_zarEsc(p.cpe||'ok')+'</span>':(p.estado==='error'?'<span style="font-size:9px;font-weight:800;background:#fee2e2;color:#b91c1c;border-radius:6px;padding:1px 6px">🔴 error</span>':'');
+      const tipoLbl = ({'1':'DNI','4':'CE','7':'Pasaporte','6':'RUC','0':'Varios'})[p.tipo_doc]||p.tipo_doc||'?';
+      return `<div style="display:flex;align-items:center;gap:8px;border:1px solid #f0e6e7;border-radius:11px;padding:9px;margin-bottom:7px;${p.estado==='facturado'?'opacity:.6':''}">
+        <input type="checkbox" ${p.sel?'checked':''} ${p.estado==='facturado'?'disabled':''} onchange="_zarToggle(${p._i})">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_zarEsc(p.nombre||p.empresa||'—')} ${chip}</div>
+          <div style="font-size:10.5px;color:#9b6b6e">${tipoLbl} ${_zarEsc(p.documento)} ${p.empresa?'· 🏢 '+_zarEsc(p.empresa):''} · S/${p.precio}</div>
+        </div>
+      </div>`;
+    }).join('');
+    const nSel = S.pax.filter(p=>p.sel && p.estado!=='facturado').length;
+    body = `<div style="margin-bottom:8px;font-size:14px;font-weight:800;color:#3d0508">Pasajeros detectados (${S.pax.length})</div>
+      <div style="max-height:46vh;overflow-y:auto;margin-bottom:10px">${filas||'<div style="color:#9ca3af;text-align:center;padding:20px">Sin pasajeros</div>'}</div>
+      <div style="font-size:10.5px;color:#9b6b6e;margin-bottom:8px">Con RUC → factura a la agencia; el resto → boleta. Revisa antes de emitir.</div>
+      <button onclick="_zarEmitir()" ${S.emitiendo?'disabled':''} style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;${S.emitiendo?'opacity:.6':''}">${S.emitiendo?'Emitiendo…':`Emitir ${nSel} comprobante(s)`}</button>`;
+  }
+  ov.innerHTML = `<div style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;animation:slideUp .25s ease">
+    <button onclick="cerrarZarpe()" style="position:absolute;top:12px;right:14px;border:none;background:none;font-size:20px;color:#9b6b6e;cursor:pointer">✕</button>
+    ${body}
+  </div>`;
+}
 function _facMDocLbl(tipo) { return ({ '1': 'DNI', '6': 'RUC', '4': 'CE', '7': 'Pasaporte', '0': 'Varios' })[tipo] || tipo; }
 function _facMTab(t) { fx('sel'); _facM.tab = t; _facM.anularId = null; _facMRender(); if (t === 'historial') _facMHist(); }
 function _facMSearch(q) {
@@ -1534,7 +1625,8 @@ function _facMRender() {
     <div style="display:flex;background:#f6eef0;border-radius:12px;padding:4px;margin-bottom:12px">
       <button onclick="_facM.tipo=2;_facMRender()" style="flex:1;padding:9px;border-radius:9px;font-weight:800;font-size:13px;border:none;cursor:pointer;transition:all .2s;background:${!esFactura?'#fff':'transparent'};color:${!esFactura?'#56070c':'#9b7d80'};box-shadow:${!esFactura?'0 2px 6px rgba(86,7,12,.12)':'none'}">Boleta</button>
       <button onclick="_facM.tipo=1;_facMRender()" style="flex:1;padding:9px;border-radius:9px;font-weight:800;font-size:13px;border:none;cursor:pointer;transition:all .2s;background:${esFactura?'#fff':'transparent'};color:${esFactura?'#56070c':'#9b7d80'};box-shadow:${esFactura?'0 2px 6px rgba(86,7,12,.12)':'none'}">Factura</button>
-    </div>`;
+    </div>
+    <button onclick="abrirZarpe('')" style="width:100%;padding:10px;border-radius:11px;border:1px dashed #c9a84c;background:linear-gradient(90deg,#fffdf5,#fff);color:#8a6d1e;font-weight:800;font-size:12.5px;cursor:pointer;margin-bottom:12px">📸 Jalar zarpe con IA — facturar el grupo</button>`;
   if (S.cliente) {
     const c = S.cliente;
     emitir += `<div class="facm-row" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:12px;background:linear-gradient(135deg,#fdf2f2,#fbe9ea);border:1px solid #f0c4c6;margin-bottom:10px">

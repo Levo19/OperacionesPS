@@ -52,6 +52,9 @@ alter table comprobantes      add column if not exists es_exportacion    boolean
 -- Dado por hecho por el dueño (2026-07-03) → ON. Si caduca alguna inscripción, poner en false = todo vuelve a 18%.
 alter table facturacion_config add column if not exists operador_turistico_registrado boolean default false;
 update facturacion_config set operador_turistico_registrado = true where id = 1;
+-- Detracción (SPOT) — facturas B2B
+alter table comprobantes add column if not exists detraccion       boolean default false;
+alter table comprobantes add column if not exists detraccion_total numeric(12,2) default 0;
 
 -- ── B4 · get_facturacion_config con series (definición FINAL, gana a las previas) ─
 create or replace function get_facturacion_config()
@@ -71,22 +74,31 @@ drop function if exists _nf_items(jsonb, boolean);
 create or replace function _nf_items(p_items jsonb, p_exonerado boolean, p_exportacion boolean default false)
   returns jsonb language sql immutable as
 $$
+  -- afectación POR ÍTEM: cada ítem puede traer "afectacion" (gravado/inafecto/exonerado/exportacion);
+  -- si no la trae, usa el modo global (export/exon/gravado) = comportamiento anterior. Tasas SERNANP → 'inafecto'.
   select coalesce(jsonb_agg(jsonb_build_object(
-    'unidad_de_medida','ZZ','codigo','S','descripcion', i->>'descripcion',
-    'cantidad',(i->>'cantidad')::numeric,
-    'valor_unitario', case when p_exportacion or p_exonerado then (i->>'precio')::numeric else round((i->>'precio')::numeric/1.18,2) end,
-    'precio_unitario',(i->>'precio')::numeric,
-    'subtotal', round((case when p_exportacion or p_exonerado then (i->>'precio')::numeric else round((i->>'precio')::numeric/1.18,2) end)*(i->>'cantidad')::numeric,2),
-    'tipo_de_igv', case when p_exportacion then 16 when p_exonerado then 8 else 1 end,
-    'igv', case when p_exportacion or p_exonerado then 0 else round(round(round((i->>'precio')::numeric/1.18,2)*(i->>'cantidad')::numeric,2)*0.18,2) end,
-    'total', round((case when p_exportacion or p_exonerado then (i->>'precio')::numeric else round((i->>'precio')::numeric/1.18,2) end)*(i->>'cantidad')::numeric,2)
-             + case when p_exportacion or p_exonerado then 0 else round(round(round((i->>'precio')::numeric/1.18,2)*(i->>'cantidad')::numeric,2)*0.18,2) end
-  )),'[]'::jsonb) from jsonb_array_elements(p_items) i
+    'unidad_de_medida','ZZ','codigo','S','descripcion', descripcion,
+    'cantidad', cant, 'valor_unitario', vu, 'precio_unitario', precio, 'subtotal', sub,
+    'tipo_de_igv', case af when 'inafecto' then 9 when 'exonerado' then 8 when 'exportacion' then 16 else 1 end,
+    'igv', igvl, 'total', sub + igvl
+  )),'[]'::jsonb)
+  from (
+    select descripcion, cant, precio, af, vu, sub, case when af='gravado' then round(sub*0.18,2) else 0 end igvl from (
+      select descripcion, cant, precio, af, vu, round(vu*cant,2) sub from (
+        select i->>'descripcion' descripcion, (i->>'cantidad')::numeric cant, (i->>'precio')::numeric precio,
+               coalesce(nullif(i->>'afectacion',''), case when p_exportacion then 'exportacion' when p_exonerado then 'exonerado' else 'gravado' end) af,
+               case when coalesce(nullif(i->>'afectacion',''), case when p_exportacion then 'exportacion' when p_exonerado then 'exonerado' else 'gravado' end)='gravado'
+                    then round((i->>'precio')::numeric/1.18,2) else (i->>'precio')::numeric end vu
+        from jsonb_array_elements(p_items) i
+      ) a
+    ) b
+  ) c
 $$;
 
 -- ── §4 · EMITIR con validaciones SUNAT + guards + modo EXPORTACIÓN. DROP de signatures viejos primero. ──
 drop function if exists emitir_comprobante(int,text,text,text,text,text,jsonb,boolean,text,text,text,text,text,text,text,boolean);
 drop function if exists emitir_comprobante(int,text,text,text,text,text,jsonb,boolean,text,text,text,text,text,text,text,boolean,text);
+drop function if exists emitir_comprobante(int,text,text,text,text,text,jsonb,boolean,text,text,text,text,text,text,text,boolean,text,boolean);
 
 create or replace function emitir_comprobante(
     p_tipo int, p_serie text,
@@ -95,12 +107,12 @@ create or replace function emitir_comprobante(
     p_origen text default 'panel', p_operacion_ref text default null,
     p_creado_por text default null, p_local_id text default null,
     p_cliente_tel text default null, p_cliente_dir text default null, p_es_extranjero boolean default false,
-    p_medio_pago text default null, p_exportacion boolean default false)
+    p_medio_pago text default null, p_exportacion boolean default false, p_detraccion boolean default false)
   returns jsonb language plpgsql security definer set search_path=public, auth, extensions as
 $$
 declare v_num int; v_id text; v_existing comprobantes; v_total numeric; v_grav numeric; v_igv numeric; v_exo numeric;
         v_cfg facturacion_config; v_body jsonb; v_resp text; v_j jsonb; v_estado text; v_pdf text; v_qr text; v_xml text;
-        v_err text; v_hash text; v_real boolean; v_errlow text; v_obs text; v_doc text; v_export numeric;
+        v_err text; v_hash text; v_real boolean; v_errlow text; v_obs text; v_doc text; v_export numeric; v_inaf numeric; v_detr numeric;
 begin
   perform _req_staff();
   if p_origen = 'muelle' and not coalesce((select facturacion_muelle from app_config where app_id='operacionesps'), false) then
@@ -147,19 +159,32 @@ begin
   if v_total >= 2000 and not p_exportacion and coalesce(trim(p_medio_pago),'') = '' then  -- Bancarización Ley 28194 (no aplica a exportación)
     raise exception 'REQUIERE_MEDIO_DE_PAGO: operación >= S/2000 exige indicar el medio de pago (bancarización)'; end if;
 
-  -- Buckets DERIVADOS de los ítems (base + 18% por línea) → Σítems == totales exacto (NubeFact no rechaza por céntimos).
-  if p_exportacion then
-    select coalesce(sum(round((i->>'precio')::numeric*(i->>'cantidad')::numeric,2)),0) into v_export from jsonb_array_elements(p_items) i;
-    v_exo := 0; v_grav := 0; v_igv := 0; v_total := v_export;
-  elsif p_exonerado then
-    select coalesce(sum(round((i->>'precio')::numeric*(i->>'cantidad')::numeric,2)),0) into v_exo from jsonb_array_elements(p_items) i;
-    v_export := 0; v_grav := 0; v_igv := 0; v_total := v_exo;
-  else
-    select coalesce(sum(round(round((i->>'precio')::numeric/1.18,2)*(i->>'cantidad')::numeric,2)),0),
-           coalesce(sum(round(round(round((i->>'precio')::numeric/1.18,2)*(i->>'cantidad')::numeric,2)*0.18,2)),0)
-      into v_grav, v_igv from jsonb_array_elements(p_items) i;
-    v_exo := 0; v_export := 0; v_total := v_grav + v_igv;
-  end if;
+  -- Buckets por afectación de CADA ítem (default global; ítem puede traer "afectacion"). Σbuckets == total exacto.
+  -- v_inaf incluye inafecto + exportación (NubeFact usa total_inafecta como bucket de exportación).
+  select
+    coalesce(sum(case when af='gravado' then sub else 0 end),0),
+    coalesce(sum(case when af='gravado' then igvl else 0 end),0),
+    coalesce(sum(case when af in ('inafecto','exportacion') then sub else 0 end),0),
+    coalesce(sum(case when af='exonerado' then sub else 0 end),0),
+    coalesce(sum(case when af='exportacion' then sub else 0 end),0),
+    coalesce(sum(sub+igvl),0)
+  into v_grav, v_igv, v_inaf, v_exo, v_export, v_total
+  from (
+    select af, sub, case when af='gravado' then round(sub*0.18,2) else 0 end igvl from (
+      select af, round(vu*cant,2) sub from (
+        select (i->>'cantidad')::numeric cant,
+               coalesce(nullif(i->>'afectacion',''), case when p_exportacion then 'exportacion' when p_exonerado then 'exonerado' else 'gravado' end) af,
+               case when coalesce(nullif(i->>'afectacion',''), case when p_exportacion then 'exportacion' when p_exonerado then 'exonerado' else 'gravado' end)='gravado'
+                    then round((i->>'precio')::numeric/1.18,2) else (i->>'precio')::numeric end vu
+        from jsonb_array_elements(p_items) i
+      ) a
+    ) b
+  ) c;
+
+  -- Detracción (SPOT) 12% cód.037 — solo facturas B2B > S/700
+  if p_detraccion and not (p_tipo = 1 and v_total > 700) then
+    raise exception 'DETRACCION_SOLO_FACTURA_B2B: la detracción aplica a facturas > S/700'; end if;
+  v_detr := case when p_detraccion then round(v_total*0.12,2) else 0 end;
 
   -- PEEK del siguiente número (NO se avanza todavía)
   select correlativo + 1 into v_num from series where serie = p_serie;
@@ -174,7 +199,7 @@ begin
     v_body := jsonb_build_object(
       'operacion','generar_comprobante',
       'tipo_de_comprobante', p_tipo, 'serie', p_serie, 'numero', v_num,
-      'sunat_transaction', case when p_exportacion then 2 else 1 end,
+      'sunat_transaction', case when p_detraccion then 30 when p_exportacion then 2 else 1 end,
       -- exportación: SUNAT cat.06 exige '0' (NO DOMICILIADO SIN RUC); el pasaporte del turista va en el número
       'cliente_tipo_de_documento', case when p_exportacion then '0' else coalesce(nullif(p_cliente_doc_tipo,''),'0') end,
       'cliente_numero_de_documento', coalesce(nullif(p_cliente_doc,''),'00000000'),
@@ -182,9 +207,14 @@ begin
       'cliente_direccion', coalesce(p_cliente_dir,''), 'cliente_email', coalesce(p_cliente_email,''),
       'fecha_de_emision', to_char((now() at time zone 'America/Lima')::date,'DD-MM-YYYY'),
       'moneda', case when coalesce(p_moneda,'PEN')='USD' then 2 else 1 end, 'porcentaje_de_igv', 18,
-      -- export: NubeFact exige total_inafecta>0 y lo usa como bucket de exportación; NO enviar total_exportacion (doble conteo). Σbuckets==total.
-      'total_gravada', v_grav, 'total_exonerada', v_exo, 'total_inafecta', v_export, 'total_igv', v_igv, 'total', v_total,
-      'observaciones', coalesce(v_obs,''),
+      -- total_inafecta = inafecto + exportación (NubeFact usa este bucket para export). Σbuckets==total.
+      'total_gravada', v_grav, 'total_exonerada', v_exo, 'total_inafecta', v_inaf, 'total_igv', v_igv, 'total', v_total,
+      'detraccion', p_detraccion,
+      'detraccion_tipo', case when p_detraccion then '037' else null end,
+      'detraccion_porcentaje', case when p_detraccion then 12 else null end,
+      'detraccion_total', case when p_detraccion then v_detr else null end,
+      'medio_de_pago_detraccion', case when p_detraccion then '001' else null end,
+      'observaciones', (case when p_detraccion then 'Operacion sujeta al SPOT 12% cod.037. ' else '' end || coalesce(v_obs,'')),
       'enviar_automaticamente_a_la_sunat', true,
       'enviar_automaticamente_al_cliente', (coalesce(p_cliente_email,'')<>''),
       'items', _nf_items(p_items, p_exonerado, p_exportacion));
@@ -227,11 +257,11 @@ begin
   update series set correlativo = v_num where serie = p_serie and correlativo < v_num;
 
   insert into comprobantes(tipo,serie,numero,moneda,cliente_doc_tipo,cliente_doc,cliente_nombre,cliente_email,cliente_tel,
-      exonerado,es_exportacion,total_gravada,total_exonerada,total_exportacion,total_igv,total,items,estado,enlace_pdf,enlace_xml,enlace_cdr,qr,hash,codigo_barras,medio_pago,
+      exonerado,es_exportacion,total_gravada,total_exonerada,total_exportacion,total_inafecta,total_igv,total,items,estado,enlace_pdf,enlace_xml,enlace_cdr,qr,hash,codigo_barras,medio_pago,detraccion,detraccion_total,
       aceptada_por_sunat,sunat_descripcion,sunat_responsecode,sunat_soap_error,nf_respuesta,errores,local_id,origen,operacion_ref,creado_por)
     values(p_tipo,p_serie,v_num,coalesce(p_moneda,'PEN'),nullif(p_cliente_doc_tipo,''),nullif(p_cliente_doc,''),
-      p_cliente_nombre,nullif(p_cliente_email,''),nullif(p_cliente_tel,''),coalesce(p_exonerado,false),coalesce(p_exportacion,false),v_grav,v_exo,v_export,v_igv,v_total,p_items,
-      v_estado,v_pdf,v_xml,(v_j->>'enlace_del_cdr'),v_qr,v_hash,(v_j->>'codigo_de_barras'),nullif(p_medio_pago,''),
+      p_cliente_nombre,nullif(p_cliente_email,''),nullif(p_cliente_tel,''),coalesce(p_exonerado,false),coalesce(p_exportacion,false),v_grav,v_exo,v_export,v_inaf,v_igv,v_total,p_items,
+      v_estado,v_pdf,v_xml,(v_j->>'enlace_del_cdr'),v_qr,v_hash,(v_j->>'codigo_de_barras'),nullif(p_medio_pago,''),coalesce(p_detraccion,false),v_detr,
       case when v_real then coalesce((v_j->>'aceptada_por_sunat')::boolean,false) else null end,
       coalesce(v_j->>'sunat_description',null),(v_j->>'sunat_responsecode'),(v_j->>'sunat_soap_error'),v_j,v_err,
       p_local_id,coalesce(p_origen,'panel'),nullif(p_operacion_ref,''),p_creado_por)
@@ -249,7 +279,7 @@ begin
   return jsonb_build_object('id',v_id,'serie',p_serie,'numero',v_num,'estado',v_estado,'total',v_total,
     'gravada',v_grav,'igv',v_igv,'pdf',v_pdf,'qr',v_qr,'errores',v_err);
 end $$;
-grant execute on function emitir_comprobante(int,text,text,text,text,text,jsonb,boolean,text,text,text,text,text,text,text,boolean,text,boolean) to authenticated;
+grant execute on function emitir_comprobante(int,text,text,text,text,text,jsonb,boolean,text,text,text,text,text,text,text,boolean,text,boolean,boolean) to authenticated;
 
 -- ── §4b · RECONCILIACIÓN: confirma la aceptación asíncrona de SUNAT ────────────
 -- Recorre comprobantes 'pendiente'/'rechazada' recientes y los consulta en NubeFact.
