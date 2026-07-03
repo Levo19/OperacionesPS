@@ -1304,6 +1304,28 @@ function resOk()  { _resBeep([660, 990, 1320], { type: 'triangle', dur: 0.11 });
 function resErr() { _resBeep([220, 165], { type: 'square', dur: 0.16, gain: 0.05 }); }
 function resHap(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
 
+// ── Vocabulario HÁPTICO semántico (patrones distintos y detectables por el humano) ──
+// Cada evento tiene su "firma" en la piel: el cajero SIENTE qué pasó sin leer.
+const _HAP = {
+  tap:   12,                      // toque de botón (suave)
+  sel:   [0, 14],                 // selección/cambio de pestaña
+  ok:    [0, 25, 45, 25],         // confirmación amable
+  emit:  [0, 45, 30, 110],        // ★ EMITIDO — golpe satisfactorio (punch final)
+  warn:  [0, 22, 80, 22],         // advertencia (doble espaciado, "ojo")
+  err:   [0, 75, 45, 75, 45, 75], // ERROR — triple buzz inconfundible
+  ready: [0, 16],                 // listo para el siguiente
+  scan:  [0, 10, 90, 10, 90, 10], // IA analizando (pulso de escaneo)
+  done:  [0, 30, 35, 30],         // IA terminó
+};
+// fx(nombre): feedback TRIPLE (háptico + sonoro) en una sola llamada = sensación coherente.
+function fx(name) {
+  try { if (navigator.vibrate) navigator.vibrate(_HAP[name] || 12); } catch (e) {}
+  if (name === 'emit' || name === 'ok' || name === 'done') { try { resOk(); } catch (e) {} }
+  else if (name === 'err') { try { resErr(); } catch (e) {} }
+  else if (name === 'warn') { try { _resBeep([880, 620], { type: 'triangle', dur: 0.09, gain: 0.045 }); } catch (e) { try { resTap(); } catch (_) {} } }  // dos tonos: atención, no error
+  else { try { resTap(); } catch (e) {} }
+}
+
 // ════════════════ BOLETA RÁPIDA (muelle · solo si el admin la habilitó) ════════════════
 let _facM = null;
 // ícono "boleta" (estilo recibo) en SVG — se pinta dorado vía CSS
@@ -1341,15 +1363,15 @@ async function abrirBoletaMuelle() {
     cliente: null, q: '', resultados: [], buscando: false, apiResult: null, noEncontrado: false,
     manual: false, manualTipo: '4', _manualNombre: '',
     tel: '', email: '', telOpen: false, emailOpen: false,
-    servicio: (servicios[0] || {}).nombre || 'Tour Islas Ballestas', precio: precioDef, pax: 1, exonerado: false,
+    servicio: (servicios[0] || {}).nombre || 'Tour Islas Ballestas', precio: precioDef, pax: 1, exonerado: false, medioPago: '',
     historial: [], cargandoHist: false, contadorHoy: 0,
-    emitiendo: false, shake: false, _t: null, anularId: null, _anularMotivo: ''
+    emitiendo: false, shake: false, _t: null, anularId: null, _anularMotivo: '', _localId: null
   };
   _facMRender();
 }
 function cerrarBoletaMuelle() { const ov = document.getElementById('facm-ov'); if (ov) ov.style.display = 'none'; resHap(8); }
 function _facMDocLbl(tipo) { return ({ '1': 'DNI', '6': 'RUC', '4': 'CE', '7': 'Pasaporte', '0': 'Varios' })[tipo] || tipo; }
-function _facMTab(t) { resTap(); resHap(8); _facM.tab = t; _facM.anularId = null; _facMRender(); if (t === 'historial') _facMHist(); }
+function _facMTab(t) { fx('sel'); _facM.tab = t; _facM.anularId = null; _facMRender(); if (t === 'historial') _facMHist(); }
 function _facMSearch(q) {
   const S = _facM; S.q = q; S.apiResult = null; S.noEncontrado = false;
   clearTimeout(S._t);
@@ -1371,14 +1393,15 @@ function _facMSearch(q) {
   }, 450);
 }
 function _facMPick(c) {
-  const S = _facM; resOk(); resHap(10);
+  const S = _facM; fx('sel');
+  S._localId = null;   // P2-1: cliente nuevo = venta nueva → nunca reusar el localId de otra venta
   S.cliente = { doc_tipo: c.doc_tipo || '1', doc_numero: c.doc_numero || '', nombre: c.nombre || '', direccion: c.direccion || '', es_extranjero: !!c.es_extranjero };
   if (c.email) S.email = c.email;
   if (c.telefono) S.tel = c.telefono;
   S.q = ''; S.resultados = []; S.apiResult = null; S.noEncontrado = false; S.manual = false;
   _facMRender();
 }
-function _facMClearCliente() { resTap(); resHap(8); const S = _facM; S.cliente = null; S.q = ''; S.resultados = []; S.noEncontrado = false; S.apiResult = null; S.manual = false; _facMRender(); }
+function _facMClearCliente() { fx('sel'); const S = _facM; S._localId = null; S.cliente = null; S.q = ''; S.resultados = []; S.noEncontrado = false; S.apiResult = null; S.manual = false; _facMRender(); }
 function _facMManual() { resTap(); _facM.manual = true; _facM.noEncontrado = false; _facM.manualTipo = '4'; _facMRender(); }
 function _facMManualOK() {
   const S = _facM; const nom = (S._manualNombre || '').trim();
@@ -1424,9 +1447,9 @@ function _facMAnularToggle(id) { const S = _facM; S.anularId = (S.anularId === i
 async function _facMAnularEnviar(id) {
   const S = _facM; const motivo = (S._anularMotivo || '').trim();
   if (!motivo) return _facMErr('Escribe el motivo de la anulación');
-  resTap(); resHap(10);
+  fx('tap');
   const r = await window.SupaAPI.solicitarAnulacion(id, motivo, myOpName);
-  if (r && r.ok) { resOk(); resHap([15, 40, 15]); S.anularId = null; mostrarToast('Solicitud enviada a PS para revisión', 'success'); _facMHist(); }
+  if (r && r.ok) { fx('ok'); S.anularId = null; mostrarToast('Solicitud enviada a PS para revisión', 'success'); _facMHist(); }
   else _facMErr((r && r.message || 'No se pudo solicitar').replace(/^.*?:\s*/, ''));
 }
 function _facMPlusOne(r) {
@@ -1434,15 +1457,49 @@ function _facMPlusOne(r) {
   mostrarToast('✅ ' + r.serie + '-' + String(r.numero).padStart(6, '0') + ' emitido', 'success');
 }
 function _facMTotal() { const total = (parseFloat(_facM.pax)||0) * (parseFloat(_facM.precio)||0); const grav = _facM.exonerado?0:Math.round(total/1.18*100)/100; return { total: Math.round(total*100)/100, grav, igv: _facM.exonerado?0:Math.round((total-grav)*100)/100 }; }
-function _facMErr(m) { resErr(); resHap([60,30,60]); mostrarToast('⚠️ ' + m, 'error'); if (_facM){ _facM.shake=true; _facMRender(); setTimeout(()=>{ if(_facM){_facM.shake=false;_facMRender();} },450); } }
+// Motor de reglas SUNAT en vivo: devuelve [{ok, dura, txt}] según el estado actual del modal.
+function _facMReglas() {
+  const S = _facM, t = _facMTotal(), cli = S.cliente, rules = [];
+  const doc = cli && cli.doc_tipo !== '0' ? (cli.doc_numero || '') : '';
+  if (S.tipo === 1) { // FACTURA
+    rules.push({ dura: true, ok: !!cli && cli.doc_tipo === '6' && /^\d{11}$/.test(doc), txt: 'Factura → RUC de 11 dígitos' });
+    rules.push({ dura: true, ok: !!cli && !!(cli.nombre || '').trim(), txt: 'Razón social' });
+    rules.push({ dura: true, ok: !!cli && !!(cli.direccion || '').trim(), txt: 'Dirección fiscal' });
+  } else if (t.total > 700) { // BOLETA > 700
+    rules.push({ dura: true, ok: !!doc, txt: 'Boleta > S/700 → identificar cliente (DNI/CE/pasaporte)' });
+    rules.push({ dura: true, ok: !!cli && !!(cli.nombre || '').trim(), txt: 'Nombre del cliente' });
+  }
+  if (t.total >= 2000) {
+    rules.push({ dura: true, ok: !!S.medioPago, txt: 'Medio de pago (bancarización ≥ S/2000)' });
+  }
+  return rules;
+}
+function _facMSetMp(v) { _facM.medioPago = v; _facMRender(); }
+// Chip de estado SUNAT para el historial
+function _facMChip(c) {
+  if (c.estado === 'anulada' || c.anulacion_estado === 'aprobada') return '<span style="font-size:9px;font-weight:800;background:#eee;color:#888;border-radius:6px;padding:1px 6px">⊘ anulada</span>';
+  const m = { aceptada: ['🟢', '#15803d', '#dcfce7', 'SUNAT'], pendiente: ['🟡', '#a16207', '#fef9c3', 'pendiente'], rechazada: ['🔴', '#b91c1c', '#fee2e2', 'rechazada'], stub: ['⚪', '#6b7280', '#f3f4f6', 'demo'] }[c.estado] || ['⚪', '#6b7280', '#f3f4f6', c.estado || '—'];
+  return `<span style="font-size:9px;font-weight:800;background:${m[2]};color:${m[1]};border-radius:6px;padding:1px 6px">${m[0]} ${m[3]}</span>`;
+}
+function _facMReglasHtml() {
+  const rules = _facMReglas();
+  if (!rules.length) return '';
+  const filas = rules.map(r => `<div style="display:flex;align-items:center;gap:7px;font-size:11.5px;padding:2px 0;color:${r.ok ? '#15803d' : '#a16207'}"><span style="width:14px">${r.ok ? '✅' : '⛔'}</span>${r.txt}</div>`).join('');
+  return `<div style="background:#faf7f2;border:1px solid #eadfce;border-radius:11px;padding:9px 11px;margin-bottom:10px"><div style="font-size:10px;color:#9b7d80;font-weight:800;letter-spacing:.5px;margin-bottom:3px">REQUISITOS SUNAT</div>${filas}</div>`;
+}
+function _facMPuede() { return _facMReglas().every(r => !r.dura || r.ok); }   // ¿cumple todas las reglas duras?
+function _facMErr(m) { fx('err'); mostrarToast('⚠️ ' + m, 'error'); if (_facM){ _facM.shake=true; _facMRender(); setTimeout(()=>{ if(_facM){_facM.shake=false;_facMRender();} },450); } }
 async function _facMEmitir() {
   const S = _facM;
   if (!S.cliente) return _facMErr('Elige o registra un cliente');
   if (!(parseInt(S.pax) > 0) || !(parseFloat(S.precio) > 0)) return _facMErr('PAX y precio deben ser mayores a 0');
   if (S.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(S.email.trim())) return _facMErr('El correo no es válido');
+  const _mp = S.medioPago || '';
+  if (_facMTotal().total >= 2000 && !_mp) return _facMErr('Elige el medio de pago (operación ≥ S/2000 · bancarización)');
   if (S.emitiendo) return;
   S.emitiendo = true; const btn = document.getElementById('facm-emitir'); if (btn) { btn.disabled = true; btn.textContent = 'Emitiendo…'; }
   const cli = S.cliente;
+  const _restoreBtn = () => { if (btn) { btn.disabled = false; btn.textContent = (S.tipo === 1 ? 'Emitir factura' : 'Emitir boleta'); } };
   let r;
   try {
     r = await window.SupaAPI.post('emitir_comprobante', {
@@ -1450,15 +1507,20 @@ async function _facMEmitir() {
       cliente_doc_tipo: cli.doc_tipo, cliente_doc: cli.doc_tipo === '0' ? '' : cli.doc_numero, cliente_nombre: cli.nombre,
       cliente_email: S.email.trim(), cliente_tel: S.tel.trim(), cliente_dir: cli.direccion || '', es_extranjero: !!cli.es_extranjero,
       items: [{ descripcion: S.servicio, cantidad: parseInt(S.pax) || 1, precio: parseFloat(S.precio) || 0 }],
-      exonerado: S.exonerado, operador: myOpName, localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
+      exonerado: false, medio_pago: _mp || null, exportacion: false, operador: myOpName,
+      // B2: localId ESTABLE por intento — se reutiliza en reintentos (dedup) y solo se rota al ÉXITO.
+      localId: (S._localId || (S._localId = 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)))
     });
   } catch (e) { r = { status: 'error', message: e.message }; }
   S.emitiendo = false;
   if (r && r.status !== 'error' && (r.id || r.numero)) {
-    resOk(); resHap([15, 40, 15]); S.contadorHoy++; _facMPlusOne(r);
-    S.cliente = null; S.pax = 1; S.precio = S.precioDef; S.tel = ''; S.email = ''; S.telOpen = false; S.emailOpen = false; S.exonerado = false; S.q = ''; S.resultados = [];
+    if (r.estado === 'rechazada') { _facMErr('SUNAT rechazó: ' + String(r.errores || 'revisa los datos').slice(0, 120)); _restoreBtn(); return; }
+    S._localId = null; S.contadorHoy++; _facMPlusOne(r);   // rota localId al éxito
+    if (r.estado === 'pendiente') { fx('warn'); mostrarToast('⏳ En proceso — SUNAT lo confirmará', 'info'); } else fx('emit');  // ★ golpe háptico
+    S.cliente = null; S.pax = 1; S.precio = S.precioDef; S.tel = ''; S.email = ''; S.telOpen = false; S.emailOpen = false; S.exonerado = false; S.medioPago = ''; S.q = ''; S.resultados = [];
     _facMRender();
-  } else { _facMErr((r && r.message || 'No se pudo emitir').replace(/^.*?:\s*/, '')); if (btn) { btn.disabled = false; btn.textContent = (S.tipo === 1 ? 'Emitir factura' : 'Emitir boleta'); } }
+    setTimeout(() => fx('ready'), 260);   // pulso sutil "listo para el siguiente"
+  } else { _facMErr((r && r.message || 'No se pudo emitir').replace(/^.*?:\s*/, '')); _restoreBtn(); }
 }
 function _facMRender() {
   let ov = document.getElementById('facm-ov');
@@ -1512,9 +1574,10 @@ function _facMRender() {
       </div>
       <div style="flex:1"><div style="font-size:11px;color:#6b7280;font-weight:700;margin-bottom:3px">P.U. (S/)</div><input id="facm-pu" type="number" inputmode="decimal" value="${S.precio}" style="width:100%;height:42px;padding:0 10px;border:1px solid #e5e7eb;border-radius:11px;text-align:center;font-weight:800;font-size:16px"></div>
     </div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#6b7280;margin-bottom:12px"><input type="checkbox" id="facm-exo" ${S.exonerado?'checked':''}> Extranjero · exonerado IGV</label>
+    ${t.total >= 2000 ? `<div style="margin-bottom:10px"><div style="font-size:11px;color:#a16207;font-weight:800;margin-bottom:4px">⚠️ ≥ S/2000 · medio de pago (bancarización)</div><select id="facm-mp" onchange="_facMSetMp(this.value)" style="width:100%;padding:10px;border:1px solid #e0b04a;border-radius:10px;font-weight:700;background:#fffdf5">${['','Efectivo','Transferencia','Yape/Plin','Tarjeta','Depósito en cuenta'].map(o=>`<option value="${o}"${(S.medioPago||'')===o?' selected':''}>${o||'Elige…'}</option>`).join('')}</select></div>` : ''}
+    ${_facMReglasHtml()}
     <div style="display:flex;justify-content:space-between;font-weight:900;font-size:17px;margin-bottom:12px;padding:10px 2px;border-top:1px dashed #e5e7eb;color:#3d0508"><span>TOTAL</span><span id="facm-tt">S/ ${t.total.toFixed(2)}</span></div>
-    <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;box-shadow:0 6px 16px rgba(86,7,12,.32)">${esFactura?'Emitir factura':'Emitir boleta'}</button>`;
+    <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;box-shadow:0 6px 16px rgba(86,7,12,.32);${_facMPuede() ? '' : 'opacity:.55'}">${esFactura?'Emitir factura':'Emitir boleta'}${_facMPuede() ? '' : ' · faltan requisitos'}</button>`;
 
   // ─────────── HISTORIAL ───────────
   let historial;
@@ -1528,7 +1591,7 @@ function _facMRender() {
     const cj = JSON.stringify(c).replace(/'/g, '&#39;');
     return `<div class="facm-row" style="animation-delay:${i*40}ms;border:1px solid #f0e6e7;border-radius:13px;padding:11px;margin-bottom:9px;${anulada?'opacity:.55':''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-        <div style="min-width:0"><div style="font-weight:800;font-size:13px;color:#3d0508;${anulada?'text-decoration:line-through':''}">${num}</div><div style="font-size:11px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(c.cliente_nombre||'—')} · ${c.hora}</div></div>
+        <div style="min-width:0"><div style="font-weight:800;font-size:13px;color:#3d0508;${anulada?'text-decoration:line-through':''}">${num} ${_facMChip(c)}</div><div style="font-size:11px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(c.cliente_nombre||'—')} · ${c.hora}</div></div>
         <div style="font-weight:800;font-size:13px;color:#56070c;white-space:nowrap">S/ ${(c.total||0)}</div>
       </div>
       ${pend?'<div style="margin-top:7px;font-size:11px;font-weight:700;color:#a16207;background:#fdf6ec;border-radius:7px;padding:4px 8px">⏳ Anulación en revisión por PS</div>':''}
@@ -1545,7 +1608,7 @@ function _facMRender() {
   const histBadge = S.contadorHoy ? `<span style="background:#56070c;color:#fff;border-radius:999px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:5px">${S.contadorHoy}</span>` : '';
   const tabBtn = (id, label, extra) => `<button onclick="_facMTab('${id}')" style="flex:1;padding:9px;border:none;background:none;cursor:pointer;font-weight:800;font-size:13px;border-bottom:2px solid ${S.tab===id?'#56070c':'transparent'};color:${S.tab===id?'#56070c':'#9b7d80'}">${label}${extra||''}</button>`;
 
-  ov.innerHTML = `<div id="facm-box" style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;max-height:92vh;overflow-y:auto;animation:slideUp .25s ease${S.shake?';animation:siShakeM .42s':''}">
+  ov.innerHTML = `<div id="facm-box" style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;animation:slideUp .25s ease${S.shake?';animation:siShakeM .42s':''}">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(140deg,#7a1015,#56070c);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(86,7,12,.3)"><span style="color:#e8b840;display:flex">${_FAC_ICON.replace('<svg ', '<svg width="21" height="21" ')}</span></div><div style="flex:1;font-weight:900;font-size:17px;color:#3d0508">Facturación</div><button onclick="cerrarBoletaMuelle()" style="font-size:24px;color:#9ca3af;background:none;border:none">×</button></div>
     <div style="display:flex;border-bottom:1px solid #f0e6e7;margin-bottom:14px">${tabBtn('emitir','Emitir')}${tabBtn('historial','Historial',histBadge)}</div>
     ${S.tab === 'emitir' ? emitir : historial}
@@ -1558,7 +1621,7 @@ function _facMRender() {
   if (g('facm-emin')) { const el = g('facm-emin'); el.oninput = e => { S.email = e.target.value.trim(); }; el.focus(); }
   if (g('facm-svc')) g('facm-svc').onchange = e => { const v = e.target.value.split('|'); S.servicio = v[0]; S.precio = parseFloat(v[1]) || S.precio; _facMRender(); };
   if (g('facm-pu')) g('facm-pu').oninput = e => { S.precio = e.target.value; _facMUpdTotal(); };
-  if (g('facm-exo')) g('facm-exo').onchange = e => { S.exonerado = e.target.checked; _facMUpdTotal(); };
+  // (toggle "exonerado" eliminado — turismo a extranjero es GRAVADO 18% salvo exportación, que va por su propio flujo)
   if (g('facm-anmot')) g('facm-anmot').oninput = e => { S._anularMotivo = e.target.value; };
 }
 function toggleVencidas() {

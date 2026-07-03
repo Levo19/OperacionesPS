@@ -1,0 +1,23 @@
+const { Client } = require('pg'); const fs = require('fs');
+const c = new Client({ host: 'aws-1-us-west-2.pooler.supabase.com', port: 5432, user: 'postgres.lintmcxqxnrholslatul', password: fs.readFileSync(__dirname + '/.pgpass', 'utf8').trim(), database: 'postgres', ssl: { rejectUnauthorized: false } });
+const J = x => JSON.stringify(x);
+(async () => {
+  await c.connect();
+  await c.query(fs.readFileSync(__dirname + '/facturacion_modulos.sql', 'utf8'));
+  const uid = (await c.query("select auth_uid::text u from app_usuarios where rol='Administrador' and activo and auth_uid is not null limit 1")).rows[0].u;
+  await c.query("select set_config('request.jwt.claims', $1, false)", [J({ sub: uid, role: 'authenticated' })]);
+  const rls = (await c.query("select relname,relrowsecurity from pg_class where relname in('zarpe_pax','compras')")).rows;
+  console.log('RLS:', J(rls));
+  const rz = (await c.query("select registrar_zarpe_pax('OP-TEST',$1::jsonb,'T') j", [J([{ documento: '45678912', tipo_doc: '1', nombre: 'Luis Vargas' }, { documento: 'X123', tipo_doc: '7', nombre: 'John' }])])).rows[0].j;
+  console.log('registrar_zarpe_pax:', J(rz));
+  const lz = (await c.query("select listar_zarpe_pax('OP-TEST') j")).rows[0].j;
+  console.log('listar_zarpe_pax:', lz.length, 'pax');
+  const rc = (await c.query("select registrar_compra($1::jsonb) j", [J({ ruc_proveedor: '20123456789', razon_social: 'GRIFO SA', base: 100, igv: 18, total: 118 })])).rows[0].j;
+  console.log('registrar_compra:', J(rc));
+  const bt = (await c.query("select balance_tributos() j")).rows[0].j;
+  console.log('balance_tributos:', J(bt));
+  await c.query("delete from zarpe_pax where id_operacion='OP-TEST'");
+  await c.query("delete from compras where razon_social='GRIFO SA'");
+  console.log('✓ módulos aplicados + smoke OK (test data limpiada)');
+  await c.end();
+})().catch(e => { console.error('✗', e.message); process.exit(1); });

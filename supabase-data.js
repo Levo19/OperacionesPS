@@ -190,18 +190,37 @@
       p_tipo: p.tipo, p_serie: p.serie, p_cliente_doc_tipo: p.cliente_doc_tipo || null, p_cliente_doc: p.cliente_doc || null,
       p_cliente_nombre: p.cliente_nombre, p_cliente_email: p.cliente_email || null, p_items: p.items || [],
       p_exonerado: !!p.exonerado, p_moneda: 'PEN', p_origen: 'muelle', p_creado_por: p.operador || 'App',
-      p_local_id: p.localId || null, p_cliente_tel: p.cliente_tel || null })
+      p_local_id: p.localId || null, p_cliente_tel: p.cliente_tel || null,
+      p_cliente_dir: p.cliente_dir || null, p_es_extranjero: !!p.es_extranjero,
+      p_medio_pago: p.medio_pago || null, p_exportacion: !!p.exportacion })
   };
 
   // lecturas de facturación (toggle + catálogo) para el muelle
   async function facturacionMuelle() { try { return !!(await rpc('get_facturacion_muelle')); } catch (e) { return false; } }
   async function listarServiciosFac() { try { return (await rpc('listar_servicios')) || []; } catch (e) { return []; } }
-  async function consultarDocumento(numero, tipo) { try { return await rpc('consultar_documento', { p_numero: numero, p_tipo: tipo || null }); } catch (e) { return { ok: false, motivo: 'error' }; } }
+  async function consultarDocumento(numero, tipo) {
+    try {
+      const { data, error } = await sb.functions.invoke('consultar-documento', { body: { numero, tipo: tipo || null } });
+      if (error) throw error;
+      return data;
+    } catch (e) { return { ok: false, motivo: 'error' }; }
+  }
   async function facturacionConfig() { try { return (await rpc('get_facturacion_config')) || {}; } catch (e) { return {}; } }
   async function facturacionBootstrap() { try { return (await rpc('get_facturacion_bootstrap')) || {}; } catch (e) { return {}; } }
   async function buscarContactosFac(q) { try { return (await rpc('buscar_contactos_fac', { p_q: q })) || []; } catch (e) { return []; } }
   async function listarComprobantesDia(usuario) { try { return (await rpc('listar_comprobantes_dia', { p_usuario: usuario || null })) || []; } catch (e) { return []; } }
   async function solicitarAnulacion(id, motivo, por) { try { return await rpc('solicitar_anulacion', { p_id: id, p_motivo: motivo, p_por: por || null }); } catch (e) { return { ok: false, message: e.message }; } }
+  // ── Módulos nuevos: zarpe digitalizado (IA), tributario, conciliación ──
+  async function extraerZarpe(imagen_base64, media_type) {
+    try { const { data, error } = await sb.functions.invoke('extraer-zarpe', { body: { imagen_base64, media_type } }); if (error) throw error; return data; }
+    catch (e) { return { ok: false, motivo: 'error' }; }
+  }
+  async function registrarZarpePax(operacion, pax, por) { try { return await rpc('registrar_zarpe_pax', { p_operacion: operacion, p_pax: pax, p_por: por || null }); } catch (e) { return { ok: false, message: e.message }; } }
+  async function listarZarpePax(operacion) { try { return (await rpc('listar_zarpe_pax', { p_operacion: operacion })) || []; } catch (e) { return []; } }
+  async function marcarZarpePaxFacturado(id, idComprobante) { try { await rpc('marcar_zarpe_pax_facturado', { p_id: id, p_id_comprobante: idComprobante }); return { ok: true }; } catch (e) { return { ok: false, message: e.message }; } }
+  async function conciliacionZarpe(fecha) { try { return (await rpc('conciliacion_zarpe', { p_fecha: fecha || null })) || []; } catch (e) { return []; } }
+  async function balanceTributos(periodo) { try { return (await rpc('balance_tributos', { p_periodo: periodo || null })) || {}; } catch (e) { return {}; } }
+  async function registrarCompra(p) { try { return await rpc('registrar_compra', { p }); } catch (e) { return { ok: false, message: e.message }; } }
 
   async function post(action, payload) {
     const h = handlers[action];
@@ -210,5 +229,5 @@
     catch (e) { return err(e); }
   }
 
-  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento, facturacionConfig, facturacionBootstrap, buscarContactosFac, listarComprobantesDia, solicitarAnulacion };
+  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento, facturacionConfig, facturacionBootstrap, buscarContactosFac, listarComprobantesDia, solicitarAnulacion, extraerZarpe, registrarZarpePax, listarZarpePax, marcarZarpePaxFacturado, conciliacionZarpe, balanceTributos, registrarCompra };
 })();

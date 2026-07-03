@@ -106,7 +106,7 @@
 
     /* ── FAB Facturación · guinda + dorado del ecosistema, aparición + idle animados ── */
     #fab-boleta.fac-fab {
-        position: fixed; right: 18px; bottom: 92px; z-index: 9000;
+        position: fixed; right: 18px; bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 9000;
         width: 58px; height: 58px; border-radius: 18px; padding: 0;
         border: 1.5px solid rgba(232,184,64,.5);
         background: linear-gradient(140deg, #7a1015 0%, #56070c 55%, #3d0508 100%);
@@ -901,7 +901,7 @@
     <div id="ver-tag" style="position:fixed;bottom:3px;right:6px;font-size:9px;color:rgba(255,255,255,.28);z-index:99999;pointer-events:none;font-family:monospace;letter-spacing:.05em;"></div>
     <script src="app.js"></script>
     <script>
-        const OPS_VERSION = 'v42';
+        const OPS_VERSION = 'v43';
         try { document.getElementById('ver-tag').textContent = OPS_VERSION; } catch(e) {}
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
