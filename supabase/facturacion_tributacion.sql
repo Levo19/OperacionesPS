@@ -36,19 +36,37 @@ create policy compras_storage_read on storage.objects for select to authenticate
 -- privado (necesaria para generar signed URLs bajo demanda).
 alter table compras add column if not exists foto_path text;
 
--- registrar_compra: recreada preservando firma (p jsonb) y toda la lógica previa,
--- añadiendo persistencia de foto_path (además del foto_url ya soportado).
+-- P0: una misma factura de proveedor NO puede duplicar el crédito IGV.
+create unique index if not exists ux_compras_doc on compras(ruc_proveedor, serie, numero)
+  where ruc_proveedor is not null and serie is not null and numero is not null;
+
+-- registrar_compra: dedupe + validaciones (periodo, sanity IGV/base, fecha) + autor de sesión.
 create or replace function registrar_compra(p jsonb)
   returns jsonb language plpgsql security definer set search_path=public, auth as
-$$ declare v_id text; v_per text; begin
+$$ declare v_id text; v_per text; v_base numeric; v_igv numeric; v_total numeric; v_fecha date; v_autor text; v_dup text; begin
   perform _req_staff();
   v_per := coalesce(nullif(p->>'periodo',''), to_char((now() at time zone 'America/Lima')::date,'YYYY-MM'));
+  if v_per !~ '^\d{4}-\d{2}$' then raise exception 'PERIODO_INVALIDO: use formato YYYY-MM (recibido: %)', v_per; end if;
+  v_base  := coalesce((p->>'base')::numeric,0);
+  v_igv   := coalesce((p->>'igv')::numeric,0);
+  v_total := coalesce((p->>'total')::numeric,0);
+  -- sanity: el IGV no puede exceder ~19% de la base, y base+IGV debe cuadrar con el total (evita inflar crédito)
+  if v_igv > v_base * 0.19 + 0.10 then raise exception 'IGV_INCOHERENTE: IGV (%) > 19%% de la base (%)', v_igv, v_base; end if;
+  if abs(v_total - (v_base + v_igv)) > 0.10 then raise exception 'TOTAL_NO_CUADRA: base+IGV (%) != total (%)', (v_base+v_igv), v_total; end if;
+  v_fecha := case when (p->>'fecha') ~ '^\d{4}-\d{2}-\d{2}$' then (p->>'fecha')::date else null end;
+  select nombre into v_autor from app_usuarios where auth_uid = auth.uid();   -- autor desde la sesión, no del payload
+  -- dedupe explícito por (ruc, serie, numero)
+  if nullif(p->>'ruc_proveedor','') is not null and nullif(p->>'serie','') is not null and nullif(p->>'numero','') is not null then
+    select id into v_dup from compras where ruc_proveedor = p->>'ruc_proveedor' and serie = p->>'serie' and numero = p->>'numero';
+    if v_dup is not null then return jsonb_build_object('ok', false, 'motivo', 'duplicado', 'id', v_dup); end if;
+  end if;
   insert into compras(ruc_proveedor,razon_social,tipo_doc,serie,numero,fecha,base,igv,total,foto_url,foto_path,periodo,creado_por)
     values(nullif(p->>'ruc_proveedor',''), nullif(p->>'razon_social',''), nullif(p->>'tipo_doc',''),
-      nullif(p->>'serie',''), nullif(p->>'numero',''), nullif(p->>'fecha','')::date,
-      coalesce((p->>'base')::numeric,0), coalesce((p->>'igv')::numeric,0), coalesce((p->>'total')::numeric,0),
-      nullif(p->>'foto_url',''), nullif(p->>'foto_path',''), v_per, nullif(p->>'creado_por',''))
+      nullif(p->>'serie',''), nullif(p->>'numero',''), v_fecha,
+      v_base, v_igv, v_total, nullif(p->>'foto_url',''), nullif(p->>'foto_path',''), v_per, coalesce(v_autor, nullif(p->>'creado_por','')))
+    on conflict do nothing
     returning id into v_id;
+  if v_id is null then return jsonb_build_object('ok', false, 'motivo', 'duplicado'); end if;
   return jsonb_build_object('ok', true, 'id', v_id, 'periodo', v_per);
 end $$;
 grant execute on function registrar_compra(jsonb) to authenticated;
@@ -60,7 +78,7 @@ create or replace function balance_tributos(p_periodo text default null)
   returns jsonb language plpgsql stable security definer set search_path=public, auth as
 $$ declare
      per text;
-     v_debito numeric; v_credito numeric; v_export numeric; v_grav numeric;
+     v_debito numeric; v_credito numeric; v_export numeric; v_grav numeric; v_exon numeric;
      v_ingresos numeric; v_gastos numeric; v_igv_por_pagar numeric; v_renta_pc numeric;
 begin
   perform _req_admin();
@@ -68,17 +86,17 @@ begin
 
   -- IGV — débito = IGV de ventas aceptadas/pendientes (excluye anuladas/rechazadas).
   -- 'pendiente' se incluye como estimación del período en curso.
-  select coalesce(sum(total_igv),0), coalesce(sum(total_gravada),0), coalesce(sum(total_exportacion),0)
-    into v_debito, v_grav, v_export
+  select coalesce(sum(total_igv),0), coalesce(sum(total_gravada),0), coalesce(sum(total_exportacion),0), coalesce(sum(total_exonerada),0)
+    into v_debito, v_grav, v_export, v_exon
     from comprobantes
     where estado in ('aceptada','pendiente')
       and to_char(creado_at at time zone 'America/Lima','YYYY-MM') = per;
   select coalesce(sum(igv),0) into v_credito from compras where periodo = per;
   v_igv_por_pagar := greatest(v_debito - v_credito, 0);
 
-  -- RENTA — ingresos netos del mes = base gravada + exportación (turismo receptivo
-  -- 0% IGV pero SÍ afecto a renta). Gastos deducibles = base (sin IGV) de compras.
-  v_ingresos := v_grav + v_export;
+  -- RENTA — ingresos netos = gravada + exportación + exonerada (todos son INGRESO gravable
+  -- para Renta aunque no generen IGV). Gastos deducibles = base (sin IGV) de compras.
+  v_ingresos := v_grav + v_export + v_exon;
   select coalesce(sum(base),0) into v_gastos from compras where periodo = per;
   -- Pago a cuenta mensual: 1.5% de ingresos netos [CONFIRMAR % con contador].
   v_renta_pc := round(v_ingresos * 0.015, 2);
@@ -129,7 +147,7 @@ begin
   v_anio := coalesce(p_anio, extract(year from (now() at time zone 'America/Lima'))::int);
 
   -- Ingresos anuales = base gravada + exportación de ventas aceptadas/pendientes del año.
-  select coalesce(sum(total_gravada + total_exportacion),0) into v_ingresos
+  select coalesce(sum(total_gravada + total_exportacion + total_exonerada),0) into v_ingresos
     from comprobantes
     where estado in ('aceptada','pendiente')
       and to_char(creado_at at time zone 'America/Lima','YYYY') = v_anio::text;
