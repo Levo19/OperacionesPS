@@ -229,7 +229,10 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchPersonalRapido(); // precarga operadores para que el login funcione de inmediato
     fetchDashboardData();
     setInterval(fetchDashboardDataBg, 10000);
-    setTimeout(_facMuelleInit, 3000); setInterval(_facMuelleInit, 60000);  // botón boleta según toggle admin
+    setTimeout(_facMuelleInit, 3000); setInterval(_facMuelleInit, 20000);  // botón boleta según toggle admin (poll 20s)
+    // Al enfocar/volver a la app → refleja el permiso del admin AL TOQUE (no espera al poll).
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) _facMuelleInit(); });
+    window.addEventListener('focus', _facMuelleInit);
     programarResetDiario();
     iniciarCountdownTimer();
     // Procesar cola offline si hay items pendientes del turno anterior
