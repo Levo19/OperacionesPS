@@ -2154,10 +2154,12 @@ function renderCaja(caja) {
             if(m.tipo !== 'Comisionado') return;
             let cantPax    = parseInt(m.pax) || 0;
             let cobrado    = parseFloat(m.monto) || 0;
-            // Buscar precio base del contacto en el catálogo
-            let info       = (window.contactosData || []).find(c =>
-                c.id === m.contacto || c.nombre === (m.nombreContacto || m.contacto));
-            let precioBase = info ? (parseFloat(info.precio) || 0) : 0;
+            // Tarifa base CONGELADA al embarcar (tarifa_base del movimiento). Si falta (movs viejos
+            // sin backfill), cae al catálogo POR ID (nunca por nombre → distinguir por id).
+            let precioBase = (m.tarifa_base !== undefined && m.tarifa_base !== null && m.tarifa_base !== '')
+                ? (parseFloat(m.tarifa_base) || 0)
+                : ((window.contactosData || []).find(c => c.id === m.contacto) || {}).precio || 0;
+            precioBase = parseFloat(precioBase) || 0;
             let baseTotal  = precioBase * cantPax;
             let comision   = Math.max(0, cobrado - baseTotal);
             if(cantPax === 0) return;
@@ -2967,17 +2969,10 @@ function confirmarVentaDirecta() {
     // Para Aliado forzar precio 0
     if(tipo === 'Aliado') precio = '0';
 
-    // Calcular comisión para Comisionado (se guarda en adicionales)
+    // La comisión del comisionado NO se guarda en adicionales (eso es solo para extras).
+    // Se congela por tarifa_base al insertar (trigger tg_freeze_tarifa) y el panel la calcula
+    // como cobrado − tarifa_base×pax. Aquí adicionales queda vacío en el embarque.
     let adicionales = '';
-    if(tipo === 'Comisionado') {
-        let info = (window.contactosData||[]).find(c => c.nombre === contacto);
-        if(info) {
-            let paxNum2    = parseFloat(pax) || 0;
-            let precioNum2 = parseFloat(precio) || 0;
-            let comision   = Math.max(0, precioNum2 - (info.precio * paxNum2)).toFixed(2);
-            adicionales    = `Comision:S/${comision}`;
-        }
-    }
 
     let opIndex = window.operacionesData.findIndex(o => o.id === id_op);
     let newTempId = null; // para rollback en caso de error
