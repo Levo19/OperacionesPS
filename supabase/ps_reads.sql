@@ -1,26 +1,47 @@
 -- ============================================================
--- Lecturas del PS Panel (operaciones) replicadas en Supabase.
--- Cuadran contra getLanchasFechas / getLanchasDia del GAS de PS.
+-- ps_reads.sql — LECTURAS del panel/muelle (get_lanchas_*, kpis, historico).
+-- ⚠ SINCRONIZADO DESDE PROD (Supabase vivo) 2026-07-10 tras el 100x.
+-- Incluye: get_lanchas_dia con capacidad (aforo) + _caja en pases_sueltos, y _adic_sum blindado.
+-- La fuente de verdad es la DB; este archivo es el espejo del repo.
 -- ============================================================
-create or replace function _adic_sum(p jsonb) returns numeric language sql immutable as
-$$ select coalesce(sum((v)::numeric),0) from jsonb_each_text(coalesce(p,'{}'::jsonb)) as t(k,v) $$;
 
--- fechas con actividad (operaciones por fecha + pases sueltos por timestamp), desc
-create or replace function get_lanchas_fechas() returns text[]
-  language sql stable security definer set search_path=public, auth as
-$$
+CREATE OR REPLACE FUNCTION public._adic_sum(p jsonb)
+ RETURNS numeric
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+  select coalesce(sum(
+    case
+      when jsonb_typeof(e.value) = 'number' then (e.value #>> '{}')::numeric
+      when jsonb_typeof(e.value) = 'string'
+           and trim(e.value #>> '{}') ~ '^-?[0-9]+(\.[0-9]+)?$'
+        then trim(e.value #>> '{}')::numeric
+      else 0
+    end
+  ), 0)
+  from jsonb_each(case when jsonb_typeof(coalesce(p,'{}'::jsonb)) = 'object' then p else '{}'::jsonb end) as e(k, value);
+$function$;
+
+CREATE OR REPLACE FUNCTION public.get_lanchas_fechas()
+ RETURNS text[]
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'auth'
+AS $function$
   select coalesce(array_agg(d order by d desc), '{}') from (
     select distinct to_char(fecha,'YYYY-MM-DD') d from operaciones where fecha is not null
     union
     select distinct to_char((registrado_at at time zone 'America/Lima')::date,'YYYY-MM-DD')
       from movimientos where coalesce(operacion_id,'') in ('','PASE_DIRECTO') and registrado_at is not null
   ) x
-$$;
+$function$;
 
--- datos completos de un día (operaciones + movimientos + caja + reconciliación + KPIs)
-create or replace function get_lanchas_dia(p_fecha date) returns jsonb
-  language plpgsql stable security definer set search_path=public, auth as
-$$
+CREATE OR REPLACE FUNCTION public.get_lanchas_dia(p_fecha date)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'auth'
+AS $function$
 declare
   v_ops jsonb; v_pases jsonb; v_caja_suelta jsonb;
   v_efectivo numeric; v_transfer numeric;
@@ -74,10 +95,10 @@ begin
   from (
     select jsonb_build_object(
       'id', op.id, 'fecha', to_char(op.fecha,'YYYY-MM-DD'), 'hora_salida', op.hora_salida,
-      'id_bote', op.bote_id, 'nombre_bote', coalesce(e.nombre, op.bote_id),
+      'id_bote', op.bote_id, 'nombre_bote', coalesce(e.nombre, op.bote_id), 'capacidad', coalesce(e.capacidad_pax,0),
       'id_capitan', op.capitan_id, 'nombre_capitan', coalesce(pc.nombre, op.capitan_id),
       'id_guia', coalesce(op.guia_id,''), 'nombre_guia', case when op.guia_id is null then '' else coalesce(pg.nombre, op.guia_id) end,
-      'estado', op.estado, 'creado_por', coalesce(op.creado_por,''), 'destino', coalesce(op.destino,''),
+      'estado', op.estado, 'creado_por', coalesce(op.creado_por,''), 'destino', coalesce(op.destino,''), 'foto_zarpe_url', coalesce(op.foto_zarpe_url,''),
       'pax_total', coalesce(a.pax_total,0), 'ingresos_operador', coalesce(a.ingresos,0),
       'deuda_comisionados', coalesce(a.deuda,0), 'mov_sum', coalesce(a.mov_sum,0),
       'caja_sum', coalesce(ca.caja_sum,0), 'tipo_chips', coalesce(ch.tipo_chips,'{}'::jsonb),
@@ -111,7 +132,7 @@ begin
       'nombre_contacto',coalesce(m.nombre_contacto,''),'cant_pax',m.cant_pax,'precio_aplicado',m.precio_unit,
       'monto_total',m.monto_total,'adicionales',_adic_txt(m.adicionales),'operador',m.operador,'estado',m.estado,
       'id_contacto_pase',coalesce(m.contacto_pase_id,''),'nombre_contacto_pase',coalesce(cp.nombre,m.contacto_pase_id,''),
-      'id_agencia_comprada',coalesce(m.agencia_comprada_id,''),'monto_comprado',m.monto_comprado)),'[]'::jsonb)
+      'id_agencia_comprada',coalesce(m.agencia_comprada_id,''),'monto_comprado',m.monto_comprado,'_caja',coalesce((select jsonb_agg(jsonb_build_object('id_movimiento',k.movimiento_id,'monto',k.monto,'metodo_pago',coalesce(k.metodo_pago,''),'categoria',k.categoria)) from caja_operador k where k.movimiento_id=m.id),'[]'::jsonb))),'[]'::jsonb)
     into v_pases from movimientos m left join contactos cp on cp.id=m.contacto_pase_id
     where coalesce(m.operacion_id,'') in ('','PASE_DIRECTO')
       and (m.registrado_at at time zone 'America/Lima')::date = p_fecha;
@@ -154,14 +175,14 @@ begin
   return jsonb_build_object('operaciones', v_ops, 'pases_sueltos', v_pases, 'caja_suelta', v_caja_suelta,
     'kpis', jsonb_build_object('pax_total',v_pax,'ingresos_operador',v_ing,'deuda_comisionados',v_deuda,
       'caja_efectivo',v_efectivo,'caja_transferencia',v_transfer,'operaciones_count',v_count,'semaforo',v_semaforo));
-end $$;
+end $function$;
 
--- KPIs de lanchas de un día (para dashboard) — NO suma adicionales, caja sin fallback.
--- Réplica de getLanchasKPIs. Ramas PaseIN/PaseOUT/Aliado se dejan fieles aunque los
--- tipos reales sean 'Aliado(PaseIn/Out)' (no matchean → pendientes quedan en 0, igual que GAS).
-create or replace function get_kpis_ops(p_fecha date) returns jsonb
-  language plpgsql stable security definer set search_path=public, auth as
-$$
+CREATE OR REPLACE FUNCTION public.get_kpis_ops(p_fecha date)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'auth'
+AS $function$
 declare r jsonb; v_chips jsonb; v_ef numeric; v_tr numeric; v_nops int;
 begin
   perform _req_staff();
@@ -193,12 +214,14 @@ begin
          coalesce(sum(monto) filter (where not (lower(coalesce(metodo_pago,'')) like '%efectivo%' or lower(coalesce(metodo_pago,''))='cash')),0)
     into v_ef, v_tr from caja_operador where operacion_id in (select id from operaciones where fecha=p_fecha);
   return r || jsonb_build_object('caja_efectivo',v_ef,'caja_transferencia',v_tr,'por_tipo',v_chips);
-end $$;
+end $function$;
 
--- histórico 7 días (hoy y 6 atrás, TZ Lima). ingresos_hotel lo agrega el frontend (GAS).
-create or replace function get_historico() returns jsonb
-  language plpgsql stable security definer set search_path=public, auth as
-$$
+CREATE OR REPLACE FUNCTION public.get_historico()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'auth'
+AS $function$
 declare v jsonb := '[]'::jsonb; d int; f date; k jsonb;
 begin
   perform _req_staff();
@@ -209,4 +232,5 @@ begin
       'ingresos_lanchas', k->'ingresos_operador', 'pax', k->'pax_total');
   end loop;
   return v;
-end $$;
+end $function$;
+
