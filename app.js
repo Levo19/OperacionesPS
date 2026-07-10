@@ -561,6 +561,7 @@ function _muelleRTSubscribe() {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'operaciones' },   onChange)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos' },    onChange)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'caja_operador' },  onChange)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'contactos' },      onChange)
             .subscribe();
     } catch (e) { console.warn('[SOT] realtime subscribe fallo:', e && e.message); }
 }
