@@ -52,11 +52,13 @@ const SYSTEM = [
   "- Extras: abrir el movimiento → 'Extras' → marcar del catálogo (Muelle/Local/Adulto/Niño/Full).",
   "- Contactos: PS → Catálogo → Contactos (1 card por nombre, chips por tipo). VARIOS es único (solo precio).",
   "",
-  "## Tu comportamiento",
-  "1. Para responder con datos (cuánto debe X, KPIs, etc.) USA las herramientas de lectura; nunca inventes cifras. Si una herramienta no trae el dato, dilo con honestidad.",
-  "2. Para MODIFICAR algo (registrar un cobro, cambiar un precio, etc.) NO lo hagas tú: usa la herramienta 'proponer_accion' con una descripción clara; el usuario confirmará en pantalla antes de ejecutarse.",
-  "3. Si te preguntan cómo hacer algo, ENSEÑA el paso a paso (arriba).",
-  "4. Sé cálida y concisa. Usa el nombre del contacto y montos en S/ con 2 decimales.",
+  "## Tu comportamiento (REGLAS DURAS)",
+  "1. NUNCA inventes fechas, nombres, montos, pax ni movimientos. Es una app de DINERO: un dato inventado es un error grave. Si no tienes el dato en una herramienta, dilo con honestidad ('no lo tengo a la mano') y NO lo rellenes con ejemplos plausibles.",
+  "2. Para CUALQUIER pregunta de datos (cuánto debe X, cuántos pax mandó X tal día, KPIs, historial) USA las herramientas de lectura y responde SOLO con lo que devuelven. Para 'ayer/hoy/esta semana' usa la FECHA ACTUAL que se te da abajo, jamás una fecha de tu imaginación.",
+  "3. Para '¿cuántos pax mandó X el día Y?' usa 'consultar_contacto' con el nombre y filtra su lista de movimientos por la fecha exacta; si no hay movimientos ese día, dilo ('no registró pax ese día'). No confundas 'no hay operaciones abiertas hoy' con 'no mandó pax' (son cosas distintas).",
+  "4. Para MODIFICAR algo (cobro, precio, etc.) NO lo hagas tú: usa 'proponer_accion' con una descripción clara; el usuario confirmará en pantalla.",
+  "5. Si te preguntan cómo hacer algo, ENSEÑA el paso a paso.",
+  "6. Sé cálida y concisa. Usa el nombre del contacto y montos en S/ con 2 decimales.",
 ].join("\n");
 
 // ── Definición de herramientas (Claude tool-use) ─────────────────────────────
@@ -73,8 +75,13 @@ const TOOLS = [
   },
   {
     name: "consultar_kpis_dia",
-    description: "KPIs de operaciones de un día: pax total, ingresos del operador, deuda de comisionados, caja efectivo/transferencia. Úsalo para '¿cómo va el día?' o cifras del día.",
+    description: "KPIs de operaciones de un día: pax total, ingresos del operador, deuda de comisionados, caja efectivo/transferencia. Úsalo para '¿cómo va el día?' o cifras del día. OJO: 'no hay operaciones' ≠ 'un contacto no mandó pax'.",
     input_schema: { type: "object", properties: { fecha: { type: "string", description: "YYYY-MM-DD; omite para hoy" } }, required: [] },
+  },
+  {
+    name: "consultar_contacto",
+    description: "Datos de un contacto AGENCIA por nombre: cuánto te debe (te_debe), cuánto le debes, cobrado, y su LISTA DE MOVIMIENTOS con fecha (YYYY-MM-DD), pax, tipo y monto. Úsalo para '¿cuánto me debe X?', '¿cuántos pax mandó X ayer / el día tal?', historial de un contacto. Filtra tú la lista por la fecha que pregunten.",
+    input_schema: { type: "object", properties: { nombre: { type: "string", description: "nombre del contacto (agencia), aunque sea parcial" } }, required: ["nombre"] },
   },
   {
     name: "proponer_accion",
@@ -106,6 +113,18 @@ async function runReadTool(name: string, input: Record<string, unknown>, userTok
   if (name === "consultar_balance_agencias") return await callRpc("get_balance_agencias", { p_desde: null, p_hasta: null }, userToken);
   if (name === "consultar_balance_aliados") return await callRpc("get_balance_aliados", {}, userToken);
   if (name === "consultar_kpis_dia") return await callRpc("get_kpis_ops", { p_fecha: (input?.fecha as string) || null }, userToken);
+  if (name === "consultar_contacto") {
+    const nom = String(input?.nombre || "").toLowerCase().trim();
+    if (!nom) return { encontrado: false, nota: "falta el nombre" };
+    const bal = await callRpc("get_balance_agencias", { p_desde: null, p_hasta: null }, userToken) as { agencias?: Array<Record<string, unknown>> };
+    const ags = bal?.agencias || [];
+    const found = ags.find((a) => String(a.nombre || "").toLowerCase().includes(nom));
+    if (!found) return { encontrado: false, nota: "No hay una agencia con ese nombre y saldo. Verifica el nombre exacto; puede ser un aliado/comisionado (aún no tengo herramienta para esos) o no tener movimientos con dinero." };
+    const movsRaw = (found.movimientos as Array<Record<string, unknown>>) || [];
+    // solo lo esencial, ordenado por fecha desc, hasta 60 movimientos
+    const movs = movsRaw.map((m) => ({ fecha: m.fecha, pax: m.pax, tipo: m.tipo, monto: m.monto, cobrado: m.cobrado })).slice(0, 60);
+    return { encontrado: true, nombre: found.nombre, te_debe: found.te_debe, le_debo: found.le_debo, cobrado: found.cobrado, total_movimientos: movsRaw.length, movimientos: movs };
+  }
   return { _error: true, motivo: "herramienta_desconocida" };
 }
 
@@ -134,12 +153,20 @@ serve(async (req) => {
   // messages para Anthropic (formato content-blocks se arma sobre la marcha)
   const messages: Array<{ role: string; content: unknown }> = historial.map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content ?? "") }));
 
+  // FECHA REAL (America/Lima) inyectada al prompt → JADE nunca adivina el día.
+  const now = new Date();
+  const fmt = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  const hoyLima = fmt(now);
+  const diaSem = new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", weekday: "long" }).format(now);
+  const ayerLima = (() => { const d = new Date(hoyLima + "T12:00:00-05:00"); d.setDate(d.getDate() - 1); return fmt(d); })();
+  const fechaLinea = `\n\n## FECHA ACTUAL (real, úsala SIEMPRE — no la inventes)\nHoy es ${hoyLima} (${diaSem}) en America/Lima. Ayer fue ${ayerLima}. Toda referencia a 'hoy', 'ayer', 'esta semana' parte de aquí.`;
+
   const anthropicCall = async () => {
     for (let intento = 0; intento < 2; intento++) {
       const r = await fetch(ANTHROPIC_URL, {
         method: "POST",
         headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-        body: JSON.stringify({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages }),
+        body: JSON.stringify({ model: MODEL, max_tokens: 1500, system: SYSTEM + fechaLinea, tools: TOOLS, messages }),
       });
       if (r.status === 429 || r.status >= 500) { if (intento === 0) { await new Promise((x) => setTimeout(x, 1100)); continue; } return { _err: r.status }; }
       if (r.status === 401 || r.status === 403) return { _err: "key" };
