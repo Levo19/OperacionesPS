@@ -26,7 +26,17 @@ const MAX_TOOL_LOOPS = 6;
 
 // ── Persona + biblia condensada (el cerebro de JADE) ─────────────────────────
 const SYSTEM = [
-  "Eres JADE, la asistente del ecosistema PS. Amable, gentil, clara y proactiva; hablas como una colega senior que conoce el negocio de Paty al dedillo. Respondes en español, breve y al grano, con cifras exactas.",
+  "Eres JADE, la asistente del ecosistema PS: una dama digital cálida, con chispa y buen humor, pero siempre profesional. Hablas como una colega senior de confianza que adora ayudar.",
+  "",
+  "## Tono y trato",
+  "- Quien te habla es la ADMINISTRADORA/dueña (una mujer). Trátala como una dama: con cariño y respeto, cálida y cercana (puedes usar 'reina', 'jefa', o su nombre si lo sabes). Un toque divertido y femenino está bien; nunca vulgar ni excesiva.",
+  "- Español peruano, natural y breve. Un emoji ocasional (💎, ✨, 🙌) suma; no abuses.",
+  "- Sé proactiva y positiva, pero directa con los números.",
+  "",
+  "## Fidelidad (lo más importante)",
+  "- DATOS DE LA APP (balances, movimientos, cifras, fechas, contactos) y REGLAS DEL NEGOCIO: son SAGRADOS. Responde SOLO con lo que devuelven tus herramientas y con las reglas de abajo. JAMÁS inventes un número, una fecha, un pax o un movimiento. Si no tienes el dato, dilo con gracia ('déjame decirte que eso no lo tengo a la mano, reina').",
+  "- INFO EXTERNA (consejos generales, ideas de gestión/marketing, dudas de la vida): puedes orientar de forma PROFESIONAL y medida, dejando claro que es orientación general y no un dato del sistema. No inventes hechos; si no sabes, dilo.",
+  "- Tu 'RAG' = esta biblia (reglas) + la base de datos (vía herramientas). Ambas irán mejorando.",
   "",
   "## El ecosistema PS (Grupo de inversiones de Paty)",
   "- 🏨 Hotel: aún NO implementado (futuro).",
@@ -84,8 +94,18 @@ const TOOLS = [
     input_schema: { type: "object", properties: { nombre: { type: "string", description: "nombre del contacto (agencia), aunque sea parcial" } }, required: ["nombre"] },
   },
   {
+    name: "consultar_aliado",
+    description: "Datos de un ALIADO por nombre (trueque en PAX): cuántos pax te debe / le debes. Úsalo para preguntas de aliados/pases por nombre.",
+    input_schema: { type: "object", properties: { nombre: { type: "string", description: "nombre del aliado, aunque sea parcial" } }, required: ["nombre"] },
+  },
+  {
+    name: "consultar_reparaciones",
+    description: "Log de reparaciones/cambios del sistema (modo programador): qué se reparó, causa, fix, versión, severidad. Úsalo para '¿qué se cambió?', '¿este error ya lo tuvimos?', historial técnico.",
+    input_schema: { type: "object", properties: { limite: { type: "number", description: "cuántas mostrar (default 40)" } }, required: [] },
+  },
+  {
     name: "proponer_accion",
-    description: "Propone una acción que MODIFICA datos (el usuario la confirmará antes de ejecutarse). NO la ejecutes tú. accion debe ser una de: 'registrar_pago' (cobro; params: id_movimiento, id_contacto, monto, metodo_pago, categoria:'Cobro'), 'actualizar_contacto' (cambiar precio; params: id, precio).",
+    description: "Propone una acción que MODIFICA datos (el usuario la confirmará en pantalla antes de ejecutarse). NO la ejecutes tú; solo propón con params completos. Acciones válidas: 'registrar_pago' (cobro/pago; params: id_movimiento, id_contacto, monto, metodo_pago, categoria='Cobro' o 'Pago Agencia'), 'actualizar_contacto' (cambiar precio; params: id, precio), 'crear_contacto_multi' (nuevo contacto; params: nombre, items=[{tipo,precio}]), 'actualizar_adicionales' (extras de un movimiento; params: id_mov, adicionales objeto {clave:monto}). Si te faltan datos (ej. el id del movimiento), pídelos antes de proponer.",
     input_schema: {
       type: "object",
       properties: {
@@ -125,6 +145,15 @@ async function runReadTool(name: string, input: Record<string, unknown>, userTok
     const movs = movsRaw.map((m) => ({ fecha: m.fecha, pax: m.pax, tipo: m.tipo, monto: m.monto, cobrado: m.cobrado })).slice(0, 60);
     return { encontrado: true, nombre: found.nombre, te_debe: found.te_debe, le_debo: found.le_debo, cobrado: found.cobrado, total_movimientos: movsRaw.length, movimientos: movs };
   }
+  if (name === "consultar_aliado") {
+    const nom = String(input?.nombre || "").toLowerCase().trim();
+    if (!nom) return { encontrado: false, nota: "falta el nombre" };
+    const bal = await callRpc("get_balance_aliados", {}, userToken) as { aliados?: Array<Record<string, unknown>> };
+    const found = (bal?.aliados || []).find((a) => String(a.nombre || "").toLowerCase().includes(nom));
+    if (!found) return { encontrado: false, nota: "No hay un aliado con ese nombre y saldo de pax." };
+    return { encontrado: true, ...found };
+  }
+  if (name === "consultar_reparaciones") return await callRpc("listar_reparaciones", { p_limite: Number(input?.limite) || 40 }, userToken);
   return { _error: true, motivo: "herramienta_desconocida" };
 }
 
