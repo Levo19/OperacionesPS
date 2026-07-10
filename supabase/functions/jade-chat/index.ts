@@ -1,0 +1,183 @@
+// ============================================================
+// JADE — asistente del ecosistema PS (chat + herramientas).
+// Reutiliza el MISMO patrón seguro que extraer-zarpe/extraer-compra:
+//   - exige sesión REAL (JWT role='authenticated') → nadie drena la cuota Anthropic con la anon key.
+//   - ANTHROPIC_API_KEY vive como secret de Supabase (mismo que zarpes/compras).
+// A diferencia de esas (visión/OCR), JADE es TEXTO + tool-use:
+//   - Herramientas de LECTURA: las ejecuta el Edge con la sesión del usuario (RPCs gated _req_staff).
+//   - Escrituras: JADE NO escribe; PROPONE una acción; el widget la confirma y la ejecuta.
+// Secret:  supabase secrets set ANTHROPIC_API_KEY="sk-ant-..." --project-ref lintmcxqxnrholslatul
+// Deploy:  supabase functions deploy jade-chat --project-ref lintmcxqxnrholslatul
+// ============================================================
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+const j = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...CORS, "Content-Type": "application/json" } });
+
+const MODEL = "claude-sonnet-4-6";
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://lintmcxqxnrholslatul.supabase.co";
+const ANON = Deno.env.get("SUPABASE_ANON_KEY") || "";
+const MAX_TOOL_LOOPS = 6;
+
+// ── Persona + biblia condensada (el cerebro de JADE) ─────────────────────────
+const SYSTEM = [
+  "Eres JADE, la asistente del ecosistema PS. Amable, gentil, clara y proactiva; hablas como una colega senior que conoce el negocio de Paty al dedillo. Respondes en español, breve y al grano, con cifras exactas.",
+  "",
+  "## El ecosistema PS (Grupo de inversiones de Paty)",
+  "- 🏨 Hotel: aún NO implementado (futuro).",
+  "- 🚤 OPS (muelle): el operador gestiona botes, PAX y caja en vivo.",
+  "- 🖥️ PS Panel: el centro donde la dueña/admin ve y controla todo. Aquí vives tú.",
+  "Comparten UNA base de datos (Supabase). Distingue contactos por ID, nunca por nombre (hay nombres repetidos).",
+  "",
+  "## Tipos de contacto",
+  "- Libre / VARIOS (CON-00): público a pie; ÉL te paga.",
+  "- Agencia: te contrata pax a su tarifa; te queda DEBIENDO en S/ (cuenta corriente).",
+  "- Comisionado: te trae pax y le pagas comisión = (precio cobrado − su tarifa) × pax. La tarifa se CONGELA al embarcar.",
+  "- Aliado: trueque en PAX (no en plata). PaseIn = te deben PAX; PaseOut = les debes PAX. Lo cobrable de un pase es el ORIGEN, nunca el aliado.",
+  "",
+  "## Reglas del dinero",
+  "- Agencia TE DEBE = facturado − cobrado. facturado = Σ(monto + adicionales) de todo mov cuyo contacto sea esa agencia. cobrado = Cobros ligados por movimiento_id + abonos directos.",
+  "- Agencia LE DEBES = comprado − pagado (compraste espacio a esa agencia).",
+  "- Adicionales/extras: objeto jsonb solo-montos {muelle:10}; se cobran al origen; suben el total a cobrar.",
+  "- Aforo: cupos = capacidad − pax_total. Descuadre = |caja − movimientos| > 0.5 (alerta, no error).",
+  "",
+  "## Cómo se hace (para enseñar)",
+  "- Registrar movimiento: PS → Lanchas → expandir lancha → '＋ Agregar movimiento' → elegir Tipo (Libre/Agencia/Comisionado/Aliado) → contacto + PAX + precio. Aliado no pide monto.",
+  "- Cobrar: abrir el movimiento/pase → '💰 Cobrar' (precarga monto+adicionales) → método → registra en caja ligado al movimiento.",
+  "- Extras: abrir el movimiento → 'Extras' → marcar del catálogo (Muelle/Local/Adulto/Niño/Full).",
+  "- Contactos: PS → Catálogo → Contactos (1 card por nombre, chips por tipo). VARIOS es único (solo precio).",
+  "",
+  "## Tu comportamiento",
+  "1. Para responder con datos (cuánto debe X, KPIs, etc.) USA las herramientas de lectura; nunca inventes cifras. Si una herramienta no trae el dato, dilo con honestidad.",
+  "2. Para MODIFICAR algo (registrar un cobro, cambiar un precio, etc.) NO lo hagas tú: usa la herramienta 'proponer_accion' con una descripción clara; el usuario confirmará en pantalla antes de ejecutarse.",
+  "3. Si te preguntan cómo hacer algo, ENSEÑA el paso a paso (arriba).",
+  "4. Sé cálida y concisa. Usa el nombre del contacto y montos en S/ con 2 decimales.",
+].join("\n");
+
+// ── Definición de herramientas (Claude tool-use) ─────────────────────────────
+const TOOLS = [
+  {
+    name: "consultar_balance_agencias",
+    description: "Balance de cuentas por cobrar/pagar de las AGENCIAS en soles. Devuelve por agencia: nombre, facturado, cobrado, te_debe (lo que la agencia te debe), comprado, pagado, le_debo. Úsalo para '¿cuánto nos debe X?' (agencia) o totales de agencias.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "consultar_balance_aliados",
+    description: "Balance de ALIADOS en PAX (trueque): a quién le debes pax y quién te debe pax, más ventas convertidas. Úsalo para preguntas sobre aliados/pases.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "consultar_kpis_dia",
+    description: "KPIs de operaciones de un día: pax total, ingresos del operador, deuda de comisionados, caja efectivo/transferencia. Úsalo para '¿cómo va el día?' o cifras del día.",
+    input_schema: { type: "object", properties: { fecha: { type: "string", description: "YYYY-MM-DD; omite para hoy" } }, required: [] },
+  },
+  {
+    name: "proponer_accion",
+    description: "Propone una acción que MODIFICA datos (el usuario la confirmará antes de ejecutarse). NO la ejecutes tú. accion debe ser una de: 'registrar_pago' (cobro; params: id_movimiento, id_contacto, monto, metodo_pago, categoria:'Cobro'), 'actualizar_contacto' (cambiar precio; params: id, precio).",
+    input_schema: {
+      type: "object",
+      properties: {
+        accion: { type: "string", description: "registrar_pago | actualizar_contacto" },
+        params: { type: "object", description: "parámetros de la acción" },
+        descripcion: { type: "string", description: "explicación humana y clara de lo que se hará, con montos y nombres" },
+      },
+      required: ["accion", "params", "descripcion"],
+    },
+  },
+];
+
+async function callRpc(fn: string, params: Record<string, unknown>, userToken: string) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: { apikey: ANON, authorization: `Bearer ${userToken}`, "content-type": "application/json" },
+    body: JSON.stringify(params || {}),
+  });
+  const txt = await r.text();
+  if (!r.ok) return { _error: true, status: r.status, detalle: txt.slice(0, 300) };
+  try { return JSON.parse(txt); } catch { return txt; }
+}
+
+async function runReadTool(name: string, input: Record<string, unknown>, userToken: string) {
+  if (name === "consultar_balance_agencias") return await callRpc("get_balance_agencias", { p_desde: null, p_hasta: null }, userToken);
+  if (name === "consultar_balance_aliados") return await callRpc("get_balance_aliados", {}, userToken);
+  if (name === "consultar_kpis_dia") return await callRpc("get_kpis_ops", { p_fecha: (input?.fecha as string) || null }, userToken);
+  return { _error: true, motivo: "herramienta_desconocida" };
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method !== "POST") return j({ ok: false, motivo: "metodo" }, 405);
+
+  // sesión real (rol authenticated)
+  const authz = req.headers.get("authorization") || "";
+  const userToken = authz.replace(/^Bearer\s+/i, "");
+  try {
+    const seg = (userToken.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(seg));
+    if (payload.role !== "authenticated") return j({ ok: false, motivo: "requiere_sesion" }, 403);
+  } catch { return j({ ok: false, motivo: "sin_sesion" }, 401); }
+
+  const KEY = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!KEY) return j({ ok: false, motivo: "sin_config" }, 500);
+
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { /* noop */ }
+  // historial de la conversación: [{role:'user'|'assistant', content:'...'}]
+  const historial = Array.isArray(body.messages) ? body.messages as Array<{ role: string; content: unknown }> : [];
+  if (!historial.length) return j({ ok: false, motivo: "sin_mensajes" }, 400);
+
+  // messages para Anthropic (formato content-blocks se arma sobre la marcha)
+  const messages: Array<{ role: string; content: unknown }> = historial.map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content ?? "") }));
+
+  const anthropicCall = async () => {
+    for (let intento = 0; intento < 2; intento++) {
+      const r = await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages }),
+      });
+      if (r.status === 429 || r.status >= 500) { if (intento === 0) { await new Promise((x) => setTimeout(x, 1100)); continue; } return { _err: r.status }; }
+      if (r.status === 401 || r.status === 403) return { _err: "key" };
+      if (!r.ok) return { _err: r.status, detalle: (await r.text().catch(() => "")).slice(0, 200) };
+      return await r.json();
+    }
+    return { _err: "retry" };
+  };
+
+  // Bucle agéntico: Claude puede pedir herramientas de lectura; las ejecutamos y volvemos.
+  for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
+    const resp = await anthropicCall();
+    if ((resp as { _err?: unknown })._err) return j({ ok: false, motivo: "api", detalle: (resp as { _err?: unknown })._err }, 502);
+    const content = (resp as { content?: Array<Record<string, unknown>> }).content || [];
+    const toolUses = content.filter((c) => c.type === "tool_use");
+    const textBlocks = content.filter((c) => c.type === "text").map((c) => String(c.text || "")).join("\n").trim();
+
+    if (!toolUses.length) {
+      // respuesta final de texto
+      return j({ ok: true, reply: textBlocks || "…" });
+    }
+
+    // ¿propone una acción de escritura? → devolvemos la propuesta al widget (no ejecutamos)
+    const propuesta = toolUses.find((t) => t.name === "proponer_accion");
+    if (propuesta) {
+      const inp = (propuesta.input || {}) as Record<string, unknown>;
+      return j({ ok: true, reply: textBlocks, propuesta: { accion: inp.accion, params: inp.params, descripcion: inp.descripcion } });
+    }
+
+    // ejecutar herramientas de LECTURA y devolver resultados a Claude
+    messages.push({ role: "assistant", content });
+    const results: Array<Record<string, unknown>> = [];
+    for (const t of toolUses) {
+      const out = await runReadTool(String(t.name), (t.input || {}) as Record<string, unknown>, userToken);
+      results.push({ type: "tool_result", tool_use_id: t.id, content: JSON.stringify(out).slice(0, 12000) });
+    }
+    messages.push({ role: "user", content: results });
+  }
+
+  return j({ ok: true, reply: "Disculpa, me enredé consultando los datos. ¿Puedes reformular la pregunta?" });
+});
