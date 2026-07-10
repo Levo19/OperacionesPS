@@ -3985,7 +3985,7 @@ function confirmarComprarPase() {
     let paseIdx = (window.pasesExternosData || []).findIndex(p => p.id === id_mov);
     let paseAnterior = paseIdx !== -1 ? { ...window.pasesExternosData[paseIdx] } : null;
     if (paseIdx !== -1) {
-        window.pasesExternosData[paseIdx].aliadoId            = '';
+        // el aliado se CONSERVA (rastro de a quién se intentó pasar); solo se agrega la compra
         window.pasesExternosData[paseIdx].id_agencia_comprada = id_agencia;
         window.pasesExternosData[paseIdx].monto_comprado      = monto;
         window.pasesExternosData[paseIdx]._syncing            = true;
