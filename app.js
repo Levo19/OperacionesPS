@@ -504,6 +504,20 @@ function _cerrarOpsAntiguas() {
     bs.addEventListener('click', e => { if (e.target === bs) bs.remove(); });
 }
 
+// ── Realtime: refresco INSTANTÁNEO cuando otro operador registra algo (sin esperar el poll de 10s) ──
+function _muelleRTSubscribe() {
+    try {
+        if (window._muelleRTCh || !window.SupaAPI || !window.SupaAPI.sb) return;   // una sola vez
+        let _bump = null;
+        const onChange = () => { if (_bump) return; _bump = setTimeout(() => { _bump = null; fetchDashboardDataBg(); }, 600); };
+        window._muelleRTCh = window.SupaAPI.sb.channel('ops-muelle-rt')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'operaciones' },   onChange)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos' },    onChange)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'caja_operador' },  onChange)
+            .subscribe();
+    } catch (e) { console.warn('[SOT] realtime subscribe fallo:', e && e.message); }
+}
+
 function fetchDashboardData() {
     toggleSpinner(true);
     // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
@@ -548,6 +562,7 @@ function fetchDashboardData() {
             // Si el login estaba esperando operadores, ahora ya los tiene
             try { _loginEstado('listo'); } catch(e) {}
             _saveDashboardCache();
+            _muelleRTSubscribe();   // sesión válida → suscribe al Realtime (una sola vez)
         })
         .catch(err => {
             clearTimeout(safetyTimer);
