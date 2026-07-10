@@ -2575,13 +2575,18 @@ function _itemManifiestoHTML(m) {
         cobrarBtn = `<div class="mt-2 flex items-center justify-center gap-1 text-[10px] font-black text-green-700"><i class="fas fa-check-circle"></i> Pagado S/ ${totalACobrar.toFixed(2)}</div>`;
     }
 
-    // ── Sub-botones secundarios (solo al seleccionar) ──
+    // ── Adicionales: SIEMPRE visible en la card (como Cobrar), para cualquier movimiento cobrable ──
     let esPaseOut = m.tipo === 'Aliado(PaseOut)';
-    let subBtns = (isSelected && !isSyncing) ? `
+    let adicionalesBtn = cobrable ? `
+    <button class="mt-2 w-full bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold py-2 rounded-xl flex items-center justify-center gap-1.5 transition hover:bg-amber-100 active:scale-95"
+        onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();">
+        <i class="fas fa-file-invoice-dollar text-[10px]"></i> ${adicionalesSum > 0 ? `Adicionales · +S/${adicionalesSum.toFixed(2)}` : 'Adicionales'}
+    </button>` : '';
+    // ── Sub-botones de edición (solo al seleccionar Y op abierta): Pasar / borrar ──
+    let subBtns = (isSelected && !isSyncing && !soloLectura) ? `
     <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
-        ${cobrable ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
-        ${!soloLectura && !esPaseOut ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
-        ${!soloLectura ? `<button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>` : ''}
+        ${!esPaseOut ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
+        <button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>
     </div>` : '';
 
     // ── Display monto ──
@@ -2613,6 +2618,7 @@ function _itemManifiestoHTML(m) {
             </div>
         </div>
         ${cobrarBtn}
+        ${adicionalesBtn}
         ${subBtns}
     </div>`;
 }
