@@ -2528,8 +2528,9 @@ function _itemManifiestoHTML(m) {
     let isSyncing  = !!m._syncing || (m.id && m.id.startsWith('temp-'));
     let opEstado   = window._gestionOpEstado || 'Abierta';
     let soloLectura = opEstado === 'En_Viaje' || opEstado === 'Cerrada';
-    // En modo solo-lectura las cards no son seleccionables (no hay botones de edición)
-    let isSelected = !isSyncing && !soloLectura && window.editandoMovId === m.id;
+    // Seleccionable siempre (incl. op cerrada/en-viaje) → así se llega a Adicionales/Cobrar de olvidos.
+    // Pasar/derivar/borrar siguen gateados por soloLectura (solo op abierta).
+    let isSelected = !isSyncing && window.editandoMovId === m.id;
     let fp         = _itemManifiestoFP(m);
 
     let pagoInfo   = _calcPagoEstado(m);
@@ -2578,7 +2579,7 @@ function _itemManifiestoHTML(m) {
     let esPaseOut = m.tipo === 'Aliado(PaseOut)';
     let subBtns = (isSelected && !isSyncing) ? `
     <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-orange-200">
-        ${!soloLectura && cobrable ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
+        ${cobrable ? `<button class="bg-blue-100 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-xl border border-blue-200 hover:bg-blue-200 transition" onclick="abrirModalImpuestos('${m.id}', '${m.contacto}'); event.stopPropagation();"><i class="fas fa-file-invoice-dollar mr-1"></i> Adicionales</button>` : ''}
         ${!soloLectura && !esPaseOut ? `<button class="flex-1 min-w-[60px] bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl shadow-md shadow-purple-500/30 hover:bg-purple-600 transition" onclick="abrirModalDerivar('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-people-carry mr-1"></i> Pasar</button>` : ''}
         ${!soloLectura ? `<button class="bg-red-100 text-red-600 text-[11px] font-bold px-3 py-2 rounded-xl border border-red-200 hover:bg-red-200 transition" onclick="eliminarMovimiento('${m.id}', '${m.pax}'); event.stopPropagation();"><i class="fas fa-trash-alt"></i></button>` : ''}
     </div>` : '';
@@ -2599,7 +2600,7 @@ function _itemManifiestoHTML(m) {
     let nombreMostrar = m.nombreContacto || m.contacto || '';
     let tipoBadge     = _tipoBadgeHTML(m.tipo);
 
-    let clickable = !isSyncing && !soloLectura;
+    let clickable = !isSyncing;   // seleccionable incl. op cerrada (para Adicionales/Cobrar de olvidos)
     return `<div class="flex flex-col ${bgClass} border ${borderClass} p-3 rounded-xl ${clickable ? 'cursor-pointer' : 'cursor-default'} transition shadow-sm mb-2" data-mov-id="${m.id}" data-item-fp="${fp}" ${clickable ? `onclick="cargarParaEditar('${m.id}')"` : ''}>
         <div class="flex justify-between items-center">
             <div class="flex-1 min-w-0 pr-2">
