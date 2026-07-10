@@ -3284,7 +3284,7 @@ function confirmarAsignacion() {
 
     cerrarModales();
 
-    fetchPost('asignar_reserva', {
+    fetchPostBg('asignar_reserva', {
         id_reserva,
         id_operacion,
         cant_pax: pax,
@@ -3294,11 +3294,11 @@ function confirmarAsignacion() {
         monto_total: monto,
         precio_unitario: paxNum > 0 ? (monto / paxNum).toFixed(2) : '0',
         creador: myOpName,
-        localId: 'temp-asig-' + Date.now() + '-' + Math.random().toString(36).slice(2,8)
+        localId: 'temp-asig-' + Date.now() + '-' + Math.random().toString(36).slice(2,8)   // idempotente + resiliente (cola offline)
     }).then(res => {
-        if(res.status === 'error') alert(res.message);
-        fetchDashboardData();
-    });
+        if(res && res.status === 'error') mostrarToast('❌ ' + (res.message || 'Error al asignar'), 'error');
+        fetchDashboardDataBg();
+    }).catch(() => {});
 }
 
 // Extras CRM
