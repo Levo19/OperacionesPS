@@ -2,6 +2,53 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbxkdyhxdZnySKaVN1MfMU-4
 
 let myOpName = localStorage.getItem('sot_operador') || null;
 
+// ── COMPRESIÓN de fotos de zarpe ──────────────────────────────────────────
+// Reescala a máx 2200px (lado largo) + JPEG 0.85 para que suban rápido PERO
+// sigan legibles para la IA/OCR (Edge extraer-zarpe · Claude Vision).
+// Si la imagen ya es chica (lado ≤2200 y peso <~900KB) se sube tal cual.
+// Devuelve { blob, dataURL, width, height }. Si algo falla, cae al original.
+async function comprimirFotoZarpe(file, opts) {
+    opts = opts || {};
+    const maxDim  = opts.maxDim  || 2200;
+    const quality = opts.quality || 0.85;
+    const SMALL_BYTES = 900 * 1024; // ~900KB
+    try {
+        if (!file || !/^image\//.test(file.type || '')) return { blob: file, dataURL: null, width: 0, height: 0 };
+        // Cargar la imagen (createImageBitmap respeta orientación EXIF donde exista)
+        let bmp = null, w = 0, h = 0;
+        try {
+            bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+            w = bmp.width; h = bmp.height;
+        } catch (_) {
+            // Fallback: FileReader + Image
+            const dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+            const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = dataURL; });
+            bmp = img; w = img.naturalWidth || img.width; h = img.naturalHeight || img.height;
+        }
+        const longSide = Math.max(w, h);
+        // Ya chica en dimensiones y peso → subir original sin recomprimir
+        if (longSide <= maxDim && file.size && file.size < SMALL_BYTES) {
+            if (bmp && bmp.close) try { bmp.close(); } catch (_) {}
+            return { blob: file, dataURL: null, width: w, height: h };
+        }
+        const scale = longSide > maxDim ? (maxDim / longSide) : 1;
+        const nw = Math.round(w * scale), nh = Math.round(h * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = nw; canvas.height = nh;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bmp, 0, 0, nw, nh);
+        if (bmp && bmp.close) try { bmp.close(); } catch (_) {}
+        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+        if (!blob) return { blob: file, dataURL: null, width: w, height: h };
+        // Si comprimir no ayudó (raro) y el original era menor, quédate con el menor
+        const outBlob = (file.size && blob.size >= file.size && longSide <= maxDim) ? file : blob;
+        const dataURL = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => res(null); r.readAsDataURL(outBlob); });
+        return { blob: outBlob, dataURL, width: nw, height: nh };
+    } catch (e) {
+        return { blob: file, dataURL: null, width: 0, height: 0 };
+    }
+}
+
 // ── PWA Install prompt ────────────────────────────────────────────────────
 let _pwaPrompt = null;
 window.addEventListener('beforeinstallprompt', e => {
@@ -1403,8 +1450,12 @@ async function _zarFoto(input){
   const f = input && input.files && input.files[0]; if(!f) return;
   const S=_zar; S.analizando=true; _zarRender();
   try{
-    const b64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=rej; r.readAsDataURL(f); });
-    const out = await window.SupaAPI.extraerZarpe(b64, f.type||'image/jpeg');
+    // Comprimir ANTES de mandar a la IA/OCR: máx 2200px + JPEG 0.85 (legible pero liviano)
+    const cmp = await comprimirFotoZarpe(f);
+    const srcBlob = cmp.blob || f;
+    const mediaType = (cmp.blob && cmp.blob !== f) ? 'image/jpeg' : (f.type || 'image/jpeg');
+    const b64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=rej; r.readAsDataURL(srcBlob); });
+    const out = await window.SupaAPI.extraerZarpe(b64, mediaType);
     if(out && out.ok && Array.isArray(out.pasajeros)){
       S.pax = out.pasajeros.map((p,i)=>({ _i:i, sel:true, nombre:p.nombre||'', tipo_doc:p.tipo_doc||'', documento:p.documento||'', empresa:p.empresa||'', precio:S.precioDef, estado:'' }));
       S.fase='lista'; fx('done');
@@ -4407,9 +4458,10 @@ function confirmarFotoZarpe() {
     cerrarSubModal('modal-zarpe-foto');
     if(!file) { mostrarToast('Sin foto seleccionada.', 'error'); return; }
 
-    let reader = new FileReader();
-    reader.onload = e => {
-        fetchPostBg('subir_foto_zarpe', { id_operacion: id_op, hora_salida: hora, foto_base64: e.target.result, creador: myOpName })
+    // Comprimir antes de subir (máx 2200px + JPEG 0.85): sube rápido, sigue legible para la IA
+    comprimirFotoZarpe(file).then(cmp => {
+      const doUpload = (dataURL) => {
+        fetchPostBg('subir_foto_zarpe', { id_operacion: id_op, hora_salida: hora, foto_base64: dataURL, creador: myOpName })
             .then(res => {
                 if (res.status === 'error') {
                     mostrarToast('Error al subir foto.', 'error');
@@ -4425,8 +4477,14 @@ function confirmarFotoZarpe() {
                     }
                 }
             });
-    };
-    reader.readAsDataURL(file);
+      };
+      if (cmp && cmp.dataURL) { doUpload(cmp.dataURL); return; }
+      // Compresión no produjo dataURL (imagen ya chica o fallo) → subir el blob/original tal cual
+      const src = (cmp && cmp.blob) || file;
+      const reader = new FileReader();
+      reader.onload = e => doUpload(e.target.result);
+      reader.readAsDataURL(src);
+    });
 }
 
 
