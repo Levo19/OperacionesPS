@@ -2802,20 +2802,21 @@ function actualizarPrecioDefecto() {
         if(pax > 0 && !usuarioEditandoPrecio) precioInput.value = (precioVarios * pax).toFixed(2);
 
     } else if(tipo === 'Agencia') {
-        let sel = document.getElementById('input-vd-contacto-select');
-        if(sel && sel.value && !usuarioEditandoPrecio) {
-            let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
-            if(info) precioInput.value = (info.precio * pax).toFixed(2);
+        // POR ID (data-id), no por nombre: hay nombres repetidos (Overland agencia vs Overland aliado).
+        let selc = getContactoSeleccionado('input-vd-contacto-select');
+        if(selc.id && !usuarioEditandoPrecio) {
+            let info = (window.contactosData||[]).find(c => c.id === selc.id);
+            if(info) precioInput.value = ((parseFloat(info.precio)||0) * pax).toFixed(2);
         }
 
     } else if(tipo === 'Aliado') {
         precioInput.value = '0';
 
     } else if(tipo === 'Comisionado') {
-        let sel = document.getElementById('input-vd-contacto-select');
+        let selc = getContactoSeleccionado('input-vd-contacto-select');   // POR ID (nombres repetidos)
         let comisionBox = document.getElementById('box-comision-info');
-        if(sel && sel.value && pax > 0) {
-            let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
+        if(selc.id && pax > 0) {
+            let info = (window.contactosData||[]).find(c => c.id === selc.id);
             if(info) {
                 let montoCobrado = parseFloat(precioInput.value) || 0;
                 let tarifaBase   = info.precio * pax;
