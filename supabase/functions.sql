@@ -158,10 +158,17 @@ begin
   if not found then raise exception 'NO_EXISTE: movimiento %', p_mov; end if;
 end $$;
 
--- 9) cancelar movimiento (soft)
+-- 9) cancelar movimiento (soft). GUARD: no se puede anular si tiene pagos anexados en caja_operador
+--    (caja_operador es la tabla maestra de OPS; la referencia manda en un solo sentido).
 create or replace function eliminar_movimiento(p_mov text)
   returns void language plpgsql security definer set search_path=public as
-$$ begin perform _req_staff(); update movimientos set estado='Cancelado' where id=p_mov;
+$$ declare v_pagos int;
+begin perform _req_staff();
+   select count(*) into v_pagos from caja_operador where movimiento_id = p_mov;
+   if v_pagos > 0 then
+     raise exception 'TIENE_PAGOS: este movimiento tiene % pago(s) registrado(s) en caja. Anula primero el/los pago(s) en la pestaña Caja y vuelve a intentar.', v_pagos;
+   end if;
+   update movimientos set estado='Cancelado' where id=p_mov;
    if not found then raise exception 'NO_EXISTE: movimiento %', p_mov; end if; end $$;
 
 -- 10) actualizar adicionales (jsonb)
