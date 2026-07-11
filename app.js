@@ -1885,20 +1885,20 @@ function renderReservas(reservas) {
     const container = document.getElementById('reservas-container');
     if (!container) return;
     const hoy = getHoyLocal();
-    const yo  = String(myOpName || '').trim().toLowerCase();
     const estadoDe  = r => String(r.estado || '').toLowerCase();
     const esBoarded = r => estadoDe(r) === 'asignado' || estadoDe(r) === 'pasado';
-    const esMia     = r => !!yo && String(r.creado_por || '').trim().toLowerCase() === yo;
 
-    // ── Bucketeo: hoy-por-embarcar / hoy-ya-embarcó / mis-futuras / vencidas-mías ──
+    // ── Bucketeo: hoy-por-embarcar / hoy-ya-embarcó / futuras / vencidas ──
+    // Futuras y vencidas se muestran a TODOS (no se filtran por "dueño"): el muelle es compartido
+    // y el nombre del operador no siempre se captura (creado_por suele ser 'App'). Así una reserva
+    // a futuro SIEMPRE aparece tras registrarla — no depende de que coincida el creador.
     let hoyPend = [], hoyDone = [], futuras = [], vencidas = [];
     (reservas || []).forEach(r => {
-        let crear = r.id === 'Creando...';
         let f = _resFechaISO(r.fecha) || hoy;
         if (esBoarded(r)) { if (f === hoy) hoyDone.push(r); return; }   // ya embarcó: solo las de hoy, abajo
-        if (f === hoy) hoyPend.push(r);                                 // pendiente de hoy (cualquier operador)
-        else if (f > hoy) { if (esMia(r) || crear) futuras.push(r); }   // futura mía
-        else if (esMia(r)) vencidas.push(r);                            // pasada mía sin embarcar
+        if (f === hoy) hoyPend.push(r);                                 // pendiente de hoy
+        else if (f > hoy) futuras.push(r);                             // TODA reserva a futuro
+        else vencidas.push(r);                                        // pendiente de fecha pasada, sin embarcar
     });
     const byHora = (a, b) => _resHoraMin(a.hora) - _resHoraMin(b.hora);
     hoyPend.sort(byHora);
@@ -1931,9 +1931,9 @@ function renderReservas(reservas) {
     }
     // ── SECCIÓN: MIS RESERVAS A FUTURO ──
     html += `<div class="mt-5">`;
-    html += _resHeader('🗓', 'Mis reservas a futuro', futuras.length ? `${futuras.length} · registradas ✓` : '');
+    html += _resHeader('🗓', 'Reservas a futuro', futuras.length ? `${futuras.length} · registradas ✓` : '');
     if (!futuras.length) {
-        html += `<div class="text-center py-5 text-gray-400 text-xs">Aún no registras reservas a futuro.</div>`;
+        html += `<div class="text-center py-5 text-gray-400 text-xs">No hay reservas a futuro registradas.</div>`;
     } else {
         let curFecha = '';
         futuras.forEach(r => {
@@ -1946,7 +1946,7 @@ function renderReservas(reservas) {
     // ── CAJÓN: VENCIDAS (mías, sin embarcar) ──
     if (vencidas.length) {
         html += `<button onclick="toggleVencidas()" class="w-full mt-5 mb-1 flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 active:scale-95 transition">
-            <span class="text-xs font-bold"><i class="fas fa-triangle-exclamation mr-1.5"></i>${vencidas.length} vencida${vencidas.length > 1 ? 's' : ''} (tuyas, sin embarcar)</span>
+            <span class="text-xs font-bold"><i class="fas fa-triangle-exclamation mr-1.5"></i>${vencidas.length} vencida${vencidas.length > 1 ? 's' : ''} (sin embarcar)</span>
             <i class="fas fa-chevron-${vOpen ? 'up' : 'down'} text-xs"></i></button>`;
         if (vOpen) html += `<div class="pt-1">` + vencidas.map(r => _resCardFutura(r, true)).join('') + `</div>`;
     }
