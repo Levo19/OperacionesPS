@@ -113,8 +113,11 @@ begin
           ) from mov_op m where m.operacion_id=op.id),'[]'::jsonb),
       'caja', coalesce((select jsonb_agg(jsonb_build_object(
             'id_transaccion',k.id,'id_operacion',k.op_attr,'id_contacto',k.contacto_id,'categoria',k.categoria,
+            'nombre_contacto',coalesce(nullif((select mm.nombre_contacto from movimientos mm where mm.id=k.movimiento_id),''),
+                                       (select ct.nombre from contactos ct where ct.id=k.contacto_id),''),
             'monto',k.monto,'metodo_pago',k.metodo_pago,'comentarios',k.comentarios,'operador',k.operador,
-            'id_movimiento',coalesce(k.movimiento_id,''))
+            'id_movimiento',coalesce(k.movimiento_id,''),
+            'fecha_cobro',to_char((k.ts at time zone 'America/Lima')::date,'YYYY-MM-DD'))
           ) from caja_op k where k.op_attr=op.id),'[]'::jsonb)
     ) o
     from day_ops op
@@ -143,12 +146,18 @@ begin
   caja as (
     select k.*, coalesce((select id from day_ops where id=k.operacion_id),
                          (select operacion_id from m2o where mov_id=k.movimiento_id)) op_attr,
+           -- día del movimiento/pase ligado (para atribuir el cobro al día del pase, no al día del pago)
+           (select (mm.registrado_at at time zone 'America/Lima')::date from movimientos mm where mm.id=k.movimiento_id) mov_dia,
+           -- nombre para mostrar en la pestaña Caja (antes salía el id del contacto)
+           coalesce(nullif((select mm.nombre_contacto from movimientos mm where mm.id=k.movimiento_id),''),
+                    (select ct.nombre from contactos ct where ct.id=k.contacto_id),'') nom,
            (lower(coalesce(k.metodo_pago,'')) like '%efect%' or lower(coalesce(k.metodo_pago,''))='cash') ef
     from caja_operador k
   ),
-  cdia as (   -- caja que cuenta para el día: atribuida a op del día, o suelta con ts del día
+  cdia as (   -- cuenta para el día: op del día · cobro de un movimiento/pase de ESE día · o suelta real por ts
     select *, (op_attr is not null) atrib,
       case when op_attr is not null then true
+           when movimiento_id is not null and movimiento_id <> '' and mov_dia is not null then mov_dia = p_fecha
            else (ts at time zone 'America/Lima')::date = p_fecha end incluir
     from caja
   )
@@ -156,8 +165,10 @@ begin
     coalesce(sum(monto) filter (where incluir and ef),0),
     coalesce(sum(monto) filter (where incluir and not ef),0),
     coalesce(jsonb_agg(jsonb_build_object('id_transaccion',id,'id_operacion',coalesce(op_attr,''),'id_contacto',contacto_id,
+       'nombre_contacto',nom,
        'categoria',categoria,'monto',monto,'metodo_pago',metodo_pago,'comentarios',comentarios,'operador',operador,
-       'id_movimiento',coalesce(movimiento_id,'')) ) filter (where incluir and not atrib),'[]'::jsonb)
+       'id_movimiento',coalesce(movimiento_id,''),
+       'fecha_cobro',to_char((ts at time zone 'America/Lima')::date,'YYYY-MM-DD')) ) filter (where incluir and not atrib),'[]'::jsonb)
     into v_efectivo, v_transfer, v_caja_suelta
   from cdia;
 

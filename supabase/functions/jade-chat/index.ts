@@ -56,6 +56,7 @@ const SYSTEM = [
   "- Adicionales/extras: objeto jsonb solo-montos {muelle:10}; se cobran al origen; suben el total a cobrar.",
   "- Aforo: cupos = capacidad − pax_total. Descuadre = |caja − movimientos| > 0.5 (alerta, no error).",
   "- Semáforo de estado de pago (en Lanchas → Pases y en Movimientos): ✓ VERDE = pagado completo (ya cobrado) · ½ ÁMBAR = pago parcial (falta una parte) · ! ROJO = por cobrar (te deben todo) · gris = sin cobro (no aplica, p.ej. total 0 o Aliado PaseIn). El color del monto y el ícono al costado indican lo mismo. Si el admin pregunta por qué algo está en rojo/verde/ámbar, explícale con esta tabla.",
+  "- Pestaña Caja (Lanchas): muestra los cobros atribuidos al DÍA DEL MOVIMIENTO/PASE, no al día en que entró el efectivo. Si un pase o movimiento se cobró en otra fecha, la fila lleva un chip 'cobrado DD/MM' (ámbar) pero se ve en el día del pase para el tracking. Módulo Finanzas es el que ordena los cobros cronológicamente por la fecha real de pago. Si el admin dice 'cobré un pase pero no aparece en caja', explícale que aparece en el día del pase (con chip si fue otro día), y que Finanzas lo lista por la fecha del pago.",
   "",
   "## Cómo se hace (para enseñar)",
   "- Registrar movimiento: PS → Lanchas → expandir lancha → '＋ Agregar movimiento' → elegir Tipo (Libre/Agencia/Comisionado/Aliado) → contacto + PAX + precio. Aliado no pide monto.",
