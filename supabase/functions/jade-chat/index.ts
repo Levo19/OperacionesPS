@@ -115,7 +115,7 @@ const TOOLS = [
   },
   {
     name: "proponer_accion",
-    description: "Propone una acción que MODIFICA datos (el usuario la confirmará en pantalla antes de ejecutarse). NO la ejecutes tú; solo propón con params completos. Acciones válidas: 'registrar_pago' (cobro/pago; params: id_movimiento, id_contacto, monto, metodo_pago, categoria='Cobro' o 'Pago Agencia'), 'actualizar_contacto' (cambiar precio; params: id, precio), 'crear_contacto_multi' (nuevo contacto; params: nombre, items=[{tipo,precio}]), 'actualizar_adicionales' (extras de un movimiento; params: id_mov, adicionales objeto {clave:monto}). Si te faltan datos (ej. el id del movimiento), pídelos antes de proponer.",
+    description: "Propone una acción que MODIFICA datos (el usuario la confirmará en pantalla antes de ejecutarse). NO la ejecutes tú; solo propón con params completos. Acciones válidas: 'registrar_pago' (cobro/pago; params: id_movimiento, id_contacto, monto, metodo_pago, categoria='Cobro' o 'Pago Agencia'), 'actualizar_contacto' (cambiar precio; params: id, precio), 'crear_contacto_multi' (nuevo contacto; params: nombre, items=[{tipo,precio}]), 'actualizar_adicionales' (extras de un movimiento; params: id_mov, adicionales objeto {clave:monto}), 'fusionar_contactos' (unir dos contactos DEL MISMO TIPO que son el mismo; params: origen=id a absorber/borrar, destino=id que se conserva; repunta movimientos/caja). Si te faltan datos (ej. el id del movimiento o los ids de contacto), pídelos antes de proponer.",
     input_schema: {
       type: "object",
       properties: {
