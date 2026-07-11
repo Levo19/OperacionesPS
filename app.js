@@ -2721,11 +2721,52 @@ function abrirModalGestionBote(id_op) {
 function normTipo(s) { return (s||'').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
 
 // Helper: obtiene {id, nombre} del select de contacto activo
+// ── Buscador filtrable de contacto para el embarque (reemplaza el <select> largo) ──
+// El operador escribe y filtra por nombre (como en PS). Guarda el id oculto → distinguir por id.
+function _pickerContactoHTML(want, label) {
+    let showP = (want === 'agencia' || want === 'comision');
+    return `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">${label}</label>
+      <div class="relative">
+        <input type="text" id="input-vd-contacto-buscar" data-want="${want}" data-precio="${showP?1:0}" autocomplete="off"
+          class="${_selectInputClass()}" placeholder="🔍 Escribe para buscar ${label.toLowerCase()}..."
+          oninput="filtrarPickerContacto()" onfocus="filtrarPickerContacto()"
+          onblur="setTimeout(function(){var l=document.getElementById('input-vd-contacto-lista');if(l)l.classList.add('hidden');},200)">
+        <div id="input-vd-contacto-lista" class="hidden absolute z-40 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-52 overflow-y-auto"></div>
+        <input type="hidden" id="input-vd-contacto-id">
+        <input type="hidden" id="input-vd-contacto-nombre">
+      </div>`;
+}
+function filtrarPickerContacto() {
+    let inp = document.getElementById('input-vd-contacto-buscar');
+    let lista = document.getElementById('input-vd-contacto-lista');
+    if(!inp || !lista) return;
+    let want = inp.dataset.want || '', showP = inp.dataset.precio === '1';
+    let q = (inp.value || '').trim().toLowerCase();
+    // si el texto ya no coincide con lo seleccionado, limpiar la selección (evita id colgante)
+    let idH = document.getElementById('input-vd-contacto-id'), nomH = document.getElementById('input-vd-contacto-nombre');
+    if(nomH && idH && inp.value !== nomH.value) { idH.value = ''; nomH.value = ''; }
+    let items = (window.contactosData || []).filter(c => normTipo(c.tipo).includes(want) && (!q || String(c.nombre || '').toLowerCase().includes(q))).slice(0, 40);
+    if(!items.length) { lista.innerHTML = '<div class="px-3 py-2 text-[11px] text-gray-400">Sin resultados</div>'; lista.classList.remove('hidden'); return; }
+    lista.innerHTML = items.map(c => `<div class="px-3 py-2 text-[11px] font-bold text-gray-800 hover:bg-blue-50 active:bg-blue-100 cursor-pointer border-b border-gray-50"
+        onmousedown="pickContacto('${c.id}', '${String(c.nombre).replace(/'/g, "\\'")}')">${c.nombre}${showP ? ` <span class="text-gray-400 font-normal">S/${c.precio}/pax</span>` : ''}</div>`).join('');
+    lista.classList.remove('hidden');
+}
+function pickContacto(id, nombre) {
+    let idH = document.getElementById('input-vd-contacto-id'), nomH = document.getElementById('input-vd-contacto-nombre'), inp = document.getElementById('input-vd-contacto-buscar');
+    if(idH) idH.value = id; if(nomH) nomH.value = nombre; if(inp) inp.value = nombre;
+    let lista = document.getElementById('input-vd-contacto-lista'); if(lista) lista.classList.add('hidden');
+    actualizarPrecioDefecto();
+}
 function getContactoSeleccionado(selectId) {
+    // Embarque: usa el buscador (id oculto). Otros selects (derivar/pase-reserva): lógica legacy.
+    if(selectId === 'input-vd-contacto-select') {
+        let hid = document.getElementById('input-vd-contacto-id');
+        if(hid) return { id: hid.value || '', nombre: (document.getElementById('input-vd-contacto-nombre') || {}).value || '' };
+    }
     let sel = document.getElementById(selectId);
     if(!sel) return { id: '', nombre: '' };
-    let opt = sel.options[sel.selectedIndex];
-    return { id: opt?.dataset?.id || sel.value, nombre: sel.value };
+    let opt = sel.options ? sel.options[sel.selectedIndex] : null;
+    return { id: (opt && opt.dataset && opt.dataset.id) || sel.value, nombre: sel.value };
 }
 
 function _selectInputClass() {
@@ -2757,19 +2798,11 @@ function cambiarTipoVentaDirecta() {
 
     } else if(tipo === 'Agencia') {
         precioLabel.textContent = 'S/ Total (precio especial)';
-        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('agencia'));
-        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre} (S/${c.precio}/pax)</option>`).join('');
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Agencia</label>
-            <select id="input-vd-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefecto()">
-                <option value="">Seleccionar...</option>${opts}</select>`;
+        container.innerHTML = _pickerContactoHTML('agencia', 'Agencia');
 
     } else if(tipo === 'Aliado') {
         precioLabel.textContent = 'Pase (sin cobro)';
-        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('aliado'));
-        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre}</option>`).join('');
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado</label>
-            <select id="input-vd-contacto-select" class="${_selectInputClass()}">
-                <option value="">Seleccionar...</option>${opts}</select>`;
+        container.innerHTML = _pickerContactoHTML('aliado', 'Aliado');
         // Aliado = pase, no hay cobro de dinero
         precioInput.value = '0';
         precioInput.readOnly = true;
@@ -2778,11 +2811,7 @@ function cambiarTipoVentaDirecta() {
 
     } else if(tipo === 'Comisionado') {
         precioLabel.textContent = 'S/ Precio cobrado al PAX';
-        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('comision'));
-        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}" data-comision="${c.precio}">${c.nombre}</option>`).join('');
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Comisionado</label>
-            <select id="input-vd-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefecto()">
-                <option value="">Seleccionar...</option>${opts}</select>`;
+        container.innerHTML = _pickerContactoHTML('comision', 'Comisionado');
         comisionBox.classList.remove('hidden');
     }
 
@@ -2860,7 +2889,7 @@ function resetFormularioVenta() {
 
     // Auto-focus inmediato al campo de nombre/contacto
     setTimeout(() => {
-        let contactoInput = document.getElementById('input-vd-contacto-text') || document.getElementById('input-vd-contacto-select');
+        let contactoInput = document.getElementById('input-vd-contacto-text') || document.getElementById('input-vd-contacto-buscar') || document.getElementById('input-vd-contacto-select');
         if (contactoInput && !document.getElementById('modal-gestion-bote').classList.contains('hidden')) {
             contactoInput.focus();
             if (contactoInput.tagName === 'INPUT') contactoInput.select();
@@ -2905,9 +2934,12 @@ function cargarParaEditar(id_mov) {
         let colonIdx = nc.indexOf(':');
         if(t) t.value = colonIdx !== -1 ? nc.slice(colonIdx + 1) : nc;
     } else {
-        let s = document.getElementById('input-vd-contacto-select');
-        // Las opciones del select usan value="${c.nombre}", no el ID
-        if(s) s.value = movToEdit.nombreContacto || movToEdit.contacto;
+        // Preseleccionar en el buscador (id oculto + nombre visible)
+        let nom = movToEdit.nombreContacto || movToEdit.contacto || '';
+        let idH = document.getElementById('input-vd-contacto-id'), nomH = document.getElementById('input-vd-contacto-nombre'), inp = document.getElementById('input-vd-contacto-buscar');
+        if(idH) idH.value = movToEdit.contacto || '';
+        if(nomH) nomH.value = nom;
+        if(inp) inp.value = nom;
     }
     document.getElementById('input-vd-pax').value = movToEdit.pax;
     document.getElementById('input-vd-precio').value = movToEdit.monto;
