@@ -55,6 +55,7 @@ const SYSTEM = [
   "- Agencia LE DEBES = comprado − pagado (compraste espacio a esa agencia).",
   "- Adicionales/extras: objeto jsonb solo-montos {muelle:10}; se cobran al origen; suben el total a cobrar.",
   "- Aforo: cupos = capacidad − pax_total. Descuadre = |caja − movimientos| > 0.5 (alerta, no error).",
+  "- Semáforo de estado de pago (en Lanchas → Pases y en Movimientos): ✓ VERDE = pagado completo (ya cobrado) · ½ ÁMBAR = pago parcial (falta una parte) · ! ROJO = por cobrar (te deben todo) · gris = sin cobro (no aplica, p.ej. total 0 o Aliado PaseIn). El color del monto y el ícono al costado indican lo mismo. Si el admin pregunta por qué algo está en rojo/verde/ámbar, explícale con esta tabla.",
   "",
   "## Cómo se hace (para enseñar)",
   "- Registrar movimiento: PS → Lanchas → expandir lancha → '＋ Agregar movimiento' → elegir Tipo (Libre/Agencia/Comisionado/Aliado) → contacto + PAX + precio. Aliado no pide monto.",
