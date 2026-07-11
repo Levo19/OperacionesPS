@@ -4476,44 +4476,45 @@ function previsualizarFotoZarpe(input, prefijo) {
     reader.readAsDataURL(file);
 }
 
-function confirmarFotoZarpe() {
+async function confirmarFotoZarpe() {
     let id_op = document.getElementById('hidden-zarpe-op-id').value;
-    let hora  = document.getElementById('hidden-zarpe-hora').value;
-    // Priorizar cámara, luego galería
     let inputCam = document.getElementById('zarpe-foto-camara');
     let inputGal = document.getElementById('zarpe-foto-galeria');
-    let file = (inputCam.files[0]) || (inputGal.files[0]);
+    let file = (inputCam && inputCam.files[0]) || (inputGal && inputGal.files[0]);
 
     cerrarSubModal('modal-zarpe-foto');
     if(!file) { mostrarToast('Sin foto seleccionada.', 'error'); return; }
+    if(!window.SupaAPI || !window.SupaAPI.sb) { mostrarToast('Sin conexión al servidor.', 'error'); return; }
+    if(window._zarpeSubiendo) return;   // anti doble-tap
+    window._zarpeSubiendo = true;
 
-    // Comprimir antes de subir (máx 2200px + JPEG 0.85): sube rápido, sigue legible para la IA
-    comprimirFotoZarpe(file).then(cmp => {
-      const doUpload = (dataURL) => {
-        fetchPostBg('subir_foto_zarpe', { id_operacion: id_op, hora_salida: hora, foto_base64: dataURL, creador: myOpName })
-            .then(res => {
-                if (res.status === 'error') {
-                    mostrarToast('Error al subir foto.', 'error');
-                } else {
-                    mostrarToast('✅ Foto de zarpe guardada.');
-                    // Actualizar local state para que el botón cambie a "Ver Foto"
-                    let opLocal = window.operacionesData.find(o => o.id === id_op);
-                    if (opLocal && res.foto_url) {
-                        opLocal.foto_zarpe = res.foto_url;
-                        let cont = document.getElementById('operaciones-container');
-                        if (cont) cont._fp = null; // invalidar fingerprint
-                        renderOperaciones(window.operacionesData);
-                    }
-                }
-            });
-      };
-      if (cmp && cmp.dataURL) { doUpload(cmp.dataURL); return; }
-      // Compresión no produjo dataURL (imagen ya chica o fallo) → subir el blob/original tal cual
-      const src = (cmp && cmp.blob) || file;
-      const reader = new FileReader();
-      reader.onload = e => doUpload(e.target.result);
-      reader.readAsDataURL(src);
-    });
+    mostrarToast('📤 Subiendo foto…');
+    try {
+        // Comprimir (máx 2200px, JPEG 0.85 — legible para la IA) y SUBIR EL BLOB DIRECTO a Storage.
+        // Antes iba como base64 por fetchPostBg → JSON de varios MB + cola en localStorage (síncrono)
+        // → la 2a foto colgaba el sistema. La subida directa del blob no bloquea el hilo.
+        const cmp  = await comprimirFotoZarpe(file);
+        const blob = (cmp && cmp.blob) || file;
+        const sb   = window.SupaAPI.sb;
+        const path = 'zarpes/' + (id_op || 'OP') + '_' + Date.now() + '.jpg';
+        const { error: upErr } = await sb.storage.from('operaciones').upload(path, blob, { upsert: true, contentType: blob.type || 'image/jpeg' });
+        if (upErr) throw upErr;
+        const url = sb.storage.from('operaciones').getPublicUrl(path).data.publicUrl;
+        const { error: rpcErr } = await sb.rpc('set_foto_zarpe', { p_op: id_op, p_url: url });
+        if (rpcErr) throw rpcErr;
+        mostrarToast('✅ Foto de zarpe guardada.');
+        let opLocal = window.operacionesData.find(o => o.id === id_op);
+        if (opLocal) {
+            opLocal.foto_zarpe = url;
+            let cont = document.getElementById('operaciones-container');
+            if (cont) cont._fp = null;   // invalidar fingerprint para re-render
+            renderOperaciones(window.operacionesData);
+        }
+    } catch (e) {
+        mostrarToast('⚠ No se pudo subir la foto. Intenta de nuevo.', 'error');
+    } finally {
+        window._zarpeSubiendo = false;
+    }
 }
 
 
