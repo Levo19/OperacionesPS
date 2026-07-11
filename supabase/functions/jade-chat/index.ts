@@ -104,6 +104,16 @@ const TOOLS = [
     input_schema: { type: "object", properties: { limite: { type: "number", description: "cuántas mostrar (default 40)" } }, required: [] },
   },
   {
+    name: "consultar_catalogo",
+    description: "Mapa/estructura del sistema (modo programador): qué RPCs, tablas, vistas y Edge Functions existen, para qué sirven, su gate de seguridad, quién las usa y su estado (activo / sin_consumidor / deprecado). Úsalo para '¿qué hace X?', '¿dónde está el log de Y?', '¿qué está sin uso?', '¿qué toca la tabla Z?'. Filtra por estado si preguntan por lo deprecado/sin uso.",
+    input_schema: { type: "object", properties: { estado: { type: "string", description: "opcional: activo | sin_consumidor | deprecado" } }, required: [] },
+  },
+  {
+    name: "consultar_eventos",
+    description: "Log de eventos/errores en vivo del sistema (modo programador). Úsalo para '¿qué errores hubo?', '¿algo falló hoy?'. Puedes filtrar por tipo (error/info/accion).",
+    input_schema: { type: "object", properties: { tipo: { type: "string", description: "opcional: error | info | accion" }, limite: { type: "number" } }, required: [] },
+  },
+  {
     name: "proponer_accion",
     description: "Propone una acción que MODIFICA datos (el usuario la confirmará en pantalla antes de ejecutarse). NO la ejecutes tú; solo propón con params completos. Acciones válidas: 'registrar_pago' (cobro/pago; params: id_movimiento, id_contacto, monto, metodo_pago, categoria='Cobro' o 'Pago Agencia'), 'actualizar_contacto' (cambiar precio; params: id, precio), 'crear_contacto_multi' (nuevo contacto; params: nombre, items=[{tipo,precio}]), 'actualizar_adicionales' (extras de un movimiento; params: id_mov, adicionales objeto {clave:monto}). Si te faltan datos (ej. el id del movimiento), pídelos antes de proponer.",
     input_schema: {
@@ -154,6 +164,8 @@ async function runReadTool(name: string, input: Record<string, unknown>, userTok
     return { encontrado: true, ...found };
   }
   if (name === "consultar_reparaciones") return await callRpc("listar_reparaciones", { p_limite: Number(input?.limite) || 40 }, userToken);
+  if (name === "consultar_catalogo") return await callRpc("listar_catalogo", { p_estado: (input?.estado as string) || null }, userToken);
+  if (name === "consultar_eventos") return await callRpc("listar_eventos", { p_tipo: (input?.tipo as string) || null, p_limite: Number(input?.limite) || 30 }, userToken);
   return { _error: true, motivo: "herramienta_desconocida" };
 }
 
