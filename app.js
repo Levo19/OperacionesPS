@@ -826,7 +826,12 @@ function fetchDashboardDataBg() {
     let _isFirstLoad   = !window._bgRefreshDone;
     window._bgRefreshDone = true;
 
-    fetch(GAS_URL + "?action=getDashboardData")
+    // Watchdog: si el refetch no resuelve en 15s, rechazamos para NO dejar _bgFetchInProgress
+    // pegado en true (eso congelaría todos los refrescos futuros → "cargando" eterno).
+    Promise.race([
+        fetch(GAS_URL + "?action=getDashboardData"),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout refetch')), 15000))
+    ])
         .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
         .then(data => {
             _bgFetchInProgress = false;
@@ -3294,11 +3299,12 @@ function confirmarAsignacion() {
     renderReservas(window.reservasData);
 
     // Optimistic: add temp item to manifest
+    let tempMovId = 'temp-crm-' + Date.now();
     let opIdx = window.operacionesData.findIndex(o => o.id === id_operacion);
     if(opIdx !== -1) {
         let op = window.operacionesData[opIdx];
         op.manifiesto.unshift({
-            id: 'temp-crm-' + Date.now(),
+            id: tempMovId,
             tipo: tipoMovimiento,
             contacto: idContacto,
             nombreContacto: nombreContacto,
@@ -3312,6 +3318,16 @@ function confirmarAsignacion() {
 
     cerrarModales();
 
+    // Red de seguridad: si en 12s no se resolvió, limpiar el "cargando" y refrescar
+    // (nunca dejar el card en estado ⏳ eterno aunque el refetch de fondo se cuelgue).
+    let _resuelto = false;
+    let _wd = setTimeout(() => {
+        if (_resuelto) return;
+        let i = (window.reservasData||[]).findIndex(r => r.id === id_reserva);
+        if (i !== -1) { delete window.reservasData[i]._asignando; renderReservas(window.reservasData); }
+        fetchDashboardDataBg();
+    }, 12000);
+
     fetchPostBg('asignar_reserva', {
         id_reserva,
         id_operacion,
@@ -3324,9 +3340,36 @@ function confirmarAsignacion() {
         creador: myOpName,
         localId: 'temp-asig-' + Date.now() + '-' + Math.random().toString(36).slice(2,8)   // idempotente + resiliente (cola offline)
     }).then(res => {
-        if(res && res.status === 'error') mostrarToast('❌ ' + (res.message || 'Error al asignar'), 'error');
+        _resuelto = true; clearTimeout(_wd);
+        // Resolver el estado optimista SIEMPRE aquí — no depender solo del refetch de fondo,
+        // que puede saltarse (modal/POST en vuelo) o colgarse y dejar el card en "cargando" eterno.
+        let rIdx = (window.reservasData||[]).findIndex(r => r.id === id_reserva);
+        let ok = !(res && res.status === 'error');
+        if (ok) {
+            if (rIdx !== -1) { delete window.reservasData[rIdx]._asignando; window.reservasData[rIdx].estado = 'Asignado'; }  // pasa a "✓ ya embarcaron"
+            if (opIdx !== -1) {   // fijar el id real en el item del manifiesto y quitar el "sincronizando"
+                let t = (window.operacionesData[opIdx].manifiesto||[]).find(m => m.id === tempMovId);
+                if (t) { if (res && res.id_mov) t.id = res.id_mov; delete t._syncing; }
+            }
+        } else {
+            if (rIdx !== -1) delete window.reservasData[rIdx]._asignando;   // devuelve el card a "por embarcar"
+            if (opIdx !== -1) {   // revertir el item optimista + liberar aforo
+                let op = window.operacionesData[opIdx];
+                let before = (op.manifiesto||[]).length;
+                op.manifiesto = (op.manifiesto||[]).filter(m => m.id !== tempMovId);
+                if (op.manifiesto.length < before) op.ocupados = Math.max(0, op.ocupados - paxNum);
+            }
+            mostrarToast('❌ ' + (res.message || 'No se pudo asignar. Intenta de nuevo.'), 'error');
+        }
+        renderReservas(window.reservasData);
+        renderOperaciones(window.operacionesData);
         fetchDashboardDataBg();
-    }).catch(() => {});
+    }).catch(() => {
+        _resuelto = true; clearTimeout(_wd);
+        let rIdx = (window.reservasData||[]).findIndex(r => r.id === id_reserva);
+        if (rIdx !== -1) { delete window.reservasData[rIdx]._asignando; renderReservas(window.reservasData); }
+        fetchDashboardDataBg();
+    });
 }
 
 // Extras CRM
