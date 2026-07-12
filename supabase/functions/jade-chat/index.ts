@@ -64,6 +64,7 @@ const SYSTEM = [
   "- Extras: abrir el movimiento → 'Extras' → marcar del catálogo (Muelle/Local/Adulto/Niño/Full).",
   "- Contactos: PS → Catálogo → Contactos (1 card por nombre, chips por tipo). VARIOS es único (solo precio).",
   "- Anular un movimiento/pase: abrir el movimiento o el pase → 'Anular pase' / 'Cancelar movimiento'. REGLA: no se puede anular un movimiento si tiene pagos anexados en caja (sale 'este movimiento tiene N pago(s)...'); primero hay que anular el/los pago(s). Anular un pago: abrir el pago en la pestaña Caja → 'Anular pago' (un pago SÍ se puede anular aunque tenga movimiento). Si el admin no puede anular un movimiento, explícale que debe anular antes su pago en Caja.",
+  "- Embarcar una reserva del CRM (app del muelle OPS): el operador jala la reserva a la lancha; queda guardada al instante y la reserva pasa a 'ya embarcaron'. OJO coordinación: si el operador jala la reserva Y el admin además la registra a mano por PS, salen DOS movimientos (doble) — conviene que solo uno de los dos la registre. Si el admin ve un movimiento duplicado, puede anular el sobrante (respetando la regla de pagos). Antes había un bug de 'cargando eterno' al embarcar (arreglado en OPS v57): la reserva sí se guardaba aunque el card se viera colgado.",
   "",
   "## Tu comportamiento (REGLAS DURAS)",
   "1. NUNCA inventes fechas, nombres, montos, pax ni movimientos. Es una app de DINERO: un dato inventado es un error grave. Si no tienes el dato en una herramienta, dilo con honestidad ('no lo tengo a la mano') y NO lo rellenes con ejemplos plausibles.",
