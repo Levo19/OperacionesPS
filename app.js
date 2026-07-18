@@ -1480,7 +1480,9 @@ async function _zarEmitir(){
   let ok=0, fail=0;
   for(const p of sel){
     const esFactura = p.tipo_doc==='6' && /^\d{11}$/.test(p.documento||'');
-    const localId = 'zar-'+(S.idOperacion||'x')+'-'+p._i+'-'+Date.now();
+    // local_id ESTABLE por (operación, pax): sin Date.now(). Ante reintento tras timeout, el backend
+    // dedupea por ux_cmp_localid y NO re-emite a SUNAT (evita doble boleta del mismo pasajero).
+    const localId = 'zar-'+(S.idOperacion||'x')+'-'+p._i;
     try{
       const r = await window.SupaAPI.post('emitir_comprobante',{
         tipo: esFactura?1:2, serie: esFactura?S.serieF:S.serieB,
@@ -1489,11 +1491,11 @@ async function _zarEmitir(){
         exonerado:false, exportacion:false, operador: myOpName, operacion_ref:S.idOperacion, localId
       });
       if(r && r.status!=='error' && (r.id||r.numero) && r.estado!=='rechazada'){
-        p.estado='facturado'; p.cpe=r.serie+'-'+r.numero; ok++;
+        p.estado='facturado'; p.cpe=r.serie+'-'+r.numero; p._motivo=null; ok++;
         // registrar el pax en el zarpe digitalizado + ligar el CPE
         try{ const rz=await window.SupaAPI.registrarZarpePax(S.idOperacion,[{documento:p.documento,tipo_doc:p.tipo_doc,nombre:p.nombre,empresa:p.empresa}],myOpName); }catch(_){}
-      } else { p.estado='error'; fail++; }
-    }catch(e){ p.estado='error'; fail++; }
+      } else { p.estado='error'; p._motivo=String((r&&(r.errores||r.message))||'rechazado por SUNAT').slice(0,120); fail++; }
+    }catch(e){ p.estado='error'; p._motivo=String((e&&e.message)||'error de red').slice(0,120); fail++; }
     _zarRender();
   }
   S.emitiendo=false;
@@ -1522,6 +1524,7 @@ function _zarRender(){
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_zarEsc(p.nombre||p.empresa||'—')} ${chip}</div>
           <div style="font-size:10.5px;color:#9b6b6e">${tipoLbl} ${_zarEsc(p.documento)} ${p.empresa?'· 🏢 '+_zarEsc(p.empresa):''} · S/${p.precio}</div>
+          ${p.estado==='error'&&p._motivo?`<div style="font-size:10px;color:#b91c1c;margin-top:2px">⚠️ ${_zarEsc(p._motivo)}</div>`:''}
         </div>
       </div>`;
     }).join('');

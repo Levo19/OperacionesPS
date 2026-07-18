@@ -22,7 +22,7 @@
     const headers = { apikey: SUPABASE_ANON, 'Content-Type': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
     const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 15000);   // nunca colgar infinito
+    const tid = setTimeout(() => ctrl.abort(), 35000);   // nunca colgar infinito; > server (30s) para que el server gane la carrera en emisión NubeFact
     try {
       const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'POST', headers, body: JSON.stringify(body || {}), signal: ctrl.signal });
       if (!r.ok) { let m = 'Error'; try { m = (await r.json()).message || m; } catch (e) {} throw new Error(m); }
