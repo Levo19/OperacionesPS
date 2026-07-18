@@ -9,8 +9,10 @@
 //     así nadie puede drenar la cuota/costo de Anthropic desde afuera.
 //
 // Request  (POST): { imagen_base64, media_type }  ó  { imagen_url }  (Supabase Storage u otra URL http)
-// Response (200):  { ok:true, pasajeros:[{ nombre, tipo_doc, documento, nacionalidad }] }
+// Response (200):  { ok:true, pasajeros:[{ nombre, tipo_doc, documento, nacionalidad, dudoso }] }
 //                  { ok:false, motivo }
+// `dudoso`=true → el modelo no estuvo seguro del nombre/documento (letra a mano) O quedó incompleto/formato inválido.
+//   El frontend lo marca "revisar" y NO lo autoselecciona: el operador confirma antes de emitir un CPE fiscal.
 //
 // Deploy:  supabase functions deploy extraer-zarpe --project-ref lintmcxqxnrholslatul
 // Secret:  supabase secrets set ANTHROPIC_API_KEY="sk-ant-..." --project-ref lintmcxqxnrholslatul
@@ -38,27 +40,33 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const MEDIA_TYPES_OK = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
 const PROMPT = [
-  "Eres un digitalizador de 'zarpes' (manifiestos de pasajeros de tours en bote, Perú).",
-  "Extrae TODOS los pasajeros de la lista en la imagen.",
-  "Devuelve SOLO un JSON válido, sin texto adicional, sin explicaciones, con esta forma exacta:",
-  '{ "pasajeros": [ { "nombre": "", "tipo_doc": "", "documento": "", "nacionalidad": "" } ] }',
+  "Eres un digitalizador EXPERTO de 'zarpes' (manifiestos de pasajeros de tours en bote, Perú).",
+  "La lista está ESCRITA A MANO, muchas veces con letra apurada, desprolija o poco legible. Tu trabajo es ser EXHAUSTIVO: rescatar TODOS los pasajeros posibles, sin perder ninguno.",
+  "Devuelve SOLO un JSON válido, sin texto adicional, con esta forma exacta:",
+  '{ "pasajeros": [ { "nombre": "", "tipo_doc": "", "documento": "", "nacionalidad": "", "dudoso": false } ] }',
   "",
-  "Reglas para tipo_doc (infiérelo por el FORMATO del documento, no lo inventes):",
-  "- '1'  = DNI      (exactamente 8 dígitos numéricos) — peruanos.",
-  "- '4'  = Carné de Extranjería (CE) — alfanumérico de extranjeros residentes.",
-  "- '7'  = Pasaporte — alfanumérico, típico de turistas extranjeros.",
-  "- '6'  = RUC      (exactamente 11 dígitos, empieza en 10/15/17/20).",
+  "EXHAUSTIVIDAD (lo más importante):",
+  "- Lee CADA renglón de la lista, de arriba hacia abajo. Incluye filas a medio escribir o parcialmente legibles.",
+  "- Un renglón cuenta como pasajero aunque solo tenga el nombre O solo el documento: incluye lo que SÍ puedas leer.",
+  "- NO omitas filas por estar mal escritas. Si dudas de un carácter, pon tu mejor lectura y marca \"dudoso\": true.",
+  "- Conserva el ORDEN de la lista. Cuenta bien: si hay 20 renglones, devuelve 20 pasajeros.",
   "",
-  "Reglas de datos:",
-  "- NO inventes datos. Si un campo es ilegible o no está, déjalo como cadena vacía \"\".",
-  "- 'documento': solo el número/código, sin espacios ni guiones.",
-  "- 'nombre': nombre completo tal como aparece.",
-  "- 'nacionalidad': país si aparece; si no, déjalo vacío.",
-  "- Si un documento tiene 8 dígitos => tipo_doc '1'. Si tiene 11 dígitos => '6'.",
-  "- Si el documento es alfanumérico, decide entre '7' (pasaporte) o '4' (CE) por el contexto; ante duda usa '7'.",
-  "- Si no hay ningún pasajero legible, devuelve { \"pasajeros\": [] }.",
+  "tipo_doc (por el FORMATO del documento, no lo inventes):",
+  "- '1' = DNI (8 dígitos, peruanos).  '6' = RUC (11 dígitos, empieza 10/15/17/20).",
+  "- '7' = Pasaporte (alfanumérico, turistas).  '4' = Carné de Extranjería (alfanumérico residente).",
+  "- 8 dígitos => '1'. 11 dígitos => '6'. Alfanumérico => '7' salvo contexto claro de CE => '4'.",
   "",
-  "Responde ÚNICAMENTE con el JSON.",
+  "Lectura de MANUSCRITO (corrige confusiones típicas con criterio):",
+  "- Dígitos vs letras: 0/O, 1/l/I, 2/Z, 5/S, 6/b, 8/B, 9/g. Los DOCUMENTOS de DNI/RUC son SOLO números → interprétalos como dígitos.",
+  "- Nombres: mayúsculas iniciales, corrige tildes obvias; hay nombres peruanos y extranjeros.",
+  "",
+  "Datos:",
+  "- NO inventes. Campo ilegible/ausente => \"\". Marca \"dudoso\": true si no estás seguro del nombre o del documento.",
+  "- 'documento': solo el número/código, sin espacios ni guiones.  'nombre': completo, corrigiendo la letra.",
+  "- 'nacionalidad': país si aparece; si no, vacío.",
+  "- Si no hay NINGÚN pasajero legible, devuelve { \"pasajeros\": [] }.",
+  "",
+  "Responde ÚNICAMENTE con el JSON, incluyendo TODOS los pasajeros que puedas rescatar.",
 ].join("\n");
 
 // Extrae un objeto JSON de forma robusta del texto de Claude (puede venir con ```json ... ``` o prosa alrededor).
@@ -80,20 +88,26 @@ function parseJSONRobusto(txt: string): { pasajeros?: unknown } | null {
 }
 
 // Normaliza/valida la lista de pasajeros que devolvió el modelo.
-function normalizarPasajeros(raw: unknown): Array<{ nombre: string; tipo_doc: string; documento: string; nacionalidad: string }> {
+function normalizarPasajeros(raw: unknown): Array<{ nombre: string; tipo_doc: string; documento: string; nacionalidad: string; dudoso: boolean }> {
   if (!Array.isArray(raw)) return [];
   const TIPOS_OK = new Set(["1", "4", "6", "7"]);
   return raw.map((p) => {
     const o = (p && typeof p === "object") ? p as Record<string, unknown> : {};
     const nombre = String(o.nombre ?? "").trim();
-    let documento = String(o.documento ?? "").replace(/\s|-/g, "").trim();
+    // documento: solo el código sin espacios/guiones/puntos (la IA a veces mete "." de miles)
+    let documento = String(o.documento ?? "").replace(/[\s.\-]/g, "").trim();
     let tipo_doc = String(o.tipo_doc ?? "").trim();
     const nacionalidad = String(o.nacionalidad ?? "").trim();
+    // dudoso = lo que dijo el modelo (letra a mano insegura). Aceptamos varias verdades: true, "true", 1, "1", "si".
+    let dudoso = o.dudoso === true || o.dudoso === 1 || /^(true|1|si|sí)$/i.test(String(o.dudoso ?? "").trim());
     // refuerzo determinístico por longitud numérica (defensa si el modelo se equivoca)
     if (/^\d{8}$/.test(documento)) tipo_doc = "1";
     else if (/^\d{11}$/.test(documento)) tipo_doc = "6";
     if (!TIPOS_OK.has(tipo_doc)) tipo_doc = "";
-    return { nombre, tipo_doc, documento, nacionalidad };
+    // Defensa: aunque el modelo no lo marque, un pasajero SIN nombre, SIN documento,
+    // o con documento de formato no reconocible es intrínsecamente "revisar" antes de emitir un CPE.
+    if (!nombre || !documento || !tipo_doc) dudoso = true;
+    return { nombre, tipo_doc, documento, nacionalidad, dudoso };
   }).filter((p) => p.nombre || p.documento); // descarta filas totalmente vacías
 }
 

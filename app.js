@@ -1463,14 +1463,16 @@ async function _zarFoto(input){
     const b64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=rej; r.readAsDataURL(srcBlob); });
     const out = await window.SupaAPI.extraerZarpe(b64, mediaType);
     if(out && out.ok && Array.isArray(out.pasajeros)){
-      S.pax = out.pasajeros.map((p,i)=>({ _i:i, sel:true, nombre:p.nombre||'', tipo_doc:p.tipo_doc||'', documento:p.documento||'', empresa:p.empresa||'', precio:S.precioDef, estado:'' }));
+      // dudoso (letra a mano insegura / dato incompleto) → arranca SIN seleccionar: el operador
+      // revisa y confirma a mano antes de emitir un CPE fiscal con un DNI posiblemente mal leído.
+      S.pax = out.pasajeros.map((p,i)=>({ _i:i, dudoso:!!p.dudoso, sel:!p.dudoso, nombre:p.nombre||'', tipo_doc:p.tipo_doc||'', documento:p.documento||'', empresa:p.empresa||'', precio:S.precioDef, estado:'' }));
       S.fase='lista'; fx('done');
     } else { fx('err'); mostrarToast('⚠️ No se pudo leer el zarpe: '+((out&&out.motivo)||'error'),'error'); }
   }catch(e){ fx('err'); mostrarToast('⚠️ Error al analizar la foto','error'); }
   S.analizando=false; _zarRender();
 }
 function _zarSet(i,k,v){ const p=_zar.pax.find(x=>x._i===i); if(p){ p[k]=v; if(k==='sel'){} } }
-function _zarToggle(i){ const p=_zar.pax.find(x=>x._i===i); if(p){ p.sel=!p.sel; fx('tap'); _zarRender(); } }
+function _zarToggle(i){ const p=_zar.pax.find(x=>x._i===i); if(p){ p.sel=!p.sel; if(p.sel&&p.dudoso) p.dudoso=false; /* al seleccionarlo el operador lo dio por revisado */ fx('tap'); _zarRender(); } }
 // emite un CPE por cada pasajero seleccionado (boleta; si tiene RUC+empresa → factura a esa agencia)
 async function _zarEmitir(){
   const S=_zar; if(S.emitiendo) return;
@@ -1518,19 +1520,21 @@ function _zarRender(){
     </div>`;
   } else {
     const filas = S.pax.map(p=>{
-      const chip = p.estado==='facturado'?'<span style="font-size:9px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:6px;padding:1px 6px">🟢 '+_zarEsc(p.cpe||'ok')+'</span>':(p.estado==='error'?'<span style="font-size:9px;font-weight:800;background:#fee2e2;color:#b91c1c;border-radius:6px;padding:1px 6px">🔴 error</span>':'');
+      const revisar = p.dudoso && p.estado!=='facturado' && p.estado!=='error';
+      const chip = p.estado==='facturado'?'<span style="font-size:9px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:6px;padding:1px 6px">🟢 '+_zarEsc(p.cpe||'ok')+'</span>':(p.estado==='error'?'<span style="font-size:9px;font-weight:800;background:#fee2e2;color:#b91c1c;border-radius:6px;padding:1px 6px">🔴 error</span>':(revisar?'<span style="font-size:9px;font-weight:800;background:#fef3c7;color:#b45309;border-radius:6px;padding:1px 6px">⚠️ revisar</span>':''));
       const tipoLbl = ({'1':'DNI','4':'CE','7':'Pasaporte','6':'RUC','0':'Varios'})[p.tipo_doc]||p.tipo_doc||'?';
-      return `<div style="display:flex;align-items:center;gap:8px;border:1px solid #f0e6e7;border-radius:11px;padding:9px;margin-bottom:7px;${p.estado==='facturado'?'opacity:.6':''}">
+      return `<div style="display:flex;align-items:center;gap:8px;border:1px solid ${revisar?'#fcd34d':'#f0e6e7'};background:${revisar?'#fffbeb':'#fff'};border-radius:11px;padding:9px;margin-bottom:7px;${p.estado==='facturado'?'opacity:.6':''}">
         <input type="checkbox" ${p.sel?'checked':''} ${p.estado==='facturado'?'disabled':''} onchange="_zarToggle(${p._i})">
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_zarEsc(p.nombre||p.empresa||'—')} ${chip}</div>
-          <div style="font-size:10.5px;color:#9b6b6e">${tipoLbl} ${_zarEsc(p.documento)} ${p.empresa?'· 🏢 '+_zarEsc(p.empresa):''} · S/${p.precio}</div>
-          ${p.estado==='error'&&p._motivo?`<div style="font-size:10px;color:#b91c1c;margin-top:2px">⚠️ ${_zarEsc(p._motivo)}</div>`:''}
+          <div style="font-size:10.5px;color:#9b6b6e">${tipoLbl} ${_zarEsc(p.documento)||'<span style="color:#b45309">sin doc</span>'} ${p.empresa?'· 🏢 '+_zarEsc(p.empresa):''} · S/${p.precio}</div>
+          ${p.estado==='error'&&p._motivo?`<div style="font-size:10px;color:#b91c1c;margin-top:2px">⚠️ ${_zarEsc(p._motivo)}</div>`:(revisar?`<div style="font-size:10px;color:#b45309;margin-top:2px">Letra dudosa o dato incompleto — verifica antes de emitir.</div>`:'')}
         </div>
       </div>`;
     }).join('');
     const nSel = S.pax.filter(p=>p.sel && p.estado!=='facturado').length;
-    body = `<div style="margin-bottom:8px;font-size:14px;font-weight:800;color:#3d0508">Pasajeros detectados (${S.pax.length})</div>
+    const nRev = S.pax.filter(p=>p.dudoso && p.estado!=='facturado' && p.estado!=='error').length;
+    body = `<div style="margin-bottom:8px;font-size:14px;font-weight:800;color:#3d0508">Pasajeros detectados (${S.pax.length})${nRev?` <span style="font-size:10.5px;font-weight:800;color:#b45309;background:#fef3c7;border-radius:7px;padding:1px 7px;margin-left:4px">⚠️ ${nRev} por revisar</span>`:''}</div>
       <div style="max-height:46vh;overflow-y:auto;margin-bottom:10px">${filas||'<div style="color:#9ca3af;text-align:center;padding:20px">Sin pasajeros</div>'}</div>
       <div style="font-size:10.5px;color:#9b6b6e;margin-bottom:8px">Con RUC → factura a la agencia; el resto → boleta. Revisa antes de emitir.</div>
       <button onclick="_zarEmitir()" ${S.emitiendo?'disabled':''} style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;${S.emitiendo?'opacity:.6':''}">${S.emitiendo?'Emitiendo…':`Emitir ${nSel} comprobante(s)`}</button>`;
