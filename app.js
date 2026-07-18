@@ -1480,9 +1480,10 @@ async function _zarEmitir(){
   let ok=0, fail=0;
   for(const p of sel){
     const esFactura = p.tipo_doc==='6' && /^\d{11}$/.test(p.documento||'');
-    // local_id ESTABLE por (operación, pax): sin Date.now(). Ante reintento tras timeout, el backend
-    // dedupea por ux_cmp_localid y NO re-emite a SUNAT (evita doble boleta del mismo pasajero).
-    const localId = 'zar-'+(S.idOperacion||'x')+'-'+p._i;
+    // local_id ESTABLE por (operación, documento|posición): sin Date.now(). Ante reintento tras timeout,
+    // el backend dedupea por ux_cmp_localid y NO re-emite a SUNAT (evita doble boleta del mismo pasajero).
+    // Se incluye el documento para que re-fotear la misma operación (otro set de pax) no reuse la clave de posición.
+    const localId = 'zar-'+(S.idOperacion||'x')+'-'+((p.documento||('i'+p._i)).replace(/[^A-Za-z0-9]/g,''));
     try{
       const r = await window.SupaAPI.post('emitir_comprobante',{
         tipo: esFactura?1:2, serie: esFactura?S.serieF:S.serieB,
@@ -1646,6 +1647,8 @@ function _facMReglas() {
 function _facMSetMp(v) { _facM.medioPago = v; _facMRender(); }
 // Chip de estado SUNAT para el historial
 function _facMChip(c) {
+  // baja enviada a SUNAT pero aún no confirmada (asíncrona): no mentir que ya está anulada
+  if (c.estado === 'anulada' && c.anulacion_estado === 'enviada') return '<span style="font-size:9px;font-weight:800;background:#fef9c3;color:#a16207;border-radius:6px;padding:1px 6px">⊘ baja enviada</span>';
   if (c.estado === 'anulada' || c.anulacion_estado === 'aprobada') return '<span style="font-size:9px;font-weight:800;background:#eee;color:#888;border-radius:6px;padding:1px 6px">⊘ anulada</span>';
   const m = { aceptada: ['🟢', '#15803d', '#dcfce7', 'SUNAT'], pendiente: ['🟡', '#a16207', '#fef9c3', 'pendiente'], rechazada: ['🔴', '#b91c1c', '#fee2e2', 'rechazada'], stub: ['⚪', '#6b7280', '#f3f4f6', 'demo'] }[c.estado] || ['⚪', '#6b7280', '#f3f4f6', c.estado || '—'];
   return `<span style="font-size:9px;font-weight:800;background:${m[2]};color:${m[1]};border-radius:6px;padding:1px 6px">${m[0]} ${m[3]}</span>`;
