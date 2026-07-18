@@ -1,6 +1,6 @@
 # 📖 BIBLIA DEL ECOSISTEMA PS
 > Fuente de verdad viva del ecosistema **Grupo PS**. Es el **cerebro de JADE** (el agente del panel) y la **referencia de reparaciones** para el equipo (Luis + Claude Code).
-> Retroalimentable: crece con el negocio (ej. cuando se dibuje el Hotel). Última actualización: **2026-07-10**.
+> Retroalimentable: crece con el negocio (ej. cuando se dibuje el Hotel). Última actualización: **2026-07-18**.
 
 ---
 
@@ -210,6 +210,22 @@ Detalle del movimiento/pase → **💰 Cobrar** → precarga monto+adicionales (
 | P8 | Facturación NubeFact: IGV desviaba el total ±0.01 | `emitir_comprobante`/`_nf_items` reconstruían valor=round(precio/1.18,2); el total de línea no volvía al precio pagado (S/100→100.01/99.99, confirmado en panel NubeFact) | método por RESTA (tot=round(precio*cant,2); valor=round(tot/1.18,2); igv=tot−valor; unitarios a 6 dec) · DB-live (rep. 22) |
 | P9 | Facturación NubeFact go-live (lote B2/B3/B4/A1/A3/guards) | anulación ciega + token crudo en bajas + anon con TRUNCATE + NC sin lock + batch zarpe doble-emisión + guards SUNAT faltantes | RAISE en baja si NubeFact error + auth_header unificado + REVOKE a anon + advisory lock NC + local_id estable zarpe + guards (cantidad/tipo↔serie/RUC) + reconcile verifica cliente_doc + RPC atascados · DB-live + OPS v58 + PS v1.72.0 (rep. 23-25) |
 
+### Sprint 2026-07-18 (zarpe IA — cierre del feature cortado + revisión 100x adversarial)
+Retoma de un feature a medias (5 jul): el prompt del OCR de zarpe ya estaba endurecido para **letra a mano** (exhaustivo + campo `dudoso`) pero quedó sin cablear. Cierre end-to-end + auditoría money-safety de todo el flujo.
+
+| # | Reparación | Causa raíz | Deploy |
+|---|---|---|---|
+| P10 | Zarpe IA no propagaba "dudoso" ni permitía corregir | `normalizarPasajeros` descartaba `dudoso`; el frontend no lo mapeaba; `_zarSet` era código muerto (no había inputs) → el gate "revisar" bloqueaba la autoselección pero **no** dejaba corregir un DNI mal leído | Edge propaga `dudoso` (+defensa de formato DNI=8/RUC=11); frontend: dudosos arrancan sin seleccionar, badge "⚠️ revisar", **edición inline** (nombre/doc/tipo) con re-eval espejo del backend · Edge deploy + OPS v60 |
+| P11 | Colisión de `local_id` por documento repetido (M1) | 2 pax con el mismo documento comparten `local_id` → el 2º "reusa" (`reusado:true`) el CPE del 1º y se pintaba verde SIN comprobante propio | Pre-check de documento duplicado en la selección (frena + marca revisar); `reusado:true` se cuenta aparte (↺) y no se toma como emisión nueva · OPS v61 |
+| P12 | Fuga silenciosa de pax sin facturar (M3) | el toast final solo contaba emitidos/errores → dudosos sin resolver o desmarcados quedaban sin comprobante y sin aviso | Aviso DURO post-emisión "Quedan N pasajero(s) SIN comprobante" · OPS v61 |
+
+**Tests:** batería de regresión `supabase/_test_zarpe.js` (51 casos: `normalizarPasajeros`, `parseJSONRobusto`, paridad cliente↔backend de la re-evaluación, anti-duplicado) + smoke de render (sin undefined, divs balanceados, XSS escapado). Todo verde.
+
+**Reportado FUERA DE ALCANCE (no tocado, backlog):**
+- **H1 [ALTA] — re-fotear el mismo zarpe puede duplicar boletas.** Para un pax SIN documento el `local_id` usa la posición del array; re-fotear (otro orden/conteo) cambia la clave → 2ª boleta. Mitigado en parte (los sin-doc ahora son `dudoso`→no auto-seleccionados), pero el fix real necesita persistir el estado "jalado/avance" por operación (la UI del picker del mockup, sin construir).
+- **H2 [ALTA latente] — conciliación ciega.** `conciliacion_zarpe`/`marcar_zarpe_pax_facturado`/`listar_zarpe_pax` existen pero **no están cableadas** en el frontend; `conciliacion_zarpe` siempre daría 0 pax facturados/S0. Impacto hoy nulo (nadie la lee); al construir la UI de conciliación, llamar `marcar_zarpe_pax_facturado(idPax, idCPE)` tras cada emisión (requiere que `registrar_zarpe_pax` devuelva el id).
+- **M2 [MEDIA inherente al OCR] — DNI leído con confianza pero errado** (`dudoso=false`) se auto-selecciona → boleta a un DNI ajeno. NubeFact no valida DNI en boleta. La edición inline permite revisarlo, pero no hay validación RENIEC. 
+
 ### 100x (Fase 1) — 2026-07-10 — guards money-safety
 - **A1 [ALTA]**: `admin_editar_contacto` no bloqueaba cambio de tipo con historial → borraba deuda del balance. **Fix**: guard TIENE_MOVIMIENTOS.
 - **A2 [ALTA]**: CON-00 mutable (nombre/tipo). **Fix**: solo precio.
@@ -246,6 +262,8 @@ Detalle del movimiento/pase → **💰 Cobrar** → precarga monto+adicionales (
 - **Atribución de un cobro a un DÍA inconsistente entre canales** → el mismo tipo de dato (un cobro) se agrupaba por criterios distintos: los de operación por el día de la op, los de pase por la fecha del pago (ts). Resultado: un pase cobrado días después salía en la Caja del día del pago, no del pase → "no aparece" en el día donde el usuario lo busca. **Regla:** todo cobro ligado a un movimiento/pase se atribuye al **día del movimiento** (`registrado_at`), no al día en que entró el efectivo; solo la caja suelta real (sin movimiento) va por ts. Si el pago fue en otra fecha, marcarlo con un **chip** ("cobrado DD/MM") en vez de moverlo de día. Finanzas es el canal cronológico por fecha real de pago. Fallback money-safe: si la ref al movimiento es colgante, incluir por ts (nunca ocultar dinero). (Caja Lanchas, `get_lanchas_dia.cdia.incluir`, PS v1.70.0.)
 - **Estado de pago poco legible: sin señal positiva de "pagado"** → si solo marcas los pendientes (chip rojo/ámbar) y los cobrados no muestran nada, el ojo lee "todo pendiente/rojo" y no distingue rápido. **Regla (semáforo):** una **fuente única** de color+ícono por estado (`PAGO_SEMAFORO`: pagado=✓ verde · parcial=½ ámbar · por cobrar=! rojo · sin cobro=gris) aplicada al **monto** (color) **y** a un badge **siempre visible** (incluye ✓ verde en pagado). Nunca dupliques los colores/íconos inline en cada lista → un solo mapa reutilizado (PS v1.69.0, pases + movimientos). Además: `total<=0 → sin_cobro` (un pase de S/0 no es "te deben").
 - **Filtrar por "dueño/mío" un dato que el sistema no siempre atribuye** → el dato desaparece. Ej.: las reservas a futuro se filtraban por `creado_por === operador`, pero `myOpName` suele estar vacío y `crear_reserva` guarda `creado_por='App'` → nunca coincidía → la reserva solo se veía en el estado optimista y desaparecía al recargar. **Regla:** si el atributo de dueño no es confiable/obligatorio, NO filtres por él (muestra a todos); un dato registrado debe ser visible siempre. (Reservas: futuras y vencidas se muestran a todos.)
+- **Gate que BLOQUEA pero no deja CORREGIR** → una marca de "revisar/dudoso" que solo desactiva la autoselección da falsa sensación de control: si la única acción es tildar (que confirma el dato tal cual), un valor mal leído por la IA se emite igual. **Regla:** si un dato entra por OCR/IA a un path fiscal/dinero, junto al gate de revisión SIEMPRE va la vía de edición inline para arreglarlo, con re-evaluación que use la MISMA regla del backend (evita que UI y servidor discrepen en qué es válido). Un dato que queda inválido tras editar se DESARMA (no puede seguir seleccionado para emitir). (Zarpe IA `dudoso` + `_zarReeval` espejo de `normalizarPasajeros`.)
+- **Dedup por clave "estable" que depende de un dato variable** (ej. `local_id` = operación+documento) → cuando ese dato falta o varía (documento vacío→posición del array; OCR que lee distinto en cada foto) la clave cambia y el dedup NO atrapa el duplicado; y al revés, dos entidades distintas con el mismo dato COLISIONAN en la misma clave y una "reusa" el registro de la otra. **Regla:** la clave de idempotencia debe derivar de una identidad inequívoca y persistida de la fila (no recalculada por posición), y una respuesta `reusado:true` NO es una emisión nueva: cuéntala aparte y verifica que no sea colisión. (Zarpe: pre-check de documento repetido antes de emitir; `reusado` contado como ↺.)
 
 ---
 

@@ -1465,21 +1465,40 @@ async function _zarFoto(input){
     if(out && out.ok && Array.isArray(out.pasajeros)){
       // dudoso (letra a mano insegura / dato incompleto) → arranca SIN seleccionar: el operador
       // revisa y confirma a mano antes de emitir un CPE fiscal con un DNI posiblemente mal leído.
-      S.pax = out.pasajeros.map((p,i)=>({ _i:i, dudoso:!!p.dudoso, sel:!p.dudoso, nombre:p.nombre||'', tipo_doc:p.tipo_doc||'', documento:p.documento||'', empresa:p.empresa||'', precio:S.precioDef, estado:'' }));
+      S.pax = out.pasajeros.map((p,i)=>({ _i:i, dudoso:!!p.dudoso, sel:!p.dudoso, nombre:p.nombre||'', tipo_doc:p.tipo_doc||'', documento:p.documento||'', precio:S.precioDef, estado:'' }));
       S.fase='lista'; fx('done');
     } else { fx('err'); mostrarToast('⚠️ No se pudo leer el zarpe: '+((out&&out.motivo)||'error'),'error'); }
   }catch(e){ fx('err'); mostrarToast('⚠️ Error al analizar la foto','error'); }
   S.analizando=false; _zarRender();
 }
-function _zarSet(i,k,v){ const p=_zar.pax.find(x=>x._i===i); if(p){ p[k]=v; if(k==='sel'){} } }
+// Re-evalúa tipo_doc + dudoso de un pax editado a mano (ESPEJO EXACTO de normalizarPasajeros del Edge,
+// para que corregir el dato en la UI limpie/active "revisar" con la misma regla que valida el backend).
+function _zarReeval(p){
+  let doc=String(p.documento||'').replace(/[\s.\-]/g,'').trim(); p.documento=doc;
+  let t=String(p.tipo_doc||'').trim();
+  if(/^\d{8}$/.test(doc)) t='1'; else if(/^\d{11}$/.test(doc)) t='6';
+  if(!['1','4','6','7'].includes(t)) t='';
+  p.tipo_doc=t;
+  let d=false;
+  if(!p.nombre||!doc||!t) d=true;
+  if(t==='1'&&!/^\d{8}$/.test(doc)) d=true; else if(t==='6'&&!/^\d{11}$/.test(doc)) d=true;
+  p.dudoso=d;
+}
+function _zarSet(i,k,v){ const p=_zar.pax.find(x=>x._i===i); if(!p) return; p[k]=(v==null?'':String(v)); if(k==='nombre'||k==='documento'||k==='tipo_doc'){ _zarReeval(p); if(p.dudoso) p.sel=false; /* un dato que quedó inválido no puede seguir armado para emitir */ } _zarRender(); }
 function _zarToggle(i){ const p=_zar.pax.find(x=>x._i===i); if(p){ p.sel=!p.sel; if(p.sel&&p.dudoso) p.dudoso=false; /* al seleccionarlo el operador lo dio por revisado */ fx('tap'); _zarRender(); } }
-// emite un CPE por cada pasajero seleccionado (boleta; si tiene RUC+empresa → factura a esa agencia)
+// emite un CPE por cada pasajero seleccionado (con RUC válido → factura; el resto → boleta)
 async function _zarEmitir(){
   const S=_zar; if(S.emitiendo) return;
   const sel = S.pax.filter(p=>p.sel && p.estado!=='facturado');
   if(!sel.length) return (fx('err'), mostrarToast('Selecciona al menos un pasajero','error'));
+  // Anti-colisión de local_id: dos pax con el MISMO documento comparten clave → el 2º "reusaría" el CPE
+  // del 1º y quedaría marcado facturado SIN comprobante propio. Detecta duplicados en la selección y frena.
+  const cuenta={}; sel.forEach(p=>{ const d=(p.documento||'').trim(); if(d) cuenta[d]=(cuenta[d]||0)+1; });
+  const dup = sel.filter(p=>p.documento && cuenta[p.documento]>1);
+  if(dup.length){ dup.forEach(p=>{ p.dudoso=true; p.sel=false; }); fx('err'); _zarRender();
+    return mostrarToast(`⚠️ ${dup.length} con documento repetido — corrige o desmarca antes de emitir`,'error'); }
   S.emitiendo=true; _zarRender();
-  let ok=0, fail=0;
+  let ok=0, fail=0, reuse=0;
   for(const p of sel){
     const esFactura = p.tipo_doc==='6' && /^\d{11}$/.test(p.documento||'');
     // local_id ESTABLE por (operación, documento|posición): sin Date.now(). Ante reintento tras timeout,
@@ -1489,21 +1508,24 @@ async function _zarEmitir(){
     try{
       const r = await window.SupaAPI.post('emitir_comprobante',{
         tipo: esFactura?1:2, serie: esFactura?S.serieF:S.serieB,
-        cliente_doc_tipo: p.tipo_doc||'0', cliente_doc: p.documento||'', cliente_nombre: p.empresa||p.nombre||'CLIENTE VARIOS',
+        cliente_doc_tipo: p.tipo_doc||'0', cliente_doc: p.documento||'', cliente_nombre: p.nombre||'CLIENTE VARIOS',
         cliente_dir:'', es_extranjero: p.tipo_doc==='7', items:[{descripcion:S.servicio,cantidad:1,precio:parseFloat(p.precio)||S.precioDef}],
         exonerado:false, exportacion:false, operador: myOpName, operacion_ref:S.idOperacion, localId
       });
       if(r && r.status!=='error' && (r.id||r.numero) && r.estado!=='rechazada'){
-        p.estado='facturado'; p.cpe=r.serie+'-'+r.numero; p._motivo=null; ok++;
+        p.estado='facturado'; p.cpe=r.serie+'-'+r.numero; p._motivo=null; p._reusado=!!r.reusado; ok++; if(r.reusado) reuse++;
         // registrar el pax en el zarpe digitalizado + ligar el CPE
-        try{ const rz=await window.SupaAPI.registrarZarpePax(S.idOperacion,[{documento:p.documento,tipo_doc:p.tipo_doc,nombre:p.nombre,empresa:p.empresa}],myOpName); }catch(_){}
+        try{ await window.SupaAPI.registrarZarpePax(S.idOperacion,[{documento:p.documento,tipo_doc:p.tipo_doc,nombre:p.nombre}],myOpName); }catch(_){}
       } else { p.estado='error'; p._motivo=String((r&&(r.errores||r.message))||'rechazado por SUNAT').slice(0,120); fail++; }
     }catch(e){ p.estado='error'; p._motivo=String((e&&e.message)||'error de red').slice(0,120); fail++; }
     _zarRender();
   }
   S.emitiendo=false;
   fx(fail?'warn':'emit');
-  mostrarToast(`✅ ${ok} emitidos${fail?` · ⚠️ ${fail} con error`:''}`, fail?'error':'success');
+  mostrarToast(`✅ ${ok} emitidos${fail?` · ⚠️ ${fail} con error`:''}${reuse?` · ↺ ${reuse} ya existían`:''}`, fail?'error':'success');
+  // M3 · aviso DURO de fuga: pasajeros que quedaron sin comprobante (dudosos sin resolver, desmarcados o con error).
+  const pend = S.pax.filter(p=>p.estado!=='facturado').length;
+  if(pend>0) setTimeout(()=>mostrarToast(`⚠️ Quedan ${pend} pasajero(s) SIN comprobante`,'error'), 500);
   _zarRender();
 }
 function _zarRender(){
@@ -1519,24 +1541,37 @@ function _zarRender(){
         `<label style="display:block;padding:16px;border:2px dashed #e0c9cb;border-radius:14px;color:#56070c;font-weight:800;cursor:pointer">📷 Tomar / subir foto<input type="file" accept="image/*" capture="environment" onchange="_zarFoto(this)" style="display:none"></label>`}
     </div>`;
   } else {
+    const TIPOS=[['','?'],['1','DNI'],['6','RUC'],['7','Pasaporte'],['4','CE']];
     const filas = S.pax.map(p=>{
-      const revisar = p.dudoso && p.estado!=='facturado' && p.estado!=='error';
-      const chip = p.estado==='facturado'?'<span style="font-size:9px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:6px;padding:1px 6px">🟢 '+_zarEsc(p.cpe||'ok')+'</span>':(p.estado==='error'?'<span style="font-size:9px;font-weight:800;background:#fee2e2;color:#b91c1c;border-radius:6px;padding:1px 6px">🔴 error</span>':(revisar?'<span style="font-size:9px;font-weight:800;background:#fef3c7;color:#b45309;border-radius:6px;padding:1px 6px">⚠️ revisar</span>':''));
+      const done = p.estado==='facturado';
+      const err = p.estado==='error';
+      const revisar = p.dudoso && !done && !err;
       const tipoLbl = ({'1':'DNI','4':'CE','7':'Pasaporte','6':'RUC','0':'Varios'})[p.tipo_doc]||p.tipo_doc||'?';
-      return `<div style="display:flex;align-items:center;gap:8px;border:1px solid ${revisar?'#fcd34d':'#f0e6e7'};background:${revisar?'#fffbeb':'#fff'};border-radius:11px;padding:9px;margin-bottom:7px;${p.estado==='facturado'?'opacity:.6':''}">
-        <input type="checkbox" ${p.sel?'checked':''} ${p.estado==='facturado'?'disabled':''} onchange="_zarToggle(${p._i})">
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_zarEsc(p.nombre||p.empresa||'—')} ${chip}</div>
-          <div style="font-size:10.5px;color:#9b6b6e">${tipoLbl} ${_zarEsc(p.documento)||'<span style="color:#b45309">sin doc</span>'} ${p.empresa?'· 🏢 '+_zarEsc(p.empresa):''} · S/${p.precio}</div>
-          ${p.estado==='error'&&p._motivo?`<div style="font-size:10px;color:#b91c1c;margin-top:2px">⚠️ ${_zarEsc(p._motivo)}</div>`:(revisar?`<div style="font-size:10px;color:#b45309;margin-top:2px">Letra dudosa o dato incompleto — verifica antes de emitir.</div>`:'')}
-        </div>
+      const chip = done?`<span style="font-size:9px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:6px;padding:1px 6px">🟢 ${_zarEsc(p.cpe||'ok')}${p._reusado?' ↺':''}</span>`:(err?'<span style="font-size:9px;font-weight:800;background:#fee2e2;color:#b91c1c;border-radius:6px;padding:1px 6px">🔴 error</span>':(revisar?'<span style="font-size:9px;font-weight:800;background:#fef3c7;color:#b45309;border-radius:6px;padding:1px 6px">⚠️ revisar</span>':''));
+      // Fila facturada = read-only. Fila pendiente = editable (el operador corrige lo que la IA leyó mal).
+      const cuerpo = done
+        ? `<div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_zarEsc(p.nombre||'—')} ${chip}</div>
+           <div style="font-size:10.5px;color:#9b6b6e">${tipoLbl} ${_zarEsc(p.documento)} · S/${p.precio}</div>`
+        : `<div style="display:flex;align-items:center;gap:6px">
+             <input value="${_zarEsc(p.nombre)}" placeholder="Nombre" onchange="_zarSet(${p._i},'nombre',this.value)" style="flex:1;min-width:0;border:none;border-bottom:1px solid #ececec;background:transparent;font-weight:700;font-size:12.5px;color:#3d0508;padding:2px 0">
+             ${chip}
+           </div>
+           <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+             <select onchange="_zarSet(${p._i},'tipo_doc',this.value)" style="font-size:10px;border:1px solid #ececec;border-radius:6px;background:#fff;color:#6b4b4e;padding:2px">${TIPOS.map(([v,l])=>`<option value="${v}" ${p.tipo_doc===v?'selected':''}>${l}</option>`).join('')}</select>
+             <input value="${_zarEsc(p.documento)}" placeholder="Documento" onchange="_zarSet(${p._i},'documento',this.value)" style="flex:1;min-width:0;border:none;border-bottom:1px solid #ececec;background:transparent;font-size:10.5px;color:#9b6b6e;padding:2px 0">
+             <span style="font-size:10px;color:#9b6b6e;white-space:nowrap">S/${p.precio}</span>
+           </div>
+           ${err&&p._motivo?`<div style="font-size:10px;color:#b91c1c;margin-top:3px">⚠️ ${_zarEsc(p._motivo)}</div>`:(revisar?`<div style="font-size:10px;color:#b45309;margin-top:3px">Letra dudosa o dato incompleto — corrige antes de emitir.</div>`:'')}`;
+      return `<div style="display:flex;align-items:flex-start;gap:8px;border:1px solid ${revisar?'#fcd34d':'#f0e6e7'};background:${revisar?'#fffbeb':'#fff'};border-radius:11px;padding:9px;margin-bottom:7px;${done?'opacity:.6':''}">
+        <input type="checkbox" style="margin-top:2px" ${p.sel?'checked':''} ${done?'disabled':''} onchange="_zarToggle(${p._i})">
+        <div style="flex:1;min-width:0">${cuerpo}</div>
       </div>`;
     }).join('');
     const nSel = S.pax.filter(p=>p.sel && p.estado!=='facturado').length;
     const nRev = S.pax.filter(p=>p.dudoso && p.estado!=='facturado' && p.estado!=='error').length;
     body = `<div style="margin-bottom:8px;font-size:14px;font-weight:800;color:#3d0508">Pasajeros detectados (${S.pax.length})${nRev?` <span style="font-size:10.5px;font-weight:800;color:#b45309;background:#fef3c7;border-radius:7px;padding:1px 7px;margin-left:4px">⚠️ ${nRev} por revisar</span>`:''}</div>
       <div style="max-height:46vh;overflow-y:auto;margin-bottom:10px">${filas||'<div style="color:#9ca3af;text-align:center;padding:20px">Sin pasajeros</div>'}</div>
-      <div style="font-size:10.5px;color:#9b6b6e;margin-bottom:8px">Con RUC → factura a la agencia; el resto → boleta. Revisa antes de emitir.</div>
+      <div style="font-size:10.5px;color:#9b6b6e;margin-bottom:8px">Con RUC válido → factura; el resto → boleta. Corrige lo dudoso antes de emitir.</div>
       <button onclick="_zarEmitir()" ${S.emitiendo?'disabled':''} style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;${S.emitiendo?'opacity:.6':''}">${S.emitiendo?'Emitiendo…':`Emitir ${nSel} comprobante(s)`}</button>`;
   }
   ov.innerHTML = `<div style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;animation:slideUp .25s ease">
