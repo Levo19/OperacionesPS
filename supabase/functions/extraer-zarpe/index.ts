@@ -107,6 +107,11 @@ function normalizarPasajeros(raw: unknown): Array<{ nombre: string; tipo_doc: st
     // Defensa: aunque el modelo no lo marque, un pasajero SIN nombre, SIN documento,
     // o con documento de formato no reconocible es intrínsecamente "revisar" antes de emitir un CPE.
     if (!nombre || !documento || !tipo_doc) dudoso = true;
+    // Defensa de FORMATO por tipo: un DNI debe ser 8 dígitos y un RUC 11. Si el tipo dice numérico
+    // pero el documento no calza (un dígito de más/menos por mala lectura), es "revisar" — así no se
+    // emite una boleta con un DNI incompleto que la IA leyó con confianza equivocada.
+    if (tipo_doc === "1" && !/^\d{8}$/.test(documento)) dudoso = true;
+    else if (tipo_doc === "6" && !/^\d{11}$/.test(documento)) dudoso = true;
     return { nombre, tipo_doc, documento, nacionalidad, dudoso };
   }).filter((p) => p.nombre || p.documento); // descarta filas totalmente vacías
 }
