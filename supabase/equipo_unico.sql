@@ -176,3 +176,27 @@ on conflict (equipo_id, app) do nothing;
 insert into sistema_catalogo (tipo, nombre, proposito, gate, consumidores, estado)
 select 'tabla', 'equipo', 'Identidad ÚNICA del grupo PS (Google por invitación; acceso por app)', 'RLS self + RPCs es_admin; es_staff/es_admin dual-run', 'Todas las apps PS', 'activo'
 where not exists (select 1 from sistema_catalogo where nombre = 'equipo');
+
+-- ── v1.1 (2026-07-22): fecha de registro en la lista + depuración dual-run ──
+create or replace function equipo_lista() returns jsonb
+language plpgsql stable security definer set search_path = public, auth as $$
+begin
+  if not es_admin() then raise exception 'NO_ADMIN'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object(
+    'id', p.id, 'nombre', p.nombre, 'email', p.email, 'telefono', p.telefono,
+    'activo', p.activo, 'aceptado', p.aceptado_at is not null,
+    'creado', to_char(p.creado at time zone 'America/Lima', 'DD Mon YYYY, HH24:MI'),
+    'accesos', (select coalesce(jsonb_object_agg(a.app, jsonb_build_object('rol', a.rol, 'activo', a.activo)), '{}'::jsonb)
+                  from equipo_accesos a where a.equipo_id = p.id)
+  ) order by p.activo desc, p.nombre) from equipo p), '[]'::jsonb);
+end $$;
+
+-- Depuración (fase segura): app_usuarios queda DEPRECADO en dual-run — se retira
+-- cuando todo el equipo esté migrado a Gmail (jamás borrar mientras el PIN viva).
+update sistema_catalogo set estado = 'deprecado',
+  notas = 'DUAL-RUN Equipo Único: PIN legacy sigue válido vía es_staff(); retirar cuando todos usen Gmail'
+  where nombre = 'app_usuarios';
+insert into sistema_catalogo (tipo, nombre, proposito, gate, consumidores, estado, notas)
+select 'tabla', 'app_usuarios', 'Usuarios PIN legacy (muelle/PS)', 'auth id@paracas.local', 'OPS muelle + PS Panel + MunayOps (PIN temporal)', 'deprecado',
+  'DUAL-RUN Equipo Único: retirar cuando todos usen Gmail'
+where not exists (select 1 from sistema_catalogo where nombre = 'app_usuarios');
