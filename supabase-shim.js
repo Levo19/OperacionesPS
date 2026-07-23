@@ -44,11 +44,12 @@
   // `function isJornadaCerrada()` de app.js (que carga después) pisa cualquier asignación
   // hecha en el top-level del shim. Este listener se registra antes que el de app.js → corre antes.
   window.addEventListener('DOMContentLoaded', function () { window.isJornadaCerrada = function () { return false; }; });
+  let _esAdminMuelle = false;   // admin del muelle: entra siempre (igual que MunayOps)
   async function gateHorario() {
     try {
       const e = await window.SupaAPI.estadoApp();
       const ol = document.getElementById('lock-overlay');
-      if (!e || e.abierta_ahora) { if (ol) ol.classList.remove('active'); return true; }
+      if (!e || e.abierta_ahora || _esAdminMuelle) { if (ol) ol.classList.remove('active'); return true; }
       // cerrada / fuera de horario → mostrar lock con el HORARIO DINÁMICO (Supabase)
       if (typeof activarLock === 'function') activarLock();
       else if (ol) ol.classList.add('active');
@@ -187,6 +188,7 @@
       try {
         const { data: j, error } = await window.SupaAPI.sb.rpc('equipo_login');
         if (!error && j && j.ok && (j.accesos || {}).muelle) {
+          _esAdminMuelle = (j.accesos || {}).muelle === 'admin';
           hideLogin();
           if (typeof origSeleccionar === 'function') origSeleccionar(j.nombre);
           try { gateHorario(); } catch (e) {}

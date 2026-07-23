@@ -47,19 +47,7 @@
     return restRpc(fn, args, token);
   };
 
-  // ── AUTH ────────────────────────────────────────────────────
-  async function listarOperadores() {
-    try { return ok({ operadores: (await restRpc('listar_operadores')) || [] }); }
-    catch (e) { return err(e); }
-  }
-  // login por PIN: el operador elige su nombre (con su id EMP-xx) y teclea el PIN
-  async function login(empId, pin) {
-    const email = String(empId).toLowerCase() + '@paracas.local';
-    const { data, error } = await sb.auth.signInWithPassword({ email, password: String(pin) });
-    if (error) return { status: 'error', message: 'PIN incorrecto' };
-    const rol = data.user?.user_metadata?.rol || 'Operador';
-    return ok({ id: empId, nombre: data.user?.user_metadata?.nombre, rol });
-  }
+  // ── AUTH ── (Equipo Único: solo Google; el PIN y listar_operadores se extinguieron) ──
   async function logout() { await sb.auth.signOut(); return ok(); }
   async function sesion() { const { data } = await sb.auth.getSession(); return data.session || null; }
   // estado/horario de la app (controlado desde PS). Callable sin login (anon, fetch directo).
@@ -76,14 +64,8 @@
     catch (e) { return { status: 'error', error: (e && e.message) || 'Error' }; }
   }
   async function getPersonal() {
-    // El login se puebla ANTES de autenticarse → usar el RPC anon-callable
-    // (la tabla `personal` está bajo RLS y devolvería vacío sin sesión).
-    try {
-      const ops = (await restRpc('listar_operadores')) || [];
-      const operadores = ops.map(o => ({ id: o.id, nombre: o.nombre }));
-      const personal   = ops.map(o => ({ id_empleado: o.id, nombre: o.nombre, rol: 'Operador' }));
-      return { operadores, personal };
-    } catch (e) { return { operadores: [], personal: [] }; }
+    // Modal legacy muerto (login = Google). Los operadores reales llegan por get_dashboard.catalogos.
+    return { operadores: [], personal: [] };
   }
 
   // ── STORAGE (fotos / cierres) ───────────────────────────────
@@ -229,5 +211,5 @@
     catch (e) { return err(e); }
   }
 
-  window.SupaAPI = { sb, listarOperadores, login, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento, facturacionConfig, facturacionBootstrap, buscarContactosFac, listarComprobantesDia, solicitarAnulacion, extraerZarpe, registrarZarpePax, listarZarpePax, marcarZarpePaxFacturado, conciliacionZarpe, balanceTributos, registrarCompra };
+  window.SupaAPI = { sb, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento, facturacionConfig, facturacionBootstrap, buscarContactosFac, listarComprobantesDia, solicitarAnulacion, extraerZarpe, registrarZarpePax, listarZarpePax, marcarZarpePaxFacturado, conciliacionZarpe, balanceTributos, registrarCompra };
 })();
