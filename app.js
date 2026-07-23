@@ -1,4 +1,4 @@
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbxkdyhxdZnySKaVN1MfMU-4VzJvGWC-hLiSYSQdph5G5MYHOLfHO62Cdl-SuFoCnvOqyA/exec';
+const GAS_URL = 'https://legacy.invalid/gas';   // sentinela: el shim intercepta TODO fetch a este prefijo → SupaAPI (cero GAS real)
 
 let myOpName = localStorage.getItem('sot_operador') || null;
 

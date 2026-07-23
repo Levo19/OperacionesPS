@@ -1,5 +1,5 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v65';
+const CACHE_NAME = 'ops-v66';
 const SHELL = [
     './index.html',
     './app.js',
@@ -42,8 +42,8 @@ self.addEventListener('fetch', e => {
     // petición queda colgada ("Conectando..." infinito). Sin respondWith = nativo.
     if (url.includes('supabase.co')) return;
 
-    // Llamadas a GAS → siempre red (nunca cachear respuestas del servidor)
-    if (url.includes('script.google.com') || url.includes('googleapis.com')) {
+    // Llamadas a APIs externas → siempre red (nunca cachear respuestas del servidor)
+    if (url.includes('googleapis.com')) {
         e.respondWith(fetch(e.request).catch(() =>
             new Response(JSON.stringify({ error: 'Sin conexión' }), {
                 headers: { 'Content-Type': 'application/json' }
