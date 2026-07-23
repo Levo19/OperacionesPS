@@ -138,7 +138,7 @@
     document.head.appendChild(st);
   }
 
-  let _ops = [], _sel = null, _pin = '', _busy = false, _gerr = '';
+  let _gerr = '';
 
   const G_SVG = '<svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.8 6.1C12.2 13.4 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.3 28.7a14.5 14.5 0 0 1 0-9.4l-7.8-6.1a24 24 0 0 0 0 21.6l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2.1 1.4-4.7 2.2-7.7 2.2-6.4 0-11.8-3.9-13.7-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>';
 
@@ -156,84 +156,20 @@
   const hideLogin = () => { const ov = document.getElementById('sl-ov'); if (ov) ov.classList.add('sl-hide'); };
 
   function renderPick() {
-    _sel = null; _pin = '';
     const ov = ensureOverlay();
-    const lastId = (() => { try { return localStorage.getItem('sot_last_op_id'); } catch (e) { return null; } })();
-    const last = lastId ? _ops.find(o => o.id === lastId) : null;
-    const others = last ? _ops.filter(o => o.id !== last.id) : _ops;
-    let html = `<img class="sl-brand" src="icon.svg" alt="OPS">` +
-               `<div class="sl-logo">Operaciones PS</div><div class="sl-h">¿Quién eres?</div><div class="sl-sub">Toca tu usuario para entrar</div>`;
-    if (last) {
-      html += `<div class="sl-last" data-id="${last.id}"><div class="sl-av gold">${ini(last.nombre)}</div><div class="sl-nm">${last.nombre}</div><div class="sl-cont">▸ Continuar</div></div>`;
-      if (others.length) html += `<div class="sl-div">otros</div>`;
-    }
-    html += `<div class="sl-grid">` + others.map(o => `<div class="sl-card" data-id="${o.id}"><div class="sl-av">${ini(o.nombre)}</div><div class="sl-nm">${o.nombre}</div></div>`).join('') + `</div>`;
-    html += `<div class="sl-div">o con tu cuenta</div><button class="sl-goog" id="sl-goog">${G_SVG} Entrar con Google</button>` +
-            `<div class="sl-err" style="max-width:340px;text-align:center;">${_gerr || ''}</div>`;
-    ov.innerHTML = html;
-    ov.querySelectorAll('[data-id]').forEach(el => el.addEventListener('click', () => { sTap(); pickUser(el.getAttribute('data-id')); }));
+    ov.innerHTML = '<img class="sl-brand" src="icon.svg" alt="OPS">' +
+      '<div class="sl-logo">Operaciones PS</div><div class="sl-h">Bienvenido</div>' +
+      '<div class="sl-sub">Entra con tu cuenta de Google invitada</div>' +
+      '<button class="sl-goog" id="sl-goog">' + G_SVG + ' Entrar con Google</button>' +
+      '<div class="sl-err" style="max-width:340px;text-align:center;margin-top:14px;">' + (_gerr || '') + '</div>';
     const gb = ov.querySelector('#sl-goog'); if (gb) gb.addEventListener('click', loginGoogleOps);
     ov.classList.remove('sl-hide');
   }
 
-  function renderPin() {
-    const ov = ensureOverlay();
-    ov.innerHTML =
-      `<button class="sl-back" id="sl-back">←</button>` +
-      `<div style="margin-top:8px" class="sl-av gold">${ini(_sel.nombre)}</div>` +
-      `<div class="sl-h" style="margin-top:12px">${_sel.nombre}</div>` +
-      `<div class="sl-sub">Ingresa tu PIN</div>` +
-      `<div class="sl-pinwrap"><div class="sl-dots" id="sl-dots">${[0,1,2,3].map(()=>'<div class="sl-dot"></div>').join('')}</div>` +
-      `<div class="sl-keys">` + ['1','2','3','4','5','6','7','8','9'].map(d=>`<button class="sl-key" data-k="${d}">${d}</button>`).join('') +
-      `<button class="sl-key sl-ghost"></button><button class="sl-key" data-k="0">0</button><button class="sl-key" data-k="del">⌫</button>` +
-      `</div><div class="sl-err" id="sl-err"></div></div>`;
-    ov.querySelector('#sl-back').addEventListener('click', () => { sTap(); renderPick(); });
-    ov.querySelectorAll('[data-k]').forEach(b => b.addEventListener('click', () => keyPress(b.getAttribute('data-k'))));
-    ov.classList.remove('sl-hide');
-  }
-
-  function pickUser(id) { _sel = _ops.find(o => o.id === id); if (!_sel) return; _pin = ''; renderPin(); }
-
-  function paintDots(shake) {
-    const dots = document.querySelectorAll('#sl-dots .sl-dot');
-    dots.forEach((d, i) => d.classList.toggle('on', i < _pin.length));
-    if (shake) { const w = document.getElementById('sl-dots'); if (w) { w.classList.add('sl-shake'); setTimeout(() => w.classList.remove('sl-shake'), 420); } }
-  }
-
-  async function keyPress(k) {
-    if (_busy) return;
-    if (k === 'del') { _pin = _pin.slice(0, -1); sTap(); paintDots(); return; }
-    if (_pin.length >= 4) return;
-    _pin += k; sTap(); paintDots();
-    if (_pin.length === 4) { _busy = true; await submitPin(); _busy = false; }
-  }
-
-  async function submitPin() {
-    const errEl = document.getElementById('sl-err');
-    const r = await window.SupaAPI.login(_sel.id, _pin);
-    if (!r || r.status !== 'success') {
-      sErr(); paintDots(true);
-      if (errEl) errEl.textContent = 'PIN incorrecto';
-      _pin = ''; setTimeout(paintDots, 450);
-      return;
-    }
-    sOk();
-    const ov = document.getElementById('sl-ov'); if (ov) ov.classList.add('sl-okflash');
-    try { localStorage.setItem('sot_last_op_id', _sel.id); } catch (e) {}
-    setTimeout(() => {
-      hideLogin();
-      if (typeof origSeleccionar === 'function') origSeleccionar(_sel.nombre);   // setea myOpName, sot_operador, label, toast
-      gateHorario();
-      if (typeof fetchDashboardData === 'function') fetchDashboardData();
-    }, 320);
-  }
-
-  async function abrirLogin() {
+    async function abrirLogin() {
     injectCSS(); ensureOverlay();
-    if (!_ops.length) {
-      try { const res = await window.SupaAPI.listarOperadores(); _ops = (res && res.operadores) || []; } catch (e) { _ops = []; }
-    }
     renderPick();
+  }    renderPick();
   }
 
   window.addEventListener('DOMContentLoaded', async function () {
@@ -245,8 +181,6 @@
       const o = window[n];
       if (typeof o === 'function') window[n] = function () { try { window.SupaAPI.logout(); } catch (e) {} try { localStorage.removeItem('sot_last_op_id'); } catch (e) {} return o.apply(this, arguments); };
     });
-    // precargar operadores y, si no hay sesión, abrir el login moderno
-    try { const res = await window.SupaAPI.listarOperadores(); _ops = (res && res.operadores) || []; } catch (e) {}
     const tag = document.getElementById('ver-tag'); if (tag && typeof OPS_VERSION !== 'undefined') tag.textContent = OPS_VERSION;
     let sesion = null; try { sesion = await window.SupaAPI.sesion(); } catch (e) {}
     // Equipo Único: sesión Google → resolver identidad (requiere acceso 'muelle')
