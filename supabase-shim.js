@@ -166,10 +166,9 @@
     ov.classList.remove('sl-hide');
   }
 
-    async function abrirLogin() {
+  async function abrirLogin() {
     injectCSS(); ensureOverlay();
     renderPick();
-  }    renderPick();
   }
 
   window.addEventListener('DOMContentLoaded', async function () {
