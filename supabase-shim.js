@@ -132,11 +132,21 @@
       @keyframes slpop{from{transform:scale(.8);opacity:0}to{transform:scale(1);opacity:1}}
       @keyframes slslide{from{transform:translateX(28px);opacity:0}to{transform:translateX(0);opacity:1}}
       @keyframes slok{0%{box-shadow:0 0 0 0 rgba(74,222,128,0)}50%{box-shadow:0 0 0 14px rgba(74,222,128,.25)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+      .sl-goog{width:100%;max-width:380px;display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#222;border:none;border-radius:16px;padding:14px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.45);transition:transform .12s}
+      .sl-goog:active{transform:scale(.95)}
     `;
     document.head.appendChild(st);
   }
 
-  let _ops = [], _sel = null, _pin = '', _busy = false;
+  let _ops = [], _sel = null, _pin = '', _busy = false, _gerr = '';
+
+  const G_SVG = '<svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.8 6.1C12.2 13.4 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.3 28.7a14.5 14.5 0 0 1 0-9.4l-7.8-6.1a24 24 0 0 0 0 21.6l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2.1 1.4-4.7 2.2-7.7 2.2-6.4 0-11.8-3.9-13.7-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>';
+
+  // Equipo Único: entrada con Gmail por invitación
+  async function loginGoogleOps() {
+    try { sTap(); } catch (e) {}
+    await window.SupaAPI.sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
+  }
 
   function ensureOverlay() {
     let ov = document.getElementById('sl-ov');
@@ -158,8 +168,11 @@
       if (others.length) html += `<div class="sl-div">otros</div>`;
     }
     html += `<div class="sl-grid">` + others.map(o => `<div class="sl-card" data-id="${o.id}"><div class="sl-av">${ini(o.nombre)}</div><div class="sl-nm">${o.nombre}</div></div>`).join('') + `</div>`;
+    html += `<div class="sl-div">o con tu cuenta</div><button class="sl-goog" id="sl-goog">${G_SVG} Entrar con Google</button>` +
+            `<div class="sl-err" style="max-width:340px;text-align:center;">${_gerr || ''}</div>`;
     ov.innerHTML = html;
     ov.querySelectorAll('[data-id]').forEach(el => el.addEventListener('click', () => { sTap(); pickUser(el.getAttribute('data-id')); }));
+    const gb = ov.querySelector('#sl-goog'); if (gb) gb.addEventListener('click', loginGoogleOps);
     ov.classList.remove('sl-hide');
   }
 
@@ -236,6 +249,25 @@
     try { const res = await window.SupaAPI.listarOperadores(); _ops = (res && res.operadores) || []; } catch (e) {}
     const tag = document.getElementById('ver-tag'); if (tag && typeof OPS_VERSION !== 'undefined') tag.textContent = OPS_VERSION;
     let sesion = null; try { sesion = await window.SupaAPI.sesion(); } catch (e) {}
+    // Equipo Único: sesión Google → resolver identidad (requiere acceso 'muelle')
+    if (sesion && ((sesion.user || {}).app_metadata || {}).provider === 'google') {
+      try {
+        const { data: j, error } = await window.SupaAPI.sb.rpc('equipo_login');
+        if (!error && j && j.ok && (j.accesos || {}).muelle) {
+          hideLogin();
+          if (typeof origSeleccionar === 'function') origSeleccionar(j.nombre);
+          try { gateHorario(); } catch (e) {}
+          if (typeof fetchDashboardData === 'function') fetchDashboardData();
+          return;
+        }
+        _gerr = ((sesion.user && sesion.user.email) || 'Tu Gmail') +
+          (j && j.ok ? ' no tiene acceso al Muelle. Pide acceso al administrador.' : ' no está invitado. Pide acceso al administrador.');
+        try { await window.SupaAPI.logout(); } catch (e) {}
+      } catch (e) {}
+      try { localStorage.removeItem('sot_operador'); } catch (e) {}
+      abrirLogin();
+      return;
+    }
     if (!sesion) {
       try { localStorage.removeItem('sot_operador'); } catch (e) {}
       abrirLogin();
