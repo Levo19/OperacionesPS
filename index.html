@@ -605,20 +605,12 @@
 
     <!-- Modal Anular Pase -->
     <div id="modal-anular-pase" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-sm bg-white rounded-3xl p-6 z-50 hidden shadow-2xl">
-        <h3 class="font-extrabold text-xl text-red-700 mb-1"><i class="fas fa-undo-alt mr-2"></i> Anular Pase</h3>
-        <p class="text-[12px] text-gray-500 mb-1 leading-snug">Se anulará el pase de <b id="anular-pase-info" class="text-red-600"></b>.</p>
-        <p class="text-[11px] text-gray-400 mb-4 leading-snug">La columna <b>Id_contactoPase</b> se vaciará. Elige la operación activa a la que se reasignará el movimiento:</p>
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="font-extrabold text-xl text-red-700"><i class="fas fa-undo-alt mr-2"></i> Anular pase</h3>
+            <button class="text-gray-400 text-xl leading-none px-1" onclick="cerrarSubModal('modal-anular-pase')"><i class="fas fa-times"></i></button>
+        </div>
         <input type="hidden" id="hidden-anular-idmov">
-        <div class="bg-red-50 p-4 rounded-2xl border border-red-100 mb-5">
-            <label class="text-[10px] font-bold text-red-800 uppercase tracking-widest block mb-2">Reasignar a operación</label>
-            <select id="select-anular-op" class="w-full bg-white border border-red-200 rounded-xl p-3 text-[11px] focus:outline-red-600 font-bold shadow-sm">
-                <option value="">- Selecciona operación -</option>
-            </select>
-        </div>
-        <div class="flex space-x-3">
-            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-anular-pase')">Cancelar</button>
-            <button class="flex-[2] bg-red-600 text-white py-3.5 rounded-xl font-bold shadow-md shadow-red-500/30 uppercase tracking-wide text-[11px]" onclick="confirmarAnularPase()"><i class="fas fa-undo-alt mr-1"></i> Confirmar Anulación</button>
-        </div>
+        <div id="anular-pase-body"></div>
     </div>
 
     <!-- Modal Comprar Pase (convertir pase aliado → compra agencia) -->

@@ -4092,19 +4092,97 @@ function confirmarDerivacion() {
 // ============================
 function iniciarAnularPase(id_mov, pax, nombreContacto) {
     document.getElementById('hidden-anular-idmov').value = id_mov;
-    document.getElementById('anular-pase-info').textContent = `${pax} PAX · ${nombreContacto}`;
+    const pase = (window.pasesExternosData || []).find(p => p.id === id_mov) || {};
+    const paxN = parseInt(pax) || parseInt(pase.pax) || 0;
+    const origen = pase.nombreOrigen || nombreContacto || '—';
+    // Deuda del ORIGEN = monto + adicionales (mismo criterio que el balance de agencias).
+    const monto = parseFloat(pase.monto) || 0;
+    let adic = pase.adicionales || '';
+    if (!adic) { for (const op of (window.operacionesData || [])) { const m = (op.manifiesto || []).find(x => x.id === id_mov); if (m) { adic = m.adicionales || ''; break; } } }
+    const adicSum = adic ? adic.split(',').reduce((a, part) => a + (parseFloat((part.split(':')[1] || '').trim()) || 0), 0) : 0;
+    const deuda = Math.round((monto + adicSum) * 100) / 100;
+    // ¿el origen genera deuda? (Aliado/PaseIn no cobran). Reusa el mismo criterio que el botón Cobrar.
+    const cobrable = !_TIPOS_SIN_COBRO.includes(pase.tipo || '') && !!(pase.origenId);
+    // Pagos ligados = MISMA guarda que el backend (cualquier fila de caja con este movimiento).
+    const pagosLig = (window.cajaData || []).filter(c => (c.id_movimiento || '') === id_mov);
+    const cobrado = Math.round(pagosLig.reduce((a, c) => a + (parseFloat(c.monto) || 0), 0) * 100) / 100;
+    const tienePagos = pagosLig.length > 0;
+    // Lanchas abiertas hoy
+    const hoy = getHoyLocal();
+    const ops = (window.operacionesData || []).filter(op => op.estado === 'Abierta' && (op.fecha === hoy || !op.fecha));
+    const S = v => 'S/ ' + (parseFloat(v) || 0).toFixed(2);
+    const oEsc = origen.replace(/'/g, "\\'");
 
-    // Poblar select con operaciones activas
-    let sel = document.getElementById('select-anular-op');
-    let hoy = getHoyLocal();
-    let ops = (window.operacionesData || []).filter(op => op.estado === 'Abierta' && (op.fecha === hoy || !op.fecha));
-    if(ops.length === 0) {
-        sel.innerHTML = '<option value="">No hay lanchas abiertas hoy</option>';
+    let html = `<div class="bg-gray-50 border border-gray-200 rounded-2xl p-3 mb-4 text-[12px]">
+        <div class="font-black text-gray-800">${paxN} pax · ${origen}</div>`;
+    if (cobrable) {
+        html += `<div class="mt-1 flex justify-between"><span class="text-gray-500">${origen} debe</span><b class="text-red-600">${S(deuda)}</b></div>
+                 <div class="flex justify-between"><span class="text-gray-500">Cobrado</span><b class="${cobrado > 0 ? 'text-green-600' : 'text-gray-400'}">${S(cobrado)}</b></div>`;
     } else {
-        sel.innerHTML = '<option value="">- Selecciona lancha -</option>' +
-            ops.map(op => `<option value="${op.id}">${op.bote} · ${op.id} (${op.ocupados}/${op.capacidad} pax)</option>`).join('');
+        html += `<div class="mt-1 text-[11px] text-gray-400">Este pase no genera deuda de cobro.</div>`;
     }
+    html += `</div>`;
+
+    // ── REASIGNAR ──
+    html += `<div class="mb-4"><div class="text-[10px] font-bold text-red-800 uppercase tracking-widest mb-2">Reasignar a una lancha</div>`;
+    if (ops.length) {
+        html += `<select id="select-anular-op" class="w-full bg-white border border-red-200 rounded-xl p-3 text-[11px] font-bold shadow-sm">
+                <option value="">- Selecciona lancha -</option>` +
+            ops.map(op => `<option value="${op.id}">${op.bote} · ${op.id} (${op.ocupados}/${op.capacidad} pax)</option>`).join('') +
+            `</select>
+             <button class="mt-2 w-full bg-red-600 text-white py-3 rounded-xl font-bold uppercase tracking-wide text-[11px] shadow-md shadow-red-500/30" onclick="confirmarAnularPase()"><i class="fas fa-undo-alt mr-1"></i> Reasignar aquí</button>
+             <p class="mt-1 text-[10px] text-gray-400 leading-snug">Los ${paxN} pax vuelven a esa lancha; el registro y la deuda siguen vivos.</p>`;
+    } else {
+        html += `<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800 leading-snug">
+            <i class="fas fa-info-circle mr-1"></i> No hay lanchas abiertas hoy. Abre una operación para poder reasignar los ${paxN} pax, o elimina el registro abajo.</div>`;
+    }
+    html += `</div>`;
+
+    // ── ELIMINAR (siempre visible; candado = tiene pago) ──
+    html += `<div class="border-t border-gray-100 pt-4"><div class="text-[10px] font-bold text-gray-600 uppercase tracking-widest mb-2">Eliminar registro</div>`;
+    if (tienePagos) {
+        html += `<div class="bg-gray-100 border border-gray-200 rounded-xl p-3 text-[11px] text-gray-600 leading-snug mb-2">
+            <i class="fas fa-lock mr-1"></i> Este pase tiene un pago registrado (${S(cobrado)}). Para eliminarlo, primero anula el/los cobro(s) en <b>Caja</b> y devuelve la plata.</div>
+            <button disabled class="w-full bg-gray-100 text-gray-400 py-3 rounded-xl font-bold text-[11px] cursor-not-allowed"><i class="fas fa-lock mr-1"></i> Bloqueado — tiene un pago registrado</button>`;
+    } else {
+        html += `<button class="w-full bg-red-50 text-red-600 border border-red-200 py-3 rounded-xl font-bold text-[11px] hover:bg-red-100 active:scale-95 transition" onclick="eliminarPaseRegistro('${id_mov}', ${deuda}, '${oEsc}', ${cobrable && deuda > 0 ? 1 : 0})"><i class="fas fa-trash-alt mr-1"></i> Eliminar este registro</button>`;
+    }
+    html += `</div>`;
+
+    document.getElementById('anular-pase-body').innerHTML = html;
     abrirModal('modal-anular-pase');
+}
+
+// Paso de confirmación (dentro del mismo modal) antes de eliminar el pase.
+function eliminarPaseRegistro(id_mov, deuda, origen, absuelve) {
+    const S = 'S/ ' + (parseFloat(deuda) || 0).toFixed(2);
+    const aviso = absuelve
+        ? `Se cancelará este pase <b>y la deuda de ${origen} por ${S} quedará absuelta</b> — ya no te deberá nada.`
+        : `Se cancelará este pase (no genera deuda de cobro).`;
+    document.getElementById('anular-pase-body').innerHTML = `
+        <div class="bg-red-50 border border-red-200 rounded-2xl p-4 text-[12px] text-red-800 leading-snug mb-4">
+            <div class="font-black mb-1"><i class="fas fa-exclamation-triangle mr-1"></i> ¿Eliminar el pase?</div>${aviso}
+        </div>
+        <div class="flex space-x-3">
+            <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-anular-pase')">Cancelar</button>
+            <button class="flex-[2] bg-red-600 text-white py-3.5 rounded-xl font-bold uppercase tracking-wide text-[11px] shadow-md shadow-red-500/30" onclick="ejecutarEliminarPase('${id_mov}', ${absuelve ? 1 : 0})"><i class="fas fa-trash-alt mr-1"></i> Sí, eliminar</button>
+        </div>`;
+}
+
+function ejecutarEliminarPase(id_mov, absuelve) {
+    cerrarSubModal('modal-anular-pase');
+    // Optimista: quitar de la vista; el backend es la guarda real (bloquea si aparece un pago).
+    const idx = (window.pasesExternosData || []).findIndex(p => p.id === id_mov);
+    if (idx !== -1) { window.pasesExternosData.splice(idx, 1); renderOperaciones(window.operacionesData); }
+    fetchPostBg('eliminar_movimiento', { id_mov }).then(res => {
+        if (res && res.status === 'error') {
+            alert(res.message || 'No se pudo eliminar el pase.');
+            clearTimeout(window._syncTimer); window._syncTimer = setTimeout(syncManifestBg, 500);   // restaura si el backend lo rechazó
+            return;
+        }
+        mostrarToast('🗑️ Pase eliminado' + (absuelve ? ' · deuda absuelta' : ''), 'success');
+        clearTimeout(window._syncTimer); window._syncTimer = setTimeout(syncManifestBg, 1500);
+    });
 }
 
 function confirmarAnularPase() {
