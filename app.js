@@ -569,6 +569,8 @@ function _muelleRTSubscribe() {
 // Abre reporte/ticket del PS Panel (Vercel) YA autenticado: pasa mi sesión Gmail por el
 // enlace (#at/#rt, no viaja al server) → abre directo, sin pedir login de nuevo. kind='report'|'ticket'
 async function abrirPSDoc(kind) {
+    if (kind !== 'report' && kind !== 'ticket') return;
+    const w = window.open('about:blank', '_blank');   // abrir YA (dentro del gesto) para que el navegador no bloquee el popup
     const d = new Date();
     const fecha = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     let hash = '';
@@ -577,7 +579,9 @@ async function abrirPSDoc(kind) {
         const s = data && data.session;
         if (s && s.access_token && s.refresh_token) hash = '#at=' + encodeURIComponent(s.access_token) + '&rt=' + encodeURIComponent(s.refresh_token);
     } catch (e) {}
-    window.open('https://ps-panel.vercel.app/' + kind + '.html?fecha=' + fecha + hash, '_blank');
+    const url = 'https://ps-panel.vercel.app/' + kind + '.html?fecha=' + fecha + hash;
+    if (w && !w.closed) { try { w.location.href = url; } catch (e) { window.open(url, '_blank'); } }
+    else window.open(url, '_blank');
 }
 window.abrirPSDoc = abrirPSDoc;
 
@@ -4090,6 +4094,10 @@ function confirmarDerivacion() {
 // ============================
 // ANULAR PASE
 // ============================
+// Escapes para el modal dinámico: _escArg (arg dentro de onclick — comilla simple Y doble); _escHtml (texto en innerHTML).
+function _escArg(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, "\\'"); }
+function _escHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
 function iniciarAnularPase(id_mov, pax, nombreContacto) {
     document.getElementById('hidden-anular-idmov').value = id_mov;
     const pase = (window.pasesExternosData || []).find(p => p.id === id_mov) || {};
@@ -4103,7 +4111,7 @@ function iniciarAnularPase(id_mov, pax, nombreContacto) {
     const deuda = Math.round((monto + adicSum) * 100) / 100;
     // ¿el origen genera deuda? (Aliado/PaseIn no cobran). Reusa el mismo criterio que el botón Cobrar.
     const cobrable = !_TIPOS_SIN_COBRO.includes(pase.tipo || '') && !!(pase.origenId);
-    // Pagos ligados = MISMA guarda que el backend (cualquier fila de caja con este movimiento).
+    // Pagos ligados = MISMA guarda que el backend eliminar_movimiento (cualquier fila de caja con este movimiento).
     const pagosLig = (window.cajaData || []).filter(c => (c.id_movimiento || '') === id_mov);
     const cobrado = Math.round(pagosLig.reduce((a, c) => a + (parseFloat(c.monto) || 0), 0) * 100) / 100;
     const tienePagos = pagosLig.length > 0;
@@ -4111,12 +4119,13 @@ function iniciarAnularPase(id_mov, pax, nombreContacto) {
     const hoy = getHoyLocal();
     const ops = (window.operacionesData || []).filter(op => op.estado === 'Abierta' && (op.fecha === hoy || !op.fecha));
     const S = v => 'S/ ' + (parseFloat(v) || 0).toFixed(2);
-    const oEsc = origen.replace(/'/g, "\\'");
+    const oH = _escHtml(origen);           // texto visible
+    const oA = _escArg(origen), idA = _escArg(id_mov);   // dentro de onclick
 
     let html = `<div class="bg-gray-50 border border-gray-200 rounded-2xl p-3 mb-4 text-[12px]">
-        <div class="font-black text-gray-800">${paxN} pax · ${origen}</div>`;
+        <div class="font-black text-gray-800">${paxN} pax · ${oH}</div>`;
     if (cobrable) {
-        html += `<div class="mt-1 flex justify-between"><span class="text-gray-500">${origen} debe</span><b class="text-red-600">${S(deuda)}</b></div>
+        html += `<div class="mt-1 flex justify-between"><span class="text-gray-500">${oH} debe</span><b class="text-red-600">${S(deuda)}</b></div>
                  <div class="flex justify-between"><span class="text-gray-500">Cobrado</span><b class="${cobrado > 0 ? 'text-green-600' : 'text-gray-400'}">${S(cobrado)}</b></div>`;
     } else {
         html += `<div class="mt-1 text-[11px] text-gray-400">Este pase no genera deuda de cobro.</div>`;
@@ -4128,7 +4137,7 @@ function iniciarAnularPase(id_mov, pax, nombreContacto) {
     if (ops.length) {
         html += `<select id="select-anular-op" class="w-full bg-white border border-red-200 rounded-xl p-3 text-[11px] font-bold shadow-sm">
                 <option value="">- Selecciona lancha -</option>` +
-            ops.map(op => `<option value="${op.id}">${op.bote} · ${op.id} (${op.ocupados}/${op.capacidad} pax)</option>`).join('') +
+            ops.map(op => `<option value="${_escHtml(op.id)}">${_escHtml(op.bote)} · ${_escHtml(op.id)} (${op.ocupados}/${op.capacidad} pax)</option>`).join('') +
             `</select>
              <button class="mt-2 w-full bg-red-600 text-white py-3 rounded-xl font-bold uppercase tracking-wide text-[11px] shadow-md shadow-red-500/30" onclick="confirmarAnularPase()"><i class="fas fa-undo-alt mr-1"></i> Reasignar aquí</button>
              <p class="mt-1 text-[10px] text-gray-400 leading-snug">Los ${paxN} pax vuelven a esa lancha; el registro y la deuda siguen vivos.</p>`;
@@ -4145,7 +4154,7 @@ function iniciarAnularPase(id_mov, pax, nombreContacto) {
             <i class="fas fa-lock mr-1"></i> Este pase tiene un pago registrado (${S(cobrado)}). Para eliminarlo, primero anula el/los cobro(s) en <b>Caja</b> y devuelve la plata.</div>
             <button disabled class="w-full bg-gray-100 text-gray-400 py-3 rounded-xl font-bold text-[11px] cursor-not-allowed"><i class="fas fa-lock mr-1"></i> Bloqueado — tiene un pago registrado</button>`;
     } else {
-        html += `<button class="w-full bg-red-50 text-red-600 border border-red-200 py-3 rounded-xl font-bold text-[11px] hover:bg-red-100 active:scale-95 transition" onclick="eliminarPaseRegistro('${id_mov}', ${deuda}, '${oEsc}', ${cobrable && deuda > 0 ? 1 : 0})"><i class="fas fa-trash-alt mr-1"></i> Eliminar este registro</button>`;
+        html += `<button class="w-full bg-red-50 text-red-600 border border-red-200 py-3 rounded-xl font-bold text-[11px] hover:bg-red-100 active:scale-95 transition" onclick="eliminarPaseRegistro('${idA}', ${deuda}, '${oA}', ${cobrable && deuda > 0 ? 1 : 0})"><i class="fas fa-trash-alt mr-1"></i> Eliminar este registro</button>`;
     }
     html += `</div>`;
 
@@ -4157,7 +4166,7 @@ function iniciarAnularPase(id_mov, pax, nombreContacto) {
 function eliminarPaseRegistro(id_mov, deuda, origen, absuelve) {
     const S = 'S/ ' + (parseFloat(deuda) || 0).toFixed(2);
     const aviso = absuelve
-        ? `Se cancelará este pase <b>y la deuda de ${origen} por ${S} quedará absuelta</b> — ya no te deberá nada.`
+        ? `Se cancelará este pase <b>y la deuda de ${_escHtml(origen)} por ${S} quedará absuelta</b> — ya no te deberá nada.`
         : `Se cancelará este pase (no genera deuda de cobro).`;
     document.getElementById('anular-pase-body').innerHTML = `
         <div class="bg-red-50 border border-red-200 rounded-2xl p-4 text-[12px] text-red-800 leading-snug mb-4">
@@ -4165,24 +4174,28 @@ function eliminarPaseRegistro(id_mov, deuda, origen, absuelve) {
         </div>
         <div class="flex space-x-3">
             <button class="flex-1 bg-gray-100 text-gray-600 py-3.5 rounded-xl font-bold text-sm" onclick="cerrarSubModal('modal-anular-pase')">Cancelar</button>
-            <button class="flex-[2] bg-red-600 text-white py-3.5 rounded-xl font-bold uppercase tracking-wide text-[11px] shadow-md shadow-red-500/30" onclick="ejecutarEliminarPase('${id_mov}', ${absuelve ? 1 : 0})"><i class="fas fa-trash-alt mr-1"></i> Sí, eliminar</button>
+            <button class="flex-[2] bg-red-600 text-white py-3.5 rounded-xl font-bold uppercase tracking-wide text-[11px] shadow-md shadow-red-500/30" onclick="ejecutarEliminarPase('${_escArg(id_mov)}', ${absuelve ? 1 : 0})"><i class="fas fa-trash-alt mr-1"></i> Sí, eliminar</button>
         </div>`;
 }
 
 function ejecutarEliminarPase(id_mov, absuelve) {
+    if (window._eliminandoPase) return;   // lock anti doble-tap
+    window._eliminandoPase = true;
     cerrarSubModal('modal-anular-pase');
     // Optimista: quitar de la vista; el backend es la guarda real (bloquea si aparece un pago).
     const idx = (window.pasesExternosData || []).findIndex(p => p.id === id_mov);
     if (idx !== -1) { window.pasesExternosData.splice(idx, 1); renderOperaciones(window.operacionesData); }
+    const restaurar = () => { try { fetchDashboardDataBg(); } catch (e) {} };   // repuebla pasesExternosData (syncManifestBg NO lo hace)
     fetchPostBg('eliminar_movimiento', { id_mov }).then(res => {
         if (res && res.status === 'error') {
-            alert(res.message || 'No se pudo eliminar el pase.');
-            clearTimeout(window._syncTimer); window._syncTimer = setTimeout(syncManifestBg, 500);   // restaura si el backend lo rechazó
+            mostrarToast('⚠️ ' + (res.message || 'No se pudo eliminar el pase.'), 'error');
+            restaurar();   // el backend lo rechazó → traer de vuelta el pase
             return;
         }
         mostrarToast('🗑️ Pase eliminado' + (absuelve ? ' · deuda absuelta' : ''), 'success');
         clearTimeout(window._syncTimer); window._syncTimer = setTimeout(syncManifestBg, 1500);
-    });
+    }).catch(() => { mostrarToast('⚠️ Sin conexión — reintenta', 'error'); restaurar(); })
+      .finally(() => { window._eliminandoPase = false; });
 }
 
 function confirmarAnularPase() {
@@ -4210,11 +4223,15 @@ function confirmarAnularPase() {
     }
 
     fetchPostBg('anular_pase', { id_mov, id_operacion_nueva: id_op, operador: myOpName }).then(res => {
-        if(res.status === 'error') { alert(res.message); return; }
+        if(res && res.status === 'error') {
+            mostrarToast('⚠️ ' + (res.message || 'No se pudo reasignar.'), 'error');
+            try { fetchDashboardDataBg(); } catch (e) {}   // el splice/manifiesto optimista se revierte al repoblar
+            return;
+        }
         mostrarToast('✅ Pase anulado. Movimiento reasignado.', 'success');
         clearTimeout(window._syncTimer);
         window._syncTimer = setTimeout(syncManifestBg, 2000);
-    });
+    }).catch(() => { mostrarToast('⚠️ Sin conexión — reintenta', 'error'); try { fetchDashboardDataBg(); } catch (e) {} });
 }
 
 // ============================
