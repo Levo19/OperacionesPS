@@ -566,6 +566,21 @@ function _muelleRTSubscribe() {
     } catch (e) { console.warn('[SOT] realtime subscribe fallo:', e && e.message); }
 }
 
+// Abre reporte/ticket del PS Panel (Vercel) YA autenticado: pasa mi sesión Gmail por el
+// enlace (#at/#rt, no viaja al server) → abre directo, sin pedir login de nuevo. kind='report'|'ticket'
+async function abrirPSDoc(kind) {
+    const d = new Date();
+    const fecha = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    let hash = '';
+    try {
+        const { data } = await window.SupaAPI.sb.auth.getSession();
+        const s = data && data.session;
+        if (s && s.access_token && s.refresh_token) hash = '#at=' + encodeURIComponent(s.access_token) + '&rt=' + encodeURIComponent(s.refresh_token);
+    } catch (e) {}
+    window.open('https://ps-panel.vercel.app/' + kind + '.html?fecha=' + fecha + hash, '_blank');
+}
+window.abrirPSDoc = abrirPSDoc;
+
 function fetchDashboardData() {
     toggleSpinner(true);
     // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
