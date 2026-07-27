@@ -575,8 +575,8 @@ async function abrirPSDoc(kind) {
     const fecha = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     let hash = '';
     try {
-        const { data } = await window.SupaAPI.sb.auth.getSession();
-        const s = data && data.session;
+        const r = await Promise.race([ window.SupaAPI.sb.auth.getSession(), new Promise((_, rej) => setTimeout(() => rej(new Error('T')), 4000)) ]);   // getSession puede colgarse → cap 4s
+        const s = r && r.data && r.data.session;
         if (s && s.access_token && s.refresh_token) hash = '#at=' + encodeURIComponent(s.access_token) + '&rt=' + encodeURIComponent(s.refresh_token);
     } catch (e) {}
     const url = 'https://ps-panel.vercel.app/' + kind + '.html?fecha=' + fecha + hash;
@@ -1133,7 +1133,7 @@ function _generarPasesDiaHTML(pases) {
         let origen       = p.nombreOrigen || '';
         let ts           = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '';
         let paseId       = p.id || '';
-        let paseNombreEsc = origen.replace(/'/g,"\\'");
+        let paseNombreEsc = _escArg(origen);   // escapa comilla simple/doble/\\ para el onclick (antes solo comilla simple)
 
         // ── Pase convertido a compra de agencia ──────────────────────────
         let agenciaCompradaId = (p.id_agencia_comprada || '').trim();
@@ -4095,8 +4095,8 @@ function confirmarDerivacion() {
 // ANULAR PASE
 // ============================
 // Escapes para el modal dinámico: _escArg (arg dentro de onclick — comilla simple Y doble); _escHtml (texto en innerHTML).
-function _escArg(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, "\\'"); }
-function _escHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function _escArg(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, "\\'"); }
+function _escHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 function iniciarAnularPase(id_mov, pax, nombreContacto) {
     document.getElementById('hidden-anular-idmov').value = id_mov;
@@ -4181,18 +4181,22 @@ function eliminarPaseRegistro(id_mov, deuda, origen, absuelve) {
 function ejecutarEliminarPase(id_mov, absuelve) {
     if (window._eliminandoPase) return;   // lock anti doble-tap
     window._eliminandoPase = true;
-    cerrarSubModal('modal-anular-pase');
-    // Optimista: quitar de la vista; el backend es la guarda real (bloquea si aparece un pago).
-    const idx = (window.pasesExternosData || []).findIndex(p => p.id === id_mov);
-    if (idx !== -1) { window.pasesExternosData.splice(idx, 1); renderOperaciones(window.operacionesData); }
     const restaurar = () => { try { fetchDashboardDataBg(); } catch (e) {} };   // repuebla pasesExternosData (syncManifestBg NO lo hace)
-    fetchPostBg('eliminar_movimiento', { id_mov }).then(res => {
+    let p;
+    try {
+        cerrarSubModal('modal-anular-pase');
+        // Optimista: quitar de la vista; el backend es la guarda real (bloquea si aparece un pago).
+        const idx = (window.pasesExternosData || []).findIndex(x => x.id === id_mov);
+        if (idx !== -1) { window.pasesExternosData.splice(idx, 1); renderOperaciones(window.operacionesData); }
+        p = fetchPostBg('eliminar_movimiento', { id_mov });
+    } catch (e) { window._eliminandoPase = false; restaurar(); return; }   // nunca dejar el lock atascado si algo lanza síncrono
+    p.then(res => {
         if (res && res.status === 'error') {
             mostrarToast('⚠️ ' + (res.message || 'No se pudo eliminar el pase.'), 'error');
             restaurar();   // el backend lo rechazó → traer de vuelta el pase
             return;
         }
-        mostrarToast('🗑️ Pase eliminado' + (absuelve ? ' · deuda absuelta' : ''), 'success');
+        mostrarToast(res && res.queued ? '⏳ Se eliminará al reconectar' : ('🗑️ Pase eliminado' + (absuelve ? ' · deuda absuelta' : '')), res && res.queued ? 'info' : 'success');
         clearTimeout(window._syncTimer); window._syncTimer = setTimeout(syncManifestBg, 1500);
     }).catch(() => { mostrarToast('⚠️ Sin conexión — reintenta', 'error'); restaurar(); })
       .finally(() => { window._eliminandoPase = false; });
@@ -4201,37 +4205,41 @@ function ejecutarEliminarPase(id_mov, absuelve) {
 function confirmarAnularPase() {
     let id_mov = document.getElementById('hidden-anular-idmov').value;
     let id_op  = document.getElementById('select-anular-op').value;
-    if(!id_op) return alert('Selecciona una operación activa para reasignar el movimiento.');
-
-    cerrarSubModal('modal-anular-pase');
-
-    // Optimistic: quitar de pasesExternosData y reasignar en la op
-    let idx = (window.pasesExternosData || []).findIndex(p => p.id === id_mov);
-    if(idx !== -1) {
-        let pase = window.pasesExternosData.splice(idx, 1)[0];
-        let op = window.operacionesData.find(o => o.id === id_op);
-        if(op) {
-            let paxNum = parseInt(pase.pax) || 0;
-            // Recuperar tipo real del contacto original (no dejar 'Libre')
-            let origenId = pase.origenId || '';
-            let contactoInfo = (window.contactosData || []).find(c => c.id === origenId || c.nombre === origenId);
-            let tipoMov = contactoInfo ? (contactoInfo.tipo || 'Directo') : 'Directo';
-            op.manifiesto.unshift({ id: id_mov, tipo: tipoMov, contacto: pase.origenId || pase.nombreOrigen, nombreContacto: pase.nombreOrigen, pax: pase.pax, monto: pase.monto, estado: 'Embarcado' });
-            op.ocupados += paxNum;
+    if(!id_op) return mostrarToast('Selecciona una lancha abierta para reasignar.', 'error');
+    if (window._reasignandoPase) return;   // lock anti doble-tap (evita doble POST de reasignación)
+    window._reasignandoPase = true;
+    const restaurar = () => { try { fetchDashboardDataBg(); } catch (e) {} };
+    let p;
+    try {
+        cerrarSubModal('modal-anular-pase');
+        // Optimista: quitar de pasesExternosData y reasignar en la op
+        let idx = (window.pasesExternosData || []).findIndex(x => x.id === id_mov);
+        if(idx !== -1) {
+            let pase = window.pasesExternosData.splice(idx, 1)[0];
+            let op = window.operacionesData.find(o => o.id === id_op);
+            if(op) {
+                let paxNum = parseInt(pase.pax) || 0;
+                let origenId = pase.origenId || '';
+                let contactoInfo = (window.contactosData || []).find(c => c.id === origenId || c.nombre === origenId);
+                let tipoMov = contactoInfo ? (contactoInfo.tipo || 'Directo') : 'Directo';
+                op.manifiesto.unshift({ id: id_mov, tipo: tipoMov, contacto: pase.origenId || pase.nombreOrigen, nombreContacto: pase.nombreOrigen, pax: pase.pax, monto: pase.monto, estado: 'Embarcado' });
+                op.ocupados += paxNum;
+            }
+            renderOperaciones(window.operacionesData);
         }
-        renderOperaciones(window.operacionesData);
-    }
-
-    fetchPostBg('anular_pase', { id_mov, id_operacion_nueva: id_op, operador: myOpName }).then(res => {
+        p = fetchPostBg('anular_pase', { id_mov, id_operacion_nueva: id_op, operador: myOpName });
+    } catch (e) { window._reasignandoPase = false; restaurar(); return; }
+    p.then(res => {
         if(res && res.status === 'error') {
             mostrarToast('⚠️ ' + (res.message || 'No se pudo reasignar.'), 'error');
-            try { fetchDashboardDataBg(); } catch (e) {}   // el splice/manifiesto optimista se revierte al repoblar
+            restaurar();   // el splice/manifiesto optimista se revierte al repoblar
             return;
         }
-        mostrarToast('✅ Pase anulado. Movimiento reasignado.', 'success');
+        mostrarToast(res && res.queued ? '⏳ Se reasignará al reconectar' : '✅ Pase anulado. Movimiento reasignado.', res && res.queued ? 'info' : 'success');
         clearTimeout(window._syncTimer);
         window._syncTimer = setTimeout(syncManifestBg, 2000);
-    }).catch(() => { mostrarToast('⚠️ Sin conexión — reintenta', 'error'); try { fetchDashboardDataBg(); } catch (e) {} });
+    }).catch(() => { mostrarToast('⚠️ Sin conexión — reintenta', 'error'); restaurar(); })
+      .finally(() => { window._reasignandoPase = false; });
 }
 
 // ============================
