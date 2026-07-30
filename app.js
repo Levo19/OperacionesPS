@@ -2826,11 +2826,53 @@ function pickContacto(id, nombre) {
     let lista = document.getElementById('input-vd-contacto-lista'); if(lista) lista.classList.add('hidden');
     actualizarPrecioDefecto();
 }
+// ── Buscador filtrable de contacto para el CRM de reservas (gemelo del embarque) ──
+// Mismo UX que en PS: el operador escribe y la lista se filtra; guarda el id oculto
+// para distinguir por id (hay nombres repetidos: agencia vs aliado con el mismo nombre).
+function _pickerContactoCRMHTML(want, label) {
+    let showP = (want === 'agencia' || want === 'comision');
+    return `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">${label}</label>
+      <div class="relative">
+        <input type="text" id="input-crm-contacto-buscar" data-want="${want}" data-precio="${showP?1:0}" autocomplete="off"
+          class="${_selectInputClass()}" placeholder="🔍 Escribe para buscar ${label.toLowerCase()}..."
+          oninput="filtrarPickerContactoCRM()" onfocus="filtrarPickerContactoCRM()"
+          onblur="setTimeout(function(){var l=document.getElementById('input-crm-contacto-lista');if(l)l.classList.add('hidden');},200)">
+        <div id="input-crm-contacto-lista" class="hidden absolute z-40 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-52 overflow-y-auto"></div>
+        <input type="hidden" id="input-crm-contacto-id">
+        <input type="hidden" id="input-crm-contacto-nombre">
+      </div>`;
+}
+function filtrarPickerContactoCRM() {
+    let inp = document.getElementById('input-crm-contacto-buscar');
+    let lista = document.getElementById('input-crm-contacto-lista');
+    if(!inp || !lista) return;
+    let want = inp.dataset.want || '', showP = inp.dataset.precio === '1';
+    let q = (inp.value || '').trim().toLowerCase();
+    // si el texto ya no coincide con lo seleccionado, limpiar la selección (evita id colgante)
+    let idH = document.getElementById('input-crm-contacto-id'), nomH = document.getElementById('input-crm-contacto-nombre');
+    if(nomH && idH && inp.value !== nomH.value) { idH.value = ''; nomH.value = ''; }
+    let items = (window.contactosData || []).filter(c => normTipo(c.tipo).includes(want) && (!q || String(c.nombre || '').toLowerCase().includes(q))).slice(0, 40);
+    if(!items.length) { lista.innerHTML = '<div class="px-3 py-2 text-[11px] text-gray-400">Sin resultados</div>'; lista.classList.remove('hidden'); return; }
+    lista.innerHTML = items.map(c => `<div class="px-3 py-2 text-[11px] font-bold text-gray-800 hover:bg-blue-50 active:bg-blue-100 cursor-pointer border-b border-gray-50"
+        onmousedown="pickContactoCRM('${c.id}', '${String(c.nombre).replace(/'/g, "\\'")}')">${c.nombre}${showP ? ` <span class="text-gray-400 font-normal">S/${c.precio}/pax</span>` : ''}</div>`).join('');
+    lista.classList.remove('hidden');
+}
+function pickContactoCRM(id, nombre) {
+    let idH = document.getElementById('input-crm-contacto-id'), nomH = document.getElementById('input-crm-contacto-nombre'), inp = document.getElementById('input-crm-contacto-buscar');
+    if(idH) idH.value = id; if(nomH) nomH.value = nombre; if(inp) inp.value = nombre;
+    let lista = document.getElementById('input-crm-contacto-lista'); if(lista) lista.classList.add('hidden');
+    try { resTap(); resHap(6); } catch(e) {}
+    actualizarPrecioDefectoCRM();
+}
 function getContactoSeleccionado(selectId) {
     // Embarque: usa el buscador (id oculto). Otros selects (derivar/pase-reserva): lógica legacy.
     if(selectId === 'input-vd-contacto-select') {
         let hid = document.getElementById('input-vd-contacto-id');
         if(hid) return { id: hid.value || '', nombre: (document.getElementById('input-vd-contacto-nombre') || {}).value || '' };
+    }
+    if(selectId === 'input-crm-contacto-select') {
+        let hid = document.getElementById('input-crm-contacto-id');
+        if(hid) return { id: hid.value || '', nombre: (document.getElementById('input-crm-contacto-nombre') || {}).value || '' };
     }
     let sel = document.getElementById(selectId);
     if(!sel) return { id: '', nombre: '' };
@@ -3207,29 +3249,17 @@ function cambiarTipoCRM() {
             <input type="text" id="input-crm-contacto-text" class="${_textInputClass()}" placeholder="Ej: Familia Vasquez">`;
 
     } else if(tipo === 'Agencia') {
-        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('agencia'));
-        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre} (S/${c.precio}/pax)</option>`).join('');
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Agencia</label>
-            <select id="input-crm-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefectoCRM()">
-                <option value="">Seleccionar...</option>${opts}</select>`;
+        container.innerHTML = _pickerContactoCRMHTML('agencia', 'Agencia');
 
     } else if(tipo === 'Aliado') {
-        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('aliado'));
-        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre}</option>`).join('');
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Aliado</label>
-            <select id="input-crm-contacto-select" class="${_selectInputClass()}">
-                <option value="">Seleccionar...</option>${opts}</select>`;
+        container.innerHTML = _pickerContactoCRMHTML('aliado', 'Aliado');
         precioInput.value = '0';
         precioInput.readOnly = true;
         precioInput.setAttribute('readonly', 'readonly');
         precioInput.classList.add('bg-gray-100', 'opacity-50', 'cursor-not-allowed');
 
     } else if(tipo === 'Comisionado') {
-        let filtered = (window.contactosData||[]).filter(c => normTipo(c.tipo).includes('comision'));
-        let opts = filtered.map(c => `<option value="${c.nombre}" data-id="${c.id}">${c.nombre}</option>`).join('');
-        container.innerHTML = `<label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest ml-1">Comisionado</label>
-            <select id="input-crm-contacto-select" class="${_selectInputClass()}" onchange="actualizarPrecioDefectoCRM()">
-                <option value="">Seleccionar...</option>${opts}</select>`;
+        container.innerHTML = _pickerContactoCRMHTML('comision', 'Comisionado');
     }
     actualizarPrecioDefectoCRM();
 }
@@ -3243,10 +3273,11 @@ function actualizarPrecioDefectoCRM() {
         precioInput.value = (30 * pax).toFixed(2);
 
     } else if(tipo === 'Agencia' && pax > 0) {
-        let sel = document.getElementById('input-crm-contacto-select');
-        if(sel && sel.value) {
-            let info = (window.contactosData||[]).find(c => c.nombre === sel.value);
-            if(info) precioInput.value = (info.precio * pax).toFixed(2);
+        // POR ID (no por nombre): hay nombres repetidos (Overland agencia vs aliado).
+        let selc = getContactoSeleccionado('input-crm-contacto-select');
+        if(selc.id) {
+            let info = (window.contactosData||[]).find(c => c.id === selc.id);
+            if(info) precioInput.value = ((parseFloat(info.precio)||0) * pax).toFixed(2);
         }
 
     } else if(tipo === 'Aliado') {
@@ -3279,10 +3310,9 @@ function confirmarNuevaReserva() {
         let con00Nombre = con00 ? con00.nombre : 'LIBRE';
         nombreCliente = con00Nombre + ':' + (apellido || 'VARIOS');
     } else {
-        let sel = document.getElementById('input-crm-contacto-select');
-        nombreCliente = sel?.value || '';
-        let opt = sel?.options[sel.selectedIndex];
-        id_contacto   = opt?.dataset?.id || nombreCliente;
+        let selc = getContactoSeleccionado('input-crm-contacto-select');
+        nombreCliente = selc.nombre || '';
+        id_contacto   = selc.id || nombreCliente;
     }
 
     if(!fecha || !nombreCliente || !pax || !precio) { mostrarToast('❌ Fecha, Cliente, PAX y Total son obligatorios.', 'error'); return; }
