@@ -311,6 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // luego refrescar en silencio si estuvo fuera 30s+ (sin overlay, sin bloquear).
             ocultarLoadingOverlay();
             _bgFetchInProgress = false;   // un fetch suspendido a mitad no debe vetar el refresco
+            if (navigator.onLine) setTimeout(_processOfflineQueue, 1500);   // iOS recupera red al reanudar → vaciar cola
             if (Date.now() - _lastVisible > 30000) fetchDashboardDataBg();
         }
     });
@@ -853,6 +854,9 @@ let _bgFetchInProgress = false;
 
 function fetchDashboardDataBg() {
     let spinner = document.getElementById('global-spinner');
+    // Contador huérfano (p.ej. iOS suspendió la página a mitad de un POST y el watchdog
+    // durmió): si lleva >60s "en vuelo", es mentira — resetear para no vetar refrescos.
+    if (pendingPostRequests > 0 && Date.now() - (window._lastPostAt || 0) > 60000) pendingPostRequests = 0;
     if(pendingPostRequests > 0 || !spinner.classList.contains('hidden')) return;
     if(_bgFetchInProgress) return; // evitar fetches concurrentes
     // No interrumpir si hay algún modal abierto (usuario activo) o si hay items pendientes
@@ -1907,12 +1911,13 @@ function _resCardHoy(res) {
         let hMin = _resHoraMin(res.hora);
         if (hMin < 1440) { let now = new Date(); pasoHora = (now.getHours() * 60 + now.getMinutes()) > hMin; }
     }
-    let border = isAsignando ? 'border-green-400 bg-green-50' : isSyncing ? 'border-yellow-300 bg-yellow-50' : pasoHora ? 'border-amber-300 bg-amber-50' : 'border-blue-500 bg-white';
-    let btnCls = (isSyncing || isAsignando) ? 'pointer-events-none bg-green-400 text-white' : 'bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600 active:scale-95';
-    let btnIcon = isAsignando ? 'fa-ship fa-pulse' : isSyncing ? 'fa-sync-alt fa-spin' : 'fa-clipboard-check';
-    let btnText = isAsignando ? '¡Abordando!' : isSyncing ? 'Registrando…' : 'Subir a lancha';
+    let isQueued = !!res._queued;   // POST sin red → en cola offline (se reenvía al reconectar)
+    let border = isAsignando ? 'border-green-400 bg-green-50' : isQueued ? 'border-amber-400 bg-amber-50' : isSyncing ? 'border-yellow-300 bg-yellow-50' : pasoHora ? 'border-amber-300 bg-amber-50' : 'border-blue-500 bg-white';
+    let btnCls = (isSyncing || isAsignando) ? 'pointer-events-none ' + (isQueued ? 'bg-amber-400 text-white' : 'bg-green-400 text-white') : 'bg-green-500 text-white shadow-md shadow-green-500/20 hover:bg-green-600 border-green-600 active:scale-95';
+    let btnIcon = isAsignando ? 'fa-ship fa-pulse' : isQueued ? 'fa-wifi' : isSyncing ? 'fa-sync-alt fa-spin' : 'fa-clipboard-check';
+    let btnText = isAsignando ? '¡Abordando!' : isQueued ? 'En cola 📶 — al reconectar' : isSyncing ? 'Registrando…' : 'Subir a lancha';
     return `<div class="${border} border border-l-[5px] rounded-2xl shadow-sm p-3.5 mb-2.5 card-enter relative overflow-hidden" data-res-id="${res.id}">
-        ${isSyncing ? '<div class="absolute top-2 right-3 text-[9px] text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i>Nube</div>' : ''}
+        ${isQueued ? '<div class="absolute top-2 right-3 text-[9px] text-amber-600 font-bold"><i class="fas fa-clock mr-1"></i>Pendiente de red</div>' : isSyncing ? '<div class="absolute top-2 right-3 text-[9px] text-yellow-600 font-bold"><i class="fas fa-satellite-dish mr-1 animate-ping"></i>Nube</div>' : ''}
         <div class="flex items-center gap-3">
             <div class="text-center shrink-0 ${pasoHora ? 'text-amber-600' : 'text-blue-600'}" style="min-width:64px">
                 <div class="font-black text-2xl leading-none">${_resEsc(hd.t)}${hd.ap ? `<span class="text-[10px] font-bold ml-0.5 align-top">${hd.ap}</span>` : ''}</div>
@@ -2004,7 +2009,7 @@ function renderReservas(reservas) {
 
     const vOpen = !!window._resVencidasOpen;
     const fp = JSON.stringify({
-        a: hoyPend.map(r => `${r.id}|${r._asignando ? 1 : 0}|${r.id === 'Creando...' ? 1 : 0}|${r.pax}|${r.cliente}|${r.hora || ''}`),
+        a: hoyPend.map(r => `${r.id}|${r._asignando ? 1 : 0}|${r.id === 'Creando...' ? 1 : 0}|${r._queued ? 1 : 0}|${r.pax}|${r.cliente}|${r.hora || ''}`),
         b: hoyDone.map(r => `${r.id}|${r.estado}|${r.cliente}|${r.hora || ''}`),
         c: futuras.map(r => `${r.id}|${r.cliente}|${r.hora || ''}|${r.pax}|${_resFechaISO(r.fecha)}`),
         d: vencidas.map(r => r.id), v: vOpen
@@ -3358,7 +3363,14 @@ function confirmarNuevaReserva() {
         fecha: fecha, hora: hora, tipo: tipo,
         id_contacto: id_contacto, cliente: nombreCliente, cant_pax: pax, monto: parseFloat(precio).toFixed(2),
         creador: myOpName, localId: 'temp-res-' + Date.now() + '-' + Math.random().toString(36).slice(2,8)
-    }).then(() => {
+    }).then((d) => {
+        // Si quedó EN COLA (sin red / tiempo agotado), la card lo dice honesto — nada de
+        // "Registrando…" con spinner eterno. Al reconectar, la cola la envía y el refresh
+        // la reemplaza por la real.
+        if (d && d.queued) {
+            let t = (window.reservasData || []).find(r => r.id === 'Creando...' && r.cliente === nombreCliente);
+            if (t) { t._queued = true; renderReservas(window.reservasData); }
+        }
         document.getElementById('input-crm-pax').value = ''; document.getElementById('input-crm-precio').value = '';
         setTimeout(fetchDashboardDataBg, 5000);
     });
@@ -4499,9 +4511,12 @@ function _enqueueOffline(action, payload) {
     } catch(e) {}
 }
 async function _processOfflineQueue() {
+    if (window._offlineQBusy) return;   // ya hay un vaciado en curso (online + resume pueden coincidir)
     let q;
     try { q = JSON.parse(localStorage.getItem(_OFFLINE_Q_KEY) || '[]'); } catch(e) { q = []; }
     if (!q.length) return;
+    window._offlineQBusy = true;
+    try {
     mostrarToast(`🔄 Enviando ${q.length} acción(es) pendiente(s)...`, 'info');
     let failed = [];
     for (let item of q) {
@@ -4516,33 +4531,44 @@ async function _processOfflineQueue() {
         // Limpiar entradas _queued del cajaData local — el BG refresh traerá las reales de GAS
         window.cajaData = (window.cajaData || []).filter(c => !c._queued);
         renderCaja(window.cajaData);
+        // Reservas en cola: quitar el flag (el refresh trae la real y reemplaza la temp)
+        (window.reservasData || []).forEach(r => { if (r._queued) delete r._queued; });
+        renderReservas(window.reservasData || []);
         fetchDashboardDataBg();
     } else {
         mostrarToast(`⚠️ ${failed.length} acción(es) no se pudieron enviar aún.`, 'error');
     }
+    } finally { window._offlineQBusy = false; }
 }
 window.addEventListener('online',  () => { mostrarToast('📶 Conexión restaurada.', 'success'); _processOfflineQueue(); });
 window.addEventListener('offline', () => { mostrarToast('📶 Sin conexión. Las acciones se guardarán para reenviar.', 'error'); });
 
 function fetchPostBg(action, payload) {
     pendingPostRequests++;
+    window._lastPostAt = Date.now();
     let dot = document.getElementById('sync-dot');
     if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-300 animate-ping';
-    return fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} })
+    // WATCHDOG 25s: en iPhone un fetch puede COLGARSE (red suspendida a mitad) → la promesa
+    // jamás resolvía → pendingPostRequests quedaba >0 PARA SIEMPRE → todos los refrescos de
+    // fondo vetados → la card "Registrando…" eterna y la app "muerta". El settle único
+    // garantiza que el contador SIEMPRE baja; si el fetch tardío al final responde, no
+    // decrementa doble ni encola doble (y el reenvío de la cola es idempotente por localId).
+    let settled = false;
+    const settle = () => { if (settled) return false; settled = true; pendingPostRequests = Math.max(0, pendingPostRequests - 1); return true; };
+    const okDot  = () => { if (dot && pendingPostRequests === 0) dot.className = 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse'; };
+    const aCola  = (msg) => {
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-red-400';
+        setTimeout(okDot, 3000);
+        _enqueueOffline(action, payload);
+        mostrarToast('📶 Sin conexión. La acción se reintentará al reconectar.', 'error');
+        return { status: 'error', queued: true, message: msg };
+    };
+    const req = fetch(GAS_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify({ action: action, payload: payload }), headers: {'Content-Type': 'text/plain;charset=utf-8'} })
         .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
-        .then(d => {
-            pendingPostRequests--;
-            if (dot && pendingPostRequests === 0) dot.className = 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse';
-            return d;
-        })
-        .catch(err => {
-            pendingPostRequests--;
-            if (dot) dot.className = 'w-2 h-2 rounded-full bg-red-400';
-            setTimeout(() => { if (dot && pendingPostRequests === 0) dot.className = 'w-2 h-2 rounded-full bg-emerald-300 animate-pulse'; }, 3000);
-            _enqueueOffline(action, payload);
-            mostrarToast('📶 Sin conexión. La acción se reintentará al reconectar.', 'error');
-            return { status: 'error', queued: true, message: 'Error de conexión' };
-        });
+        .then(d => { if (!settle()) return d; okDot(); return d; })
+        .catch(() => { if (!settle()) return { status: 'error', message: 'tarde' }; return aCola('Error de conexión'); });
+    const watchdog = new Promise(resolve => setTimeout(() => { if (settle()) resolve(aCola('Tiempo agotado')); }, 25000));
+    return Promise.race([req, watchdog]);
 }
 
 // ==========================
