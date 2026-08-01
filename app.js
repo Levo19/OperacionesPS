@@ -1307,9 +1307,10 @@ function renderOperaciones(operaciones) {
     const _estadoOrden = { 'Abierta': 0, 'En_Viaje': 1, 'Cerrada': 2 };
     opHoy.sort((a, b) => (_estadoOrden[a.estado] ?? 3) - (_estadoOrden[b.estado] ?? 3));
 
-    // Container-level fingerprint — incluye pases y estado de pagos/cobros vinculados
+    // Container-level fingerprint — incluye pases y estado de pagos/cobros vinculados.
+    // MISMO filtro que el render (vivos): si un pase pasa a Cancelado, el fp cambia → repinta.
     let fp = opHoy.map(o => _generarCardFP(o)).join(';')
-           + '|p:' + (window.pasesExternosData || []).map(p => {
+           + '|p:' + (window.pasesExternosData || []).filter(p => !/cancel/i.test(p.estado || '')).map(p => {
                let pagado  = (window.cajaData || []).some(c => (c.id_movimiento||'') === p.id && c.categoria === 'Pago Agencia') ? 1 : 0;
                let cobrado = (window.cajaData || []).some(c => (c.id_movimiento||'') === p.id && c.categoria === 'Cobro') ? 1 : 0;
                return `${p.id}|${p.aliadoId}|${p.id_agencia_comprada||''}|${pagado}|${cobrado}|${p.pax}`;
@@ -1360,9 +1361,10 @@ function renderOperaciones(operaciones) {
 
     opHoy.forEach(op => container.appendChild(existingCards.get(op.id)));
 
-    // Actualizar sección de pases — solo los de HOY (los _syncing son recién enviados, siempre incluirlos)
+    // Actualizar sección de pases — solo los de HOY y VIVOS (un pase anulado está Cancelado
+    // en BD: si se pintara aquí con botón "Anular", parecería que la anulación no funcionó)
     let pasesDiaHTML = _generarPasesDiaHTML(
-        (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp))
+        (window.pasesExternosData || []).filter(p => esFechaHoy(p.timestamp) && !/cancel/i.test(p.estado || ''))
     );
     if (pasesDiaHTML) {
         let tmp = document.createElement('div');
