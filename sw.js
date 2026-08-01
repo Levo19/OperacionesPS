@@ -1,5 +1,5 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v72';
+const CACHE_NAME = 'ops-v73';
 const SHELL = [
     './index.html',
     './app.js',
@@ -66,18 +66,23 @@ self.addEventListener('fetch', e => {
         return;
     }
 
-    // Shell local (index.html, app.js) → red primero, cache como respaldo (siempre jala última versión)
-    e.respondWith(
-        fetch(e.request)
-            .then(res => {
-                if (res.ok) {
-                    let clone = res.clone();
-                    caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-                }
-                return res;
-            })
-            .catch(() =>
-                caches.match(e.request).then(cached => cached || caches.match('./index.html'))
-            )
-    );
+    // Shell local (index.html, app.js) → red primero CON TIMEOUT de 4s, cache como respaldo.
+    // Sin el timeout, al reabrir la PWA en iPhone con la red "despertando" el fetch del
+    // index.html podía colgarse → pantalla en blanco/congelada. Ahora: 4s y arranca del
+    // caché (y la red fresca actualiza el caché para la próxima).
+    e.respondWith((async () => {
+        const network = fetch(e.request).then(res => {
+            if (res.ok) {
+                const clone = res.clone();
+                caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+            }
+            return res;
+        });
+        const timeout = new Promise(resolve => setTimeout(() => resolve(null), 4000));
+        const winner = await Promise.race([network, timeout.then(() => null)]).catch(() => null);
+        if (winner) return winner;
+        const cached = await caches.match(e.request) || await caches.match('./index.html');
+        if (cached) { network.catch(() => {}); return cached; }   // red sigue en 2º plano actualizando caché
+        return network.catch(() => new Response('Sin conexión', { status: 503 }));
+    })());
 });

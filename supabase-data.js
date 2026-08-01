@@ -18,16 +18,47 @@
   });
   // fetch directo a PostgREST (sin pasar por el cliente) — para llamadas anon
   // (lista de login, estado de app) que deben funcionar sí o sí, sin auth-init.
-  async function restRpc(fn, body, token) {
+  async function restRpc(fn, body, token, ms) {
     const headers = { apikey: SUPABASE_ANON, 'Content-Type': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
     const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 35000);   // nunca colgar infinito; > server (30s) para que el server gane la carrera en emisión NubeFact
+    const tid = setTimeout(() => ctrl.abort(), ms || 35000);   // default > server (30s) para que el server gane la carrera en emisión NubeFact; lecturas de arranque usan timeout corto
     try {
       const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'POST', headers, body: JSON.stringify(body || {}), signal: ctrl.signal });
       if (!r.ok) { let m = 'Error'; try { m = (await r.json()).message || m; } catch (e) {} throw new Error(m); }
       const txt = await r.text(); return txt ? JSON.parse(txt) : null;
     } finally { clearTimeout(tid); }
+  }
+
+  // getSession() puede COLGARSE indefinidamente al reabrir la app con un token viejo
+  // (iOS suspende la página a mitad del refresh; la red tarda 1-2s en despertar).
+  // Guardia 4s: si cuelga, descartamos el token envenenado y seguimos sin sesión —
+  // el login Google la re-crea. Mismo patrón probado en PS Panel (v1.93/1.94).
+  async function _sessionSafe(ms) {
+    try {
+      const r = await Promise.race([
+        sb.auth.getSession(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('SESSION_TIMEOUT')), ms || 4000))
+      ]);
+      return (r && r.data && r.data.session) || null;
+    } catch (e) { try { localStorage.removeItem('ops_ps_auth'); } catch (_) {} return null; }
+  }
+  // Sesión con token VIGENTE: si venció o está por vencer (<90s), fuerza refreshSession()
+  // con su propio timeout (getSession no refresca de forma confiable tras un resume).
+  async function _freshSession(ms) {
+    const s = await _sessionSafe(ms || 4000);
+    const vive = t => t && t.expires_at && (t.expires_at * 1000 - Date.now() > 90 * 1000);
+    if (vive(s)) return s;
+    try {
+      const r = await Promise.race([
+        sb.auth.refreshSession(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('REFRESH_TIMEOUT')), ms || 6000))
+      ]);
+      const ns = r && r.data && r.data.session;
+      if (ns && ns.access_token) return ns;
+    } catch (e) { /* refresh colgado/fallido → abajo */ }
+    if (s && s.expires_at && s.expires_at * 1000 > Date.now()) return s;   // token viejo pero aún válido
+    return null;
   }
 
   const ok  = (extra) => Object.assign({ status: 'success' }, extra || {});
@@ -41,15 +72,14 @@
   // TODO el data path va por fetch directo a PostgREST (con el token de sesión),
   // NO por sb.rpc — el cliente supabase-js se cuelga en algunos navegadores.
   // El cliente queda SOLO para auth (signIn/getSession/signOut).
-  const rpc = async (fn, args) => {
-    let token;
-    try { const { data } = await sb.auth.getSession(); token = data && data.session && data.session.access_token; } catch (e) {}
-    return restRpc(fn, args, token);
+  const rpc = async (fn, args, ms) => {
+    const s = await _freshSession(4000);                 // con guardia: jamás cuelga el data-path
+    return restRpc(fn, args, s && s.access_token, ms);
   };
 
   // ── AUTH ── (Equipo Único: solo Google; el PIN y listar_operadores se extinguieron) ──
   async function logout() { await sb.auth.signOut(); return ok(); }
-  async function sesion() { const { data } = await sb.auth.getSession(); return data.session || null; }
+  async function sesion() { return _freshSession(6000); }   // guardia: el boot nunca se queda esperando
   // estado/horario de la app (controlado desde PS). Callable sin login (anon, fetch directo).
   async function estadoApp() {
     try { return await restRpc('get_app_estado', { p_app: 'operacionesps' }); }
@@ -58,7 +88,7 @@
 
   // ── LECTURAS ────────────────────────────────────────────────
   async function getDashboardData() {
-    try { return await rpc('get_dashboard'); }   // ya viene con la forma exacta del GAS
+    try { return await rpc('get_dashboard', undefined, 10000); }   // lectura de arranque: timeout CORTO (el warm-start ya pintó; mejor reintentar que colgar)
     // status:'error' → app.js toma su rama limpia (_forceRenderEmpty) en vez de
     // seguir con campos undefined y reventar en renderCatalogos.
     catch (e) { return { status: 'error', error: (e && e.message) || 'Error' }; }

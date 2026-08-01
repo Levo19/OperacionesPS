@@ -245,8 +245,22 @@ document.addEventListener('DOMContentLoaded', () => {
         myOpName = null;
     }
 
-    // Poblar memoria desde caché (sin renderizar — evita mostrar datos rancios)
-    _loadDashboardCache();
+    // WARM-START: poblar memoria desde caché y RENDERIZAR de inmediato (solo existe caché
+    // del MISMO día — arriba se borra si cambió la fecha). Antes se esperaba la red con el
+    // overlay a pantalla completa: en iPhone, al reabrir con la red despertando, eso se
+    // sentía como "app congelada" (el overlay come el táctil). Ahora la app queda usable
+    // al toque con los datos del último snapshot y el fetch fresco la actualiza en silencio.
+    const _warm = _loadDashboardCache();
+    if (_warm && (window.operacionesData || []).length + (window.reservasData || []).length + (window.cajaData || []).length > 0) {
+        try { renderCatalogos(window.catalogosData); } catch(e) {}
+        try { renderOperaciones(window.operacionesData || []); } catch(e) {}
+        try { renderReservas(window.reservasData || []); } catch(e) {}
+        try { renderCaja(window.cajaData || []); } catch(e) {}
+        ocultarLoadingOverlay();
+    }
+    // Watchdog del overlay: pase lo que pase (red muerta, sesión colgada), a los 6s el
+    // overlay se quita y la app responde al táctil. NUNCA más 35s de pantalla congelada.
+    setTimeout(ocultarLoadingOverlay, 6000);
 
     // Activar lock si ya son las 8 PM — PERO no con cutover Supabase activo.
     // El horario lo maneja el shim vía Supabase app_config (gateHorario); el lock
@@ -292,9 +306,21 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') {
             _lastVisible = Date.now();
-        } else if (Date.now() - _lastVisible > 30000) {
-            fetchDashboardDataBg();
+        } else {
+            // Al VOLVER: primero desatorar la UI (overlay/flags pegados por la suspensión iOS),
+            // luego refrescar en silencio si estuvo fuera 30s+ (sin overlay, sin bloquear).
+            ocultarLoadingOverlay();
+            _bgFetchInProgress = false;   // un fetch suspendido a mitad no debe vetar el refresco
+            if (Date.now() - _lastVisible > 30000) fetchDashboardDataBg();
         }
+    });
+    // iOS bfcache: si la página se restaura desde el congelador (pageshow persisted),
+    // los timers/fetch vienen de un estado viejo → desatorar y refrescar suave.
+    window.addEventListener('pageshow', (e) => {
+        if (!e.persisted) return;
+        ocultarLoadingOverlay();
+        _bgFetchInProgress = false;
+        fetchDashboardDataBg();
     });
 });
 
@@ -587,16 +613,17 @@ window.abrirPSDoc = abrirPSDoc;
 
 function fetchDashboardData() {
     toggleSpinner(true);
-    // Safety net: si en 15s todavía no terminó, forzar limpieza de UI
+    // Safety net: si en 12s todavía no terminó, forzar limpieza de UI (es una LECTURA;
+    // el shim ya corta get_dashboard a los 10s — mejor "Reintentar" que pantalla pegada)
     let safetyTimer = setTimeout(() => {
         toggleSpinner(false);
         ocultarLoadingOverlay();
         _forceRenderEmpty();
         console.warn('[SOT] fetchDashboardData timeout — forzando limpieza de UI');
-    }, 35000);
+    }, 12000);
 
     let ctrl = new AbortController();
-    let abortTimer = setTimeout(() => ctrl.abort(), 30000);
+    let abortTimer = setTimeout(() => ctrl.abort(), 12000);
 
     fetch(GAS_URL + "?action=getDashboardData", { signal: ctrl.signal })
         .then(res => {
