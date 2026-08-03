@@ -219,6 +219,8 @@
   }
   async function facturacionConfig() { try { return (await rpc('get_facturacion_config')) || {}; } catch (e) { return {}; } }
   async function facturacionBootstrap() { try { return (await rpc('get_facturacion_bootstrap')) || {}; } catch (e) { return {}; } }
+  async function paqueteFac() { try { return (await rpc('listar_paquete_zarpe')) || []; } catch (e) { return []; } }
+  async function guardarClienteFac(cli) { try { return await rpc('guardar_cliente', { p: cli }); } catch (e) { return { ok: false, message: e.message }; } }
   async function buscarContactosFac(q) { try { return (await rpc('buscar_contactos_fac', { p_q: q })) || []; } catch (e) { return []; } }
   async function listarComprobantesDia(usuario) { try { return (await rpc('listar_comprobantes_dia', { p_usuario: usuario || null })) || []; } catch (e) { return []; } }
   async function solicitarAnulacion(id, motivo, por) { try { return await rpc('solicitar_anulacion', { p_id: id, p_motivo: motivo, p_por: por || null }); } catch (e) { return { ok: false, message: e.message }; } }
@@ -241,5 +243,5 @@
     catch (e) { return err(e); }
   }
 
-  window.SupaAPI = { sb, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento, facturacionConfig, facturacionBootstrap, buscarContactosFac, listarComprobantesDia, solicitarAnulacion, extraerZarpe, registrarZarpePax, listarZarpePax, marcarZarpePaxFacturado, conciliacionZarpe, balanceTributos, registrarCompra };
+  window.SupaAPI = { sb, logout, sesion, estadoApp, getDashboardData, getPersonal, post, facturacionMuelle, listarServiciosFac, consultarDocumento, facturacionConfig, facturacionBootstrap, paqueteFac, guardarClienteFac, buscarContactosFac, listarComprobantesDia, solicitarAnulacion, extraerZarpe, registrarZarpePax, listarZarpePax, marcarZarpePaxFacturado, conciliacionZarpe, balanceTributos, registrarCompra };
 })();
