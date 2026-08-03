@@ -151,6 +151,14 @@
     .facm-softfade { animation: facmSoftFade .24s ease both; }
     @keyframes facmPulse { 0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.0)} 50%{box-shadow:0 0 0 4px rgba(220,38,38,.22)} }
     .facm-pulse { animation: facmPulse 1.3s ease-in-out infinite; }
+    /* Tarjeta de overlay centrada (registro / servicios): pop-in SIN recorte de altura */
+    @keyframes facmPop { from{opacity:0;transform:scale(.94) translateY(10px)} to{opacity:1;transform:scale(1) translateY(0)} }
+    .facm-pop { animation: facmPop .22s cubic-bezier(.34,1.4,.5,1) both; }
+    @keyframes facmTabFade { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+    .facm-tabfade { animation: facmTabFade .26s ease both; }
+    @keyframes facmSpin { to{transform:rotate(360deg)} }
+    .facm-spin { display:inline-block;width:13px;height:13px;border:2px solid rgba(154,52,18,.25);border-top-color:#9a3412;border-radius:50%;animation:facmSpin .7s linear infinite;flex:0 0 auto }
+    .facm-feed-it { animation: facmTabFade .2s ease both; }
     @keyframes facmRowIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     .facm-row { animation: facmRowIn .3s cubic-bezier(.22,.61,.36,1) both; }
     @keyframes facmDropIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }

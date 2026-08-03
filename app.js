@@ -1498,7 +1498,7 @@ async function abrirBoletaMuelle() {
     tel: '', email: '',
     items: [], exonerado: false, medioPago: '', _svcPick: null, _precioEdit: null,
     historial: [], cargandoHist: false, contadorHoy: 0,
-    emitiendo: false, shake: false, _t: null, anularId: null, _anularMotivo: '', _localId: null
+    shake: false, _t: null, anularId: null, _anularMotivo: '', _feed: [], _emitCd: 0, _lockH: 0
   };
   _facM.items = _facMItemsDefecto();
   _facMRender();
@@ -1643,7 +1643,12 @@ function _zarRender(){
   </div>`;
 }
 function _facMDocLbl(tipo) { return ({ '1': 'DNI', '6': 'RUC', '4': 'CE', '7': 'Pasaporte', '0': 'Varios' })[tipo] || tipo; }
-function _facMTab(t) { fx('sel'); _facM.tab = t; _facM.anularId = null; _facMRender(); if (t === 'historial') _facMHist(); }
+function _facMTab(t) {
+  const S = _facM; if (S.tab === t) return; fx('sel');
+  const box = document.getElementById('facm-box'); if (box) S._lockH = Math.max(S._lockH || 0, Math.round(box.offsetHeight));   // conserva la altura → sin salto
+  S.tab = t; S.anularId = null; S._tabFade = true; _facMRender();
+  if (t === 'historial') _facMHist();
+}
 function _facMSearch(q) {
   const S = _facM; S.q = q; S.apiResult = null; S.noEncontrado = false;
   clearTimeout(S._t);
@@ -1694,17 +1699,23 @@ function _facMManOvRender() {
   let ov = document.getElementById('facm-manov');
   if (!ov) { ov = document.createElement('div'); ov.id = 'facm-manov'; ov.style.cssText = 'position:fixed;inset:0;z-index:9700;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:18px'; ov.onclick = e => { if (e.target === ov) _facMManOvClose(); }; document.body.appendChild(ov); }
   const segT = [['1', 'DNI'], ['4', 'CE'], ['7', 'Pasaporte'], ['6', 'RUC']];
-  ov.innerHTML = `<div class="facm-expand" style="width:100%;max-width:380px;background:#fff;border-radius:16px;padding:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><span style="font-weight:900;font-size:14px;color:#3d0508">＋ Registrar cliente</span><button onclick="_facMManOvClose()" style="border:none;background:none;font-size:20px;color:#9ca3af;cursor:pointer">×</button></div>
-    <div style="font-size:11px;color:#9b6b6e;margin-bottom:9px">No está en el registro — puede ser real igual. Confirma sus datos:</div>
-    <div style="display:flex;gap:6px;margin-bottom:9px">
-      ${segT.map(d => `<button onclick="_facMManTipo('${d[0]}')" style="flex:1;padding:8px 4px;border-radius:9px;font-weight:700;font-size:11.5px;cursor:pointer;border:1px solid ${S.manualTipo === d[0] ? '#56070c' : '#e5e7eb'};background:${S.manualTipo === d[0] ? '#fdf2f2' : '#fff'};color:${S.manualTipo === d[0] ? '#56070c' : '#6b7280'}">${d[1]}</button>`).join('')}
+  const hint = { '1': 'DNI: 8 dígitos', '4': 'Carné de extranjería', '7': 'Pasaporte del turista', '6': 'RUC: 11 dígitos + domicilio fiscal' }[S.manualTipo] || '';
+  ov.innerHTML = `<div class="facm-pop" style="width:100%;max-width:360px;max-height:88vh;overflow-y:auto;background:#fff;border-radius:18px;padding:18px;box-shadow:0 18px 50px rgba(60,5,8,.35)">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(140deg,#7a1015,#56070c);display:flex;align-items:center;justify-content:center;color:#e8b840;font-size:18px;font-weight:900;flex:0 0 auto">＋</div>
+      <div style="flex:1;font-weight:900;font-size:15px;color:#3d0508">Registrar cliente</div>
+      <button onclick="_facMManOvClose()" style="border:none;background:#f6eef0;width:30px;height:30px;border-radius:50%;font-size:18px;color:#9b6b6e;cursor:pointer;flex:0 0 auto">×</button>
     </div>
-    <input id="facm-mdoc" placeholder="N° de documento" value="${_facEscM(S._manualDoc)}" autocomplete="off" oninput="_facM._manualDoc=this.value" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
-    <input id="facm-mnom" placeholder="Nombre / Razón social" value="${_facEscM(S._manualNombre)}" autocomplete="off" oninput="_facM._manualNombre=this.value" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
-    ${S.manualTipo === '6' ? `<input id="facm-mdir" placeholder="Domicilio fiscal *" value="${_facEscM(S._manualDir)}" autocomplete="off" oninput="_facM._manualDir=this.value" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">` : ''}
-    ${S.manualTipo === '6' ? '<div style="font-size:10px;color:#a16207;margin:-2px 0 8px">El RUC necesita domicilio fiscal — va impreso en la factura.</div>' : ''}
-    <div style="display:flex;gap:8px"><button onclick="_facMManOvClose()" style="flex:1;padding:10px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700">Cancelar</button><button onclick="_facMManualOK()" style="flex:1.4;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800">💾 Guardar cliente</button></div>
+    <div style="font-size:11.5px;color:#9b6b6e;margin:2px 0 12px;line-height:1.4">No está en el registro — puede ser real igual. Confirma sus datos.</div>
+    <div style="font-size:10px;font-weight:800;color:#9b7d80;letter-spacing:.4px;margin-bottom:6px">TIPO DE DOCUMENTO</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:5px">
+      ${segT.map(d => `<button onclick="_facMManTipo('${d[0]}')" style="padding:11px 6px;border-radius:11px;font-weight:800;font-size:13px;cursor:pointer;transition:all .15s;border:1.5px solid ${S.manualTipo === d[0] ? '#56070c' : '#e5e7eb'};background:${S.manualTipo === d[0] ? '#fdf2f2' : '#fff'};color:${S.manualTipo === d[0] ? '#56070c' : '#6b7280'};box-shadow:${S.manualTipo === d[0] ? '0 2px 8px rgba(86,7,12,.14)' : 'none'}">${d[1]}</button>`).join('')}
+    </div>
+    <div style="font-size:10.5px;color:#a16207;margin:0 2px 12px">${hint}</div>
+    <input id="facm-mdoc" inputmode="text" placeholder="N° de documento" value="${_facEscM(S._manualDoc)}" autocomplete="off" oninput="_facM._manualDoc=this.value" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:11px;margin-bottom:9px;font-size:14px">
+    <input id="facm-mnom" placeholder="Nombre / Razón social" value="${_facEscM(S._manualNombre)}" autocomplete="off" oninput="_facM._manualNombre=this.value" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:11px;margin-bottom:9px;font-size:14px">
+    ${S.manualTipo === '6' ? `<input id="facm-mdir" placeholder="Domicilio fiscal (obligatorio)" value="${_facEscM(S._manualDir)}" autocomplete="off" oninput="_facM._manualDir=this.value" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:11px;margin-bottom:9px;font-size:14px"><div style="font-size:10px;color:#a16207;margin:-3px 2px 10px">Va impreso en la factura.</div>` : ''}
+    <div style="display:flex;gap:9px;margin-top:4px"><button onclick="_facMManOvClose()" style="flex:1;padding:12px;border-radius:11px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700;font-size:14px;cursor:pointer">Cancelar</button><button onclick="_facMManualOK()" style="flex:1.5;padding:12px;border-radius:11px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:14px;cursor:pointer">💾 Guardar</button></div>
   </div>`;
 }
 function _facMManTipo(t) { resTap(); resHap(6); _facM.manualTipo = t; _facMManOvRender(); }
@@ -1831,7 +1842,7 @@ function _facMSvcOvRender() {
   let ov = document.getElementById('facm-svcov');
   if (!ov) { ov = document.createElement('div'); ov.id = 'facm-svcov'; ov.style.cssText = 'position:fixed;inset:0;z-index:9700;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:18px'; ov.onclick = e => { if (e.target === ov) _facMSvcOvClose(); }; document.body.appendChild(ov); }
   const n = Object.keys(P.sel).length;
-  ov.innerHTML = `<div class="facm-expand" style="width:100%;max-width:380px;background:#fff;border-radius:16px;padding:14px;max-height:70vh;display:flex;flex-direction:column">
+  ov.innerHTML = `<div class="facm-pop" style="width:100%;max-width:380px;background:#fff;border-radius:16px;padding:14px;max-height:70vh;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><span style="font-weight:900;font-size:14px;color:#3d0508">Servicios del catálogo</span><button onclick="_facMSvcOvClose()" style="border:none;background:none;font-size:20px;color:#9ca3af;cursor:pointer">×</button></div>
     <div style="flex:1;overflow-y:auto">
     ${(S.servicios || []).map(sv => { const on = !!P.sel[sv.id]; const d = String(sv.nombre || ''); const sp = d.indexOf(' — '); const tit = sp > 0 ? d.slice(0, sp) : d; const sub = sp > 0 ? d.slice(sp + 3) : '';
@@ -1887,20 +1898,16 @@ async function _facMHist() {
   try { S.historial = await window.SupaAPI.listarComprobantesDia(myOpName); } catch (e) { S.historial = []; }
   S.cargandoHist = false; _facMRender();
 }
-function _facMReenviar(c, canal) {
+// Reenviar por WhatsApp (correo eliminado — decisión dueño). Sin número guardado, wa.me abre
+// el selector de contactos de WhatsApp con el mensaje listo.
+function _facMReenviar(c) {
   resTap(); resHap(8);
   const numero = c.serie + '-' + String(c.numero).padStart(6, '0');
   const pdf = String(c.enlace_pdf || ''); const realPdf = /^https?:\/\//.test(pdf);
   const msg = 'Hola ' + (c.cliente_nombre || '') + ', tu comprobante ' + numero + (realPdf ? ': ' + pdf : ' por S/ ' + (c.total || 0));
-  if (canal === 'wa') {
-    const tel = String(c.cliente_tel || '').replace(/\D/g, '');
-    const href = 'https://wa.me/' + (tel.length === 9 ? '51' + tel : tel) + '?text=' + encodeURIComponent(msg);
-    resOk(); window.open(href, '_blank');
-  } else {
-    const mail = String(c.cliente_email || '');
-    if (!mail) return _facMErr('Este comprobante no tiene correo');
-    resOk(); window.open('mailto:' + mail + '?subject=' + encodeURIComponent('Comprobante ' + numero) + '&body=' + encodeURIComponent(msg), '_blank');
-  }
+  const tel = String(c.cliente_tel || '').replace(/\D/g, '');
+  const href = 'https://wa.me/' + (tel.length === 9 ? '51' + tel : tel) + '?text=' + encodeURIComponent(msg);
+  resOk(); window.open(href, '_blank');
 }
 function _facMAnularToggle(id) { const S = _facM; S.anularId = (S.anularId === id ? null : id); S._anularMotivo = ''; resTap(); resHap(8); _facMRender(); }
 async function _facMAnularEnviar(id) {
@@ -1910,10 +1917,6 @@ async function _facMAnularEnviar(id) {
   const r = await window.SupaAPI.solicitarAnulacion(id, motivo, myOpName);
   if (r && r.ok) { fx('ok'); S.anularId = null; mostrarToast('Solicitud enviada a PS para revisión', 'success'); _facMHist(); }
   else _facMErr((r && r.message || 'No se pudo solicitar').replace(/^.*?:\s*/, ''));
-}
-function _facMPlusOne(r) {
-  const box = document.getElementById('facm-box'); if (box) { const el = document.createElement('div'); el.className = 'facm-plusone'; el.textContent = '+1'; box.appendChild(el); setTimeout(() => el.remove(), 1150); }
-  mostrarToast('✅ ' + r.serie + '-' + String(r.numero).padStart(6, '0') + ' emitido', 'success');
 }
 function _facMTotal() { const total = (_facM.items||[]).reduce((a,it)=>a+(Number(it.cantidad)||0)*(Number(it.precio)||0),0); const grav = _facM.exonerado?0:Math.round(total/1.18*100)/100; return { total: Math.round(total*100)/100, grav, igv: _facM.exonerado?0:Math.round((total-grav)*100)/100 }; }
 // Motor de reglas SUNAT en vivo: devuelve [{ok, dura, txt}] según el estado actual del modal.
@@ -1963,40 +1966,76 @@ function _facMReglasHtml() {
 }
 function _facMPuede() { return _facMReglas().every(r => !r.dura || r.ok); }   // ¿cumple todas las reglas duras?
 function _facMErr(m) { fx('err'); mostrarToast('⚠️ ' + m, 'error'); if (_facM){ _facM.shake=true; _facMRender(); setTimeout(()=>{ if(_facM){_facM.shake=false;_facMRender();} },450); } }
-async function _facMEmitir() {
+// Mini-feed OPTIMISTA de emisiones (arriba del Emitir): "enviando → ✓/⏳/⚠".
+function _facMFeedHtml() {
+  const S = _facM; const f = S._feed || [];
+  if (!f.length) return '';
+  return '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">' + f.map((e, i) => {
+    if (e.estado === 'enviando') return `<div class="facm-feed-it" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:11px;background:#fff7ed;border:1px solid #fed7aa;font-size:12px;color:#9a3412"><span class="facm-spin"></span><span style="flex:1;min-width:0">Emitiendo · ${_facEscM(e.nombre)} · S/ ${e.total.toFixed(2)}</span></div>`;
+    if (e.estado === 'error') return `<div class="facm-feed-it" style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:11px;background:#fef2f2;border:1px solid #fecaca;font-size:11.5px;color:#b91c1c"><span>⚠</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${_facEscM(e._err || 'No se pudo emitir')}</span><button onclick="_facMReintentar(${i})" style="border:none;background:#b91c1c;color:#fff;font-weight:800;font-size:11px;border-radius:7px;padding:5px 11px;cursor:pointer;flex:0 0 auto">Reintentar</button></div>`;
+    const num = e.serie + '-' + String(e.numero).padStart(6, '0'); const pend = e.estado === 'pendiente';
+    return `<div class="facm-feed-it" style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:11px;background:${pend ? '#fefce8' : '#f0fdf4'};border:1px solid ${pend ? '#fde68a' : '#bbf7d0'};font-size:12px;color:${pend ? '#a16207' : '#15803d'}"><span>${pend ? '⏳' : '✓'}</span><span style="flex:1;min-width:0;font-weight:800">${num}${pend ? ' · en proceso' : ''}</span><span style="color:#6b7280">S/ ${e.total.toFixed(2)}</span></div>`;
+  }).join('') + '</div>';
+}
+function _facMRepaintFeed() { const el = document.getElementById('facm-feed'); if (el) el.innerHTML = _facMFeedHtml(); }
+function _facMReintentar(i) { const e = _facM._feed && _facM._feed[i]; if (!e) return; resTap(); resHap(8); _facMSend(e); }
+// EMISIÓN OPTIMISTA: libera el formulario al instante, el feed resuelve en 2º plano.
+function _facMEmitir() {
   const S = _facM;
   if (!S.cliente) return _facMErr('Elige o registra un cliente');
-  const itemsOk = (S.items || []).filter(it => (Number(it.cantidad) || 0) > 0 && (Number(it.precio) || 0) >= 0);
-  if (!itemsOk.length || _facMTotal().total <= 0) return _facMErr('Agrega al menos un servicio con monto');
+  const items = (S.items || []).filter(it => (Number(it.cantidad) || 0) > 0);
+  const t = _facMTotal();
+  if (!items.length || t.total <= 0) return _facMErr('Agrega al menos un servicio con monto');
   if (!_facMPuede()) return _facMErr('Faltan requisitos SUNAT — revisa la lista');
-  const _mp = S.medioPago || '';
-  if (_facMTotal().total >= 2000 && !_mp) return _facMErr('Elige el medio de pago (operación ≥ S/2000 · bancarización)');
-  if (S.emitiendo) return;
-  S.emitiendo = true; const btn = document.getElementById('facm-emitir'); if (btn) { btn.disabled = true; btn.textContent = 'Emitiendo…'; }
+  if (t.total >= 2000 && !S.medioPago) return _facMErr('Elige el medio de pago (operación ≥ S/2000 · bancarización)');
+  if (S._emitCd && (window.performance.now() - S._emitCd) < 600) return;   // anti doble-toque
+  S._emitCd = window.performance.now();
   const cli = S.cliente;
-  const _restoreBtn = () => { if (btn) { btn.disabled = false; btn.textContent = (S.tipo === 1 ? 'Emitir factura' : 'Emitir boleta'); } };
+  const payload = {
+    tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
+    cliente_doc_tipo: cli.doc_tipo, cliente_doc: cli.doc_tipo === '0' ? '' : cli.doc_numero, cliente_nombre: cli.nombre,
+    cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!cli.es_extranjero,
+    items: items.map(it => ({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0 })),
+    exonerado: false, medio_pago: S.medioPago || null, exportacion: false, operador: myOpName,
+    localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)   // idempotente por intento (mismo en reintentos)
+  };
+  const entry = { estado: 'enviando', nombre: cli.nombre, total: t.total, _payload: payload };
+  S._feed = S._feed || []; S._feed.unshift(entry); if (S._feed.length > 5) S._feed.length = 5;
+  fx('emit'); resHap([10, 25, 10]);
+  // libera el form YA — el operador arranca el siguiente sin esperar a SUNAT
+  S.cliente = { doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' };
+  S.items = _facMItemsDefecto(); S.exonerado = false; S.medioPago = ''; S.q = ''; S.resultados = [];
+  _facMRender();
+  _facMSend(entry);
+}
+async function _facMSend(entry) {
+  entry.estado = 'enviando'; entry._err = null; _facMRepaintFeed();
   let r;
-  try {
-    r = await window.SupaAPI.post('emitir_comprobante', {
-      tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
-      cliente_doc_tipo: cli.doc_tipo, cliente_doc: cli.doc_tipo === '0' ? '' : cli.doc_numero, cliente_nombre: cli.nombre,
-      cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!cli.es_extranjero,
-      items: (S.items || []).filter(it => (Number(it.cantidad) || 0) > 0).map(it => ({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0 })),
-      exonerado: false, medio_pago: _mp || null, exportacion: false, operador: myOpName,
-      // B2: localId ESTABLE por intento — se reutiliza en reintentos (dedup) y solo se rota al ÉXITO.
-      localId: (S._localId || (S._localId = 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)))
-    });
-  } catch (e) { r = { status: 'error', message: e.message }; }
-  S.emitiendo = false;
-  if (r && r.status !== 'error' && (r.id || r.numero)) {
-    if (r.estado === 'rechazada') { _facMErr('SUNAT rechazó: ' + String(r.errores || 'revisa los datos').slice(0, 120)); _restoreBtn(); return; }
-    S._localId = null; S.contadorHoy++; _facMPlusOne(r);   // rota localId al éxito
-    if (r.estado === 'pendiente') { fx('warn'); mostrarToast('⏳ En proceso — SUNAT lo confirmará', 'info'); } else fx('emit');  // ★ golpe háptico
-    S.cliente = { doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' };   // listo para el siguiente
-    S.items = _facMItemsDefecto(); S.exonerado = false; S.medioPago = ''; S.q = ''; S.resultados = [];
-    _facMRender();
-    setTimeout(() => fx('ready'), 260);   // pulso sutil "listo para el siguiente"
-  } else { _facMErr((r && r.message || 'No se pudo emitir').replace(/^.*?:\s*/, '')); _restoreBtn(); }
+  try { r = await window.SupaAPI.post('emitir_comprobante', entry._payload); }
+  catch (e) { r = { status: 'error', message: e.message }; }
+  if (!_facM) return;
+  if (r && r.status !== 'error' && (r.id || r.numero) && r.estado !== 'rechazada') {
+    entry.estado = (r.estado === 'pendiente') ? 'pendiente' : 'ok';
+    entry.serie = r.serie; entry.numero = r.numero;
+    _facM.contadorHoy++;
+    fx(entry.estado === 'pendiente' ? 'warn' : 'emit'); resHap([12, 30, 12]);
+    _facMPlusFloat();
+    _facMRepaintFeed(); _facMRepaintHistBadge();
+  } else {
+    entry.estado = 'error';
+    entry._err = String((r && (r.errores || r.message)) || 'No se pudo emitir').replace(/^.*?:\s*/, '').slice(0, 120);
+    fx('err'); resHap([50, 25, 50]);
+    _facMRepaintFeed();
+  }
+}
+function _facMPlusFloat() {
+  const box = document.getElementById('facm-box'); if (!box) return;
+  const el = document.createElement('div'); el.className = 'facm-plusone'; el.textContent = '+1'; box.appendChild(el); setTimeout(() => el.remove(), 1150);
+}
+function _facMRepaintHistBadge() {
+  const b = document.getElementById('facm-histbadge'); const n = _facM.contadorHoy;
+  if (b) b.textContent = n || '';
+  else { const t = document.getElementById('facm-historialtab'); if (t && n) t.insertAdjacentHTML('beforeend', `<span id="facm-histbadge" style="background:#56070c;color:#fff;border-radius:999px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:5px">${n}</span>`); }
 }
 function _facMRender() {
   let ov = document.getElementById('facm-ov');
@@ -2009,6 +2048,7 @@ function _facMRender() {
   // Toggle Boleta/Factura = pastilla DESLIZANTE (segmented control iOS): cambiar NO re-renderiza
   // el modal (todo es casi igual); solo desliza la pastilla y repinta los requisitos con un fade.
   let emitir = `
+    <div id="facm-feed">${_facMFeedHtml()}</div>
     <div style="position:relative;display:flex;background:#f6eef0;border-radius:12px;padding:4px;margin-bottom:12px">
       <div id="facm-tgl-pill" style="position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);background:#fff;border-radius:9px;box-shadow:0 2px 6px rgba(86,7,12,.12);transition:transform .28s cubic-bezier(.34,1.4,.5,1);transform:translateX(${esFactura ? '100%' : '0'})"></div>
       <button id="facm-tgl-b" onclick="_facMSetTipo(2)" style="position:relative;z-index:1;flex:1;padding:9px;border-radius:9px;font-weight:800;font-size:13px;border:none;background:none;cursor:pointer;transition:color .2s;color:${!esFactura ? '#56070c' : '#9b7d80'}">Boleta</button>
@@ -2042,24 +2082,27 @@ function _facMRender() {
       ${pend?'<div style="margin-top:7px;font-size:11px;font-weight:700;color:#a16207;background:#fdf6ec;border-radius:7px;padding:4px 8px">⏳ Anulación en revisión por PS</div>':''}
       ${anulada?'<div style="margin-top:7px;font-size:11px;font-weight:700;color:#9ca3af">Anulada</div>':`
       <div style="display:flex;gap:6px;margin-top:9px">
-        <button onclick='_facMReenviar(${cj},"wa")' style="flex:1;padding:8px;border-radius:9px;border:none;background:#25D366;color:#fff;font-weight:800;font-size:12px;cursor:pointer">💬</button>
-        <button onclick='_facMReenviar(${cj},"mail")' style="flex:1;padding:8px;border-radius:9px;border:1px solid #e5e7eb;background:#fff;color:#56070c;font-weight:800;font-size:12px;cursor:pointer">✉</button>
+        <button onclick='_facMReenviar(${cj})' style="flex:1.6;padding:8px;border-radius:9px;border:none;background:#25D366;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px"><i class="fab fa-whatsapp" style="font-size:15px"></i> Enviar</button>
         <button onclick="_facMAnularToggle('${c.id}')" style="flex:1;padding:8px;border-radius:9px;border:1px solid ${abierto?'#dc2626':'#f0c4c6'};background:${abierto?'#fef2f2':'#fff'};color:#dc2626;font-weight:800;font-size:12px;cursor:pointer">⊘ Anular</button>
       </div>
       ${abierto?`<div class="facm-expand" style="margin-top:8px"><input id="facm-anmot" placeholder="Motivo de la anulación…" value="${_facEscM(S._anularMotivo)}" style="width:100%;padding:9px;border:1px solid #f0c4c6;border-radius:9px;margin-bottom:6px;font-size:13px"><button onclick="_facMAnularEnviar('${c.id}')" style="width:100%;padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#b91c1c,#7f1d1d);color:#fff;font-weight:800;font-size:13px">Enviar solicitud a PS</button><div style="font-size:10px;color:#9ca3af;margin-top:4px;text-align:center">No anula directo — un admin de PS revisa y aprueba.</div></div>`:''}`}
     </div>`;
   }).join('');
 
-  const histBadge = S.contadorHoy ? `<span style="background:#56070c;color:#fff;border-radius:999px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:5px">${S.contadorHoy}</span>` : '';
-  const tabBtn = (id, label, extra) => `<button onclick="_facMTab('${id}')" style="flex:1;padding:9px;border:none;background:none;cursor:pointer;font-weight:800;font-size:13px;border-bottom:2px solid ${S.tab===id?'#56070c':'transparent'};color:${S.tab===id?'#56070c':'#9b7d80'}">${label}${extra||''}</button>`;
+  const histBadge = S.contadorHoy ? `<span id="facm-histbadge" style="background:#56070c;color:#fff;border-radius:999px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:5px">${S.contadorHoy}</span>` : '';
+  const tabBtn = (id, label, extra) => `<button id="facm-${id}tab" onclick="_facMTab('${id}')" style="flex:1;padding:9px;border:none;background:none;cursor:pointer;font-weight:800;font-size:13px;border-bottom:2px solid ${S.tab===id?'#56070c':'transparent'};color:${S.tab===id?'#56070c':'#9b7d80'}">${label}${extra||''}</button>`;
 
   // ANTI-PARPADEO: slideUp SOLO al abrir — un re-render no debe "reaparecer" el modal entero
   const _anim = S.shake ? 'animation:siShakeM .42s' : (S._animado ? '' : 'animation:slideUp .25s ease');
   S._animado = true;
+  // Cambio Emitir⇄Historial SUAVE: el cuerpo mantiene la altura previa (blanco abajo si es corto)
+  // y hace un fade — sin salto brusco. _lockH lo fija _facMTab justo antes de cambiar.
+  const bodyMin = S._lockH ? `min-height:${S._lockH}px;` : '';
+  const bodyFade = S._tabFade ? ' facm-tabfade' : ''; S._tabFade = false;
   ov.innerHTML = `<div id="facm-box" style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;${_anim}">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(140deg,#7a1015,#56070c);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(86,7,12,.3)"><span style="color:#e8b840;display:flex">${_FAC_ICON.replace('<svg ', '<svg width="21" height="21" ')}</span></div><div style="flex:1;font-weight:900;font-size:17px;color:#3d0508">Facturación</div><button onclick="cerrarBoletaMuelle()" style="font-size:24px;color:#9ca3af;background:none;border:none">×</button></div>
     <div style="display:flex;border-bottom:1px solid #f0e6e7;margin-bottom:14px">${tabBtn('emitir','Emitir')}${tabBtn('historial','Historial',histBadge)}</div>
-    ${S.tab === 'emitir' ? emitir : historial}
+    <div id="facm-tabbody" class="${bodyFade}" style="${bodyMin}">${S.tab === 'emitir' ? emitir : historial}</div>
   </div>`;
 
   const g = id => ov.querySelector('#' + id);
