@@ -1,5 +1,5 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v80';
+const CACHE_NAME = 'ops-v81';
 const SHELL = [
     './index.html',
     './app.js',
@@ -61,7 +61,7 @@ self.addEventListener('fetch', e => {
             fetch(e.request)
                 .then(res => {
                     let clone = res.clone();
-                    caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+                    if (e.request.method === "GET") caches.open(CACHE_NAME).then(c => c.put(e.request, clone)).catch(() => {});
                     return res;
                 })
                 .catch(() => caches.match(e.request))
@@ -77,7 +77,7 @@ self.addEventListener('fetch', e => {
         const network = fetch(e.request).then(res => {
             if (res.ok) {
                 const clone = res.clone();
-                caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+                if (e.request.method === "GET") caches.open(CACHE_NAME).then(c => c.put(e.request, clone)).catch(() => {});
             }
             return res;
         });
