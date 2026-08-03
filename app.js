@@ -1886,7 +1886,19 @@ function _facMReglas() {
   }
   return rules;
 }
-function _facMSetMp(v) { _facM.medioPago = v; _facMRender(); }
+function _facMSetMp(v) { _facM.medioPago = v; _facMRepaintSouth(); }
+// Toggle Boleta⇄Factura SUAVE: desliza la pastilla + repinta solo requisitos/total/botón (fade).
+function _facMSetTipo(t) {
+  const S = _facM; if (S.tipo === t) return;
+  S.tipo = t; resTap(); resHap(6);
+  const pill = document.getElementById('facm-tgl-pill'); if (pill) pill.style.transform = t === 1 ? 'translateX(100%)' : 'translateX(0)';
+  const bB = document.getElementById('facm-tgl-b'), bF = document.getElementById('facm-tgl-f');
+  if (bB) bB.style.color = t === 2 ? '#56070c' : '#9b7d80';
+  if (bF) bF.style.color = t === 1 ? '#56070c' : '#9b7d80';
+  const south = document.getElementById('facm-south');
+  if (south) { south.innerHTML = _facMSouthHtml(); south.classList.remove('facm-softfade'); void south.offsetWidth; south.classList.add('facm-softfade'); }
+  else _facMRepaintSouth();
+}
 // Chip de estado SUNAT para el historial
 function _facMChip(c) {
   // baja enviada a SUNAT pero aún no confirmada (asíncrona): no mentir que ya está anulada
@@ -1946,10 +1958,13 @@ function _facMRender() {
   const esFactura = S.tipo === 1;
 
   // ─────────── EMITIR ───────────
+  // Toggle Boleta/Factura = pastilla DESLIZANTE (segmented control iOS): cambiar NO re-renderiza
+  // el modal (todo es casi igual); solo desliza la pastilla y repinta los requisitos con un fade.
   let emitir = `
-    <div style="display:flex;background:#f6eef0;border-radius:12px;padding:4px;margin-bottom:12px">
-      <button onclick="_facM.tipo=2;_facMRender()" style="flex:1;padding:9px;border-radius:9px;font-weight:800;font-size:13px;border:none;cursor:pointer;transition:all .2s;background:${!esFactura?'#fff':'transparent'};color:${!esFactura?'#56070c':'#9b7d80'};box-shadow:${!esFactura?'0 2px 6px rgba(86,7,12,.12)':'none'}">Boleta</button>
-      <button onclick="_facM.tipo=1;_facMRender()" style="flex:1;padding:9px;border-radius:9px;font-weight:800;font-size:13px;border:none;cursor:pointer;transition:all .2s;background:${esFactura?'#fff':'transparent'};color:${esFactura?'#56070c':'#9b7d80'};box-shadow:${esFactura?'0 2px 6px rgba(86,7,12,.12)':'none'}">Factura</button>
+    <div style="position:relative;display:flex;background:#f6eef0;border-radius:12px;padding:4px;margin-bottom:12px">
+      <div id="facm-tgl-pill" style="position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);background:#fff;border-radius:9px;box-shadow:0 2px 6px rgba(86,7,12,.12);transition:transform .28s cubic-bezier(.34,1.4,.5,1);transform:translateX(${esFactura ? '100%' : '0'})"></div>
+      <button id="facm-tgl-b" onclick="_facMSetTipo(2)" style="position:relative;z-index:1;flex:1;padding:9px;border-radius:9px;font-weight:800;font-size:13px;border:none;background:none;cursor:pointer;transition:color .2s;color:${!esFactura ? '#56070c' : '#9b7d80'}">Boleta</button>
+      <button id="facm-tgl-f" onclick="_facMSetTipo(1)" style="position:relative;z-index:1;flex:1;padding:9px;border-radius:9px;font-weight:800;font-size:13px;border:none;background:none;cursor:pointer;transition:color .2s;color:${esFactura ? '#56070c' : '#9b7d80'}">Factura</button>
     </div>
     `;   // "Jalar zarpe" fuera del muelle: es tarea del ADMIN en PS Panel (decisión dueño 2026-08-03)
   if (S.cliente) {
