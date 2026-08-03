@@ -1724,6 +1724,45 @@ async function _facMManualOK() {
   mostrarToast('✓ Cliente registrado', 'success');
 }
 function _facMVarios() { _facMPick({ doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' }); }
+// Cliente incompatible con el tipo → motivo (para pulso rojo). Como PS: Factura exige RUC.
+function _facMCliInvalido() {
+  const S = _facM, c = S.cliente;
+  if (!c || S.tipo !== 1) return '';
+  if (c.doc_tipo === '0') return 'La factura no puede ser a “Varios” — necesita un RUC';
+  if (c.doc_tipo !== '6') return 'La factura necesita un RUC — este cliente no lo tiene';
+  return '';
+}
+// Zona-cliente (chip seleccionado con estado inválido, o buscador). Se repinta en sitio.
+function _facMCliHtml() {
+  const S = _facM;
+  if (S.cliente) {
+    const c = S.cliente, inv = _facMCliInvalido();
+    const bord = inv ? '#dc2626' : '#f0c4c6';
+    const bg = inv ? 'linear-gradient(135deg,#fef2f2,#fee2e2)' : 'linear-gradient(135deg,#fdf2f2,#fbe9ea)';
+    const hint = inv ? `<div style="font-size:10.5px;color:#dc2626;font-weight:800;margin-top:6px;display:flex;align-items:center;gap:5px">⚠ ${inv} <button onclick="_facMClearCliente()" style="margin-left:auto;border:none;background:#dc2626;color:#fff;font-weight:800;font-size:10.5px;border-radius:7px;padding:3px 9px;cursor:pointer">Cambiar</button></div>` : '';
+    return `<div class="facm-row${inv ? ' facm-pulse' : ''}" style="padding:11px 12px;border-radius:12px;background:${bg};border:1.5px solid ${bord};margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="flex:1;min-width:0"><div style="font-weight:800;font-size:14px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(c.nombre)}</div><div style="font-size:11px;color:${inv ? '#dc2626' : '#9b6b6e'}">${_facMDocLbl(c.doc_tipo)}${c.doc_numero ? ' · ' + _facEscM(c.doc_numero) : ''}</div></div>
+        <button onclick="_facMClearCliente()" style="flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:none;background:#fff;color:#9b6b6e;font-size:16px;cursor:pointer">×</button>
+      </div>${hint}
+    </div>`;
+  }
+  // buscador — "Cliente varios" NO aparece en Factura (no aplica; exige RUC)
+  return `<input id="facm-q" autocomplete="off" placeholder="Buscar cliente o documento…" value="${_facEscM(S.q)}" style="width:100%;padding:11px 12px;border:1px solid #e5e7eb;border-radius:11px;font-size:14px;margin-bottom:6px">
+    <div id="facm-drop" style="margin-bottom:6px"></div>
+    ${S.tipo === 1 ? '' : `<button onclick="_facMVarios()" style="width:100%;padding:8px;border-radius:9px;border:1px dashed #e0c9cb;background:none;color:#9b6b6e;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:10px">Cliente varios (sin documento)</button>`}`;
+}
+function _facMBindCli() {
+  const S = _facM; const qi = document.getElementById('facm-q');
+  if (qi) { qi.oninput = e => _facMSearch(e.target.value); if (S.q) { qi.focus(); try { qi.setSelectionRange(qi.value.length, qi.value.length); } catch (e) {} } _facMDrop(); }
+}
+function _facMRepaintCli() { const el = document.getElementById('facm-cli'); if (el) { el.innerHTML = _facMCliHtml(); _facMBindCli(); } }
+// Cliente de un resultado de API (RENIEC/SUNAT): AUTOGRABA para que la próxima búsqueda por
+// NOMBRE lo encuentre en frecuentes (antes solo se guardaba al emitir → no aparecía por nombre).
+async function _facMPickApi(a) {
+  try { window.SupaAPI.guardarClienteFac({ doc_tipo: a.doc_tipo, doc_numero: a.doc_numero, nombre: a.nombre, direccion: a.direccion || null, es_extranjero: a.doc_tipo === '7' }); } catch (e) {}
+  _facMPick(a);
+}
 // ── Servicios como en PS: stepper −/+ por línea, a CERO se elimina, ＋ del catálogo.
 // ANTI-PARPADEO: cantidad/precio/total se actualizan EN SITIO — el modal completo NO se
 // re-renderiza (el re-render replayaba slideUp y "aparecía y reaparecía" todo).
@@ -1831,7 +1870,7 @@ function _facMDrop() {
   // resultados previos visibles MIENTRAS busca (solo spinner cuando no hay nada que mostrar)
   if (S.resultados.length) h = S.resultados.map((c, i) => `<div class="facm-drop-item" style="animation-delay:${i * 30}ms;padding:9px 11px;border-bottom:1px solid #f3e9ea;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center;${S.buscando ? 'opacity:.6' : ''}" onclick='_facMPick(${J(c)})'><span style="font-weight:700;font-size:13px;color:#3d0508">${_facEscM(c.nombre)}</span><span style="font-size:11px;color:#9ca3af;white-space:nowrap">${_facMDocLbl(c.doc_tipo)} ${_facEscM(c.doc_numero)}</span></div>`).join('');
   else if (S.buscando) h = '<div style="padding:10px;text-align:center;color:#9ca3af;font-size:12px">Buscando…</div>';
-  else if (S.apiResult) { const a = S.apiResult; h = `<div class="facm-drop-item" style="padding:11px;cursor:pointer;background:#fdf6ec;border:1px solid #f0d9a8;border-radius:10px;display:flex;justify-content:space-between;gap:8px;align-items:center" onclick='_facMPick(${J({ doc_tipo: a.doc_tipo, doc_numero: a.doc_numero, nombre: a.nombre, direccion: a.direccion })})'><span style="font-weight:800;font-size:13px;color:#3d0508">✓ ${_facEscM(a.nombre)}</span><span style="font-size:11px;color:#a16207;white-space:nowrap">${_facMDocLbl(a.doc_tipo)}</span></div>`; }
+  else if (S.apiResult) { const a = S.apiResult; h = `<div class="facm-drop-item" style="padding:11px;cursor:pointer;background:#fdf6ec;border:1px solid #f0d9a8;border-radius:10px;display:flex;justify-content:space-between;gap:8px;align-items:center" onclick='_facMPickApi(${J({ doc_tipo: a.doc_tipo, doc_numero: a.doc_numero, nombre: a.nombre, direccion: a.direccion })})'><span style="font-weight:800;font-size:13px;color:#3d0508">✓ ${_facEscM(a.nombre)}</span><span style="font-size:11px;color:#a16207;white-space:nowrap">${_facMDocLbl(a.doc_tipo)}</span></div>`; }
   else if (S.noEncontrado) h = `<div class="facm-expand" style="padding:8px 2px"><div style="font-size:12px;color:#9ca3af;margin-bottom:8px">No está en RENIEC/SUNAT ni en tus clientes — puede ser real igual: regístralo.</div><div style="display:flex;gap:8px"><button onclick="_facMClearCliente()" style="flex:1;padding:9px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700;font-size:13px">Limpiar</button><button onclick="_facMManual()" style="flex:1;padding:9px;border-radius:10px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:13px">＋ Registrar cliente</button></div></div>`;
   d.innerHTML = h;
 }
@@ -1895,6 +1934,7 @@ function _facMSetTipo(t) {
   const bB = document.getElementById('facm-tgl-b'), bF = document.getElementById('facm-tgl-f');
   if (bB) bB.style.color = t === 2 ? '#56070c' : '#9b7d80';
   if (bF) bF.style.color = t === 1 ? '#56070c' : '#9b7d80';
+  _facMRepaintCli();   // Varios pasa a inválido (pulso rojo) en Factura; el buscador oculta "Varios"
   const south = document.getElementById('facm-south');
   if (south) { south.innerHTML = _facMSouthHtml(); south.classList.remove('facm-softfade'); void south.offsetWidth; south.classList.add('facm-softfade'); }
   else _facMRepaintSouth();
@@ -1967,17 +2007,7 @@ function _facMRender() {
       <button id="facm-tgl-f" onclick="_facMSetTipo(1)" style="position:relative;z-index:1;flex:1;padding:9px;border-radius:9px;font-weight:800;font-size:13px;border:none;background:none;cursor:pointer;transition:color .2s;color:${esFactura ? '#56070c' : '#9b7d80'}">Factura</button>
     </div>
     `;   // "Jalar zarpe" fuera del muelle: es tarea del ADMIN en PS Panel (decisión dueño 2026-08-03)
-  if (S.cliente) {
-    const c = S.cliente;
-    emitir += `<div class="facm-row" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:12px;background:linear-gradient(135deg,#fdf2f2,#fbe9ea);border:1px solid #f0c4c6;margin-bottom:10px">
-      <div style="flex:1;min-width:0"><div style="font-weight:800;font-size:14px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(c.nombre)}</div><div style="font-size:11px;color:#9b6b6e">${_facMDocLbl(c.doc_tipo)}${c.doc_numero?' · '+_facEscM(c.doc_numero):''}</div></div>
-      <button onclick="_facMClearCliente()" style="flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:none;background:#fff;color:#9b6b6e;font-size:16px;cursor:pointer">×</button>
-    </div>`;
-  } else {
-    emitir += `<input id="facm-q" autocomplete="off" placeholder="Buscar cliente o documento…" value="${_facEscM(S.q)}" style="width:100%;padding:11px 12px;border:1px solid #e5e7eb;border-radius:11px;font-size:14px;margin-bottom:6px">
-    <div id="facm-drop" style="margin-bottom:6px"></div>
-    <button onclick="_facMVarios()" style="width:100%;padding:8px;border-radius:9px;border:1px dashed #e0c9cb;background:none;color:#9b6b6e;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:10px">Cliente varios (sin documento)</button>`;
-  }
+  emitir += `<div id="facm-cli">${_facMCliHtml()}</div>`;
   // ── SERVICIOS como en PS: lista con stepper por línea + ＋ overlay del catálogo ──
   emitir += `<div style="display:flex;align-items:center;justify-content:space-between;margin:2px 0 7px">
       <div style="font-size:11px;color:#6b7280;font-weight:800;letter-spacing:.4px">SERVICIOS</div>
@@ -2025,7 +2055,7 @@ function _facMRender() {
   </div>`;
 
   const g = id => ov.querySelector('#' + id);
-  if (g('facm-q')) { const qi = g('facm-q'); qi.oninput = e => _facMSearch(e.target.value); if (S.q) { qi.focus(); try { qi.setSelectionRange(qi.value.length, qi.value.length); } catch (e) {} } _facMDrop(); }
+  _facMBindCli();
   if (g('facm-mdoc')) { const el = g('facm-mdoc'); el.oninput = e => { S._manualDoc = e.target.value; }; }
   if (g('facm-mnom')) { const el = g('facm-mnom'); el.oninput = e => { S._manualNombre = e.target.value; }; if (!S._manualNombre) el.focus(); }
   if (g('facm-mdir')) { const el = g('facm-mdir'); el.oninput = e => { S._manualDir = e.target.value; }; }

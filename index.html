@@ -149,6 +149,8 @@
     .facm-expand { animation: facmExpand .28s ease both; overflow:hidden; }
     @keyframes facmSoftFade { from{opacity:.35;transform:translateY(3px)} to{opacity:1;transform:translateY(0)} }
     .facm-softfade { animation: facmSoftFade .24s ease both; }
+    @keyframes facmPulse { 0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.0)} 50%{box-shadow:0 0 0 4px rgba(220,38,38,.22)} }
+    .facm-pulse { animation: facmPulse 1.3s ease-in-out infinite; }
     @keyframes facmRowIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     .facm-row { animation: facmRowIn .3s cubic-bezier(.22,.61,.36,1) both; }
     @keyframes facmDropIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
