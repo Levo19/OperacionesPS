@@ -1,10 +1,12 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v83';
+const CACHE_NAME = 'ops-v84';
 const SHELL = [
     './index.html',
     './app.js',
     './supabase-data.js',
     './supabase-shim.js',
+    './comprobante-share.js',
+    './logo.png',
     './manifest.json',
     './icon.svg'
 ];

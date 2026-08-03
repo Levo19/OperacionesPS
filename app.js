@@ -1915,16 +1915,19 @@ async function _facMHist() {
   S.cargandoHist = false; _facMRender();
   _facMAnimHeight(fromH);   // "Cargando…" → lista: anima la altura, no salta
 }
-// Reenviar por WhatsApp (correo eliminado — decisión dueño). Sin número guardado, wa.me abre
-// el selector de contactos de WhatsApp con el mensaje listo.
-function _facMReenviar(c) {
-  resTap(); resHap(8);
-  const numero = c.serie + '-' + String(c.numero).padStart(6, '0');
-  const pdf = String(c.enlace_pdf || ''); const realPdf = /^https?:\/\//.test(pdf);
-  const msg = 'Hola ' + (c.cliente_nombre || '') + ', tu comprobante ' + numero + (realPdf ? ': ' + pdf : ' por S/ ' + (c.total || 0));
-  const tel = String(c.cliente_tel || '').replace(/\D/g, '');
-  const href = 'https://wa.me/' + (tel.length === 9 ? '51' + tel : tel) + '?text=' + encodeURIComponent(msg);
-  resOk(); window.open(href, '_blank');
+// Reenviar por WhatsApp — 3 partes (imagen ticket 80mm + PDF + texto) vía el módulo compartido.
+// Móvil: navigator.share embebe la imagen + texto con enlace PDF. Escritorio/WebView: wa.me con
+// texto + enlaces (imagen y PDF). Robusto en todo dispositivo.
+function _facMReenviar(c, btn) {
+  if (window.CPEShare && window.CPEShare.compartir) {
+    window.CPEShare.compartir(c, { origen: 'ops', tel: c.cliente_tel || '', btn: btn });
+  } else {   // fallback mínimo si el módulo no cargó (sin red)
+    resTap(); resOk();
+    const numero = c.serie + '-' + String(c.numero).padStart(6, '0');
+    const pdf = String(c.enlace_pdf || ''); const realPdf = /^https?:\/\//.test(pdf);
+    const msg = 'Hola ' + (c.cliente_nombre || '') + ', tu comprobante ' + numero + (realPdf ? ': ' + pdf : ' por S/ ' + (c.total || 0));
+    window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+  }
 }
 function _facMAnularToggle(id) { const S = _facM; S.anularId = (S.anularId === id ? null : id); S._anularMotivo = ''; resTap(); resHap(8); _facMRender(); }
 async function _facMAnularEnviar(id) {
@@ -2099,7 +2102,7 @@ function _facMRender() {
       ${pend?'<div style="margin-top:7px;font-size:11px;font-weight:700;color:#a16207;background:#fdf6ec;border-radius:7px;padding:4px 8px">⏳ Anulación en revisión por PS</div>':''}
       ${anulada?'<div style="margin-top:7px;font-size:11px;font-weight:700;color:#9ca3af">Anulada</div>':`
       <div style="display:flex;gap:6px;margin-top:9px">
-        <button onclick='_facMReenviar(${cj})' style="flex:1.6;padding:8px;border-radius:9px;border:none;background:#25D366;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px"><i class="fab fa-whatsapp" style="font-size:15px"></i> Enviar</button>
+        <button onclick='_facMReenviar(${cj},this)' style="flex:1.6;padding:8px;border-radius:9px;border:none;background:#25D366;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px"><i class="fab fa-whatsapp" style="font-size:15px"></i> Enviar</button>
         <button onclick="_facMAnularToggle('${c.id}')" style="flex:1;padding:8px;border-radius:9px;border:1px solid ${abierto?'#dc2626':'#f0c4c6'};background:${abierto?'#fef2f2':'#fff'};color:#dc2626;font-weight:800;font-size:12px;cursor:pointer">⊘ Anular</button>
       </div>
       ${abierto?`<div class="facm-expand" style="margin-top:8px"><input id="facm-anmot" placeholder="Motivo de la anulación…" value="${_facEscM(S._anularMotivo)}" style="width:100%;padding:9px;border:1px solid #f0c4c6;border-radius:9px;margin-bottom:6px;font-size:13px"><button onclick="_facMAnularEnviar('${c.id}')" style="width:100%;padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#b91c1c,#7f1d1d);color:#fff;font-weight:800;font-size:13px">Enviar solicitud a PS</button><div style="font-size:10px;color:#9ca3af;margin-top:4px;text-align:center">No anula directo — un admin de PS revisa y aprueba.</div></div>`:''}`}
