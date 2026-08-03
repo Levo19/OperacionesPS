@@ -1498,7 +1498,7 @@ async function abrirBoletaMuelle() {
     tel: '', email: '',
     items: [], exonerado: false, medioPago: '', _svcPick: null, _precioEdit: null,
     historial: [], cargandoHist: false, contadorHoy: 0,
-    shake: false, _t: null, anularId: null, _anularMotivo: '', _feed: [], _emitCd: 0, _lockH: 0
+    shake: false, _t: null, anularId: null, _anularMotivo: '', _feed: [], _emitCd: 0
   };
   _facM.items = _facMItemsDefecto();
   _facMRender();
@@ -1645,9 +1645,23 @@ function _zarRender(){
 function _facMDocLbl(tipo) { return ({ '1': 'DNI', '6': 'RUC', '4': 'CE', '7': 'Pasaporte', '0': 'Varios' })[tipo] || tipo; }
 function _facMTab(t) {
   const S = _facM; if (S.tab === t) return; fx('sel');
-  const box = document.getElementById('facm-box'); if (box) S._lockH = Math.max(S._lockH || 0, Math.round(box.offsetHeight));   // conserva la altura → sin salto
+  const box = document.getElementById('facm-box'); const fromH = box ? box.offsetHeight : 0;
   S.tab = t; S.anularId = null; S._tabFade = true; _facMRender();
+  _facMAnimHeight(fromH);
   if (t === 'historial') _facMHist();
+}
+// Anima la altura del modal desde fromH hacia su altura NATURAL actual (sin acumular).
+function _facMAnimHeight(fromH) {
+  const box = document.getElementById('facm-box'); if (!box || !fromH) return;
+  const toH = box.offsetHeight;   // ya viene capado por max-height:92vh
+  if (Math.abs(toH - fromH) < 4) return;
+  box.style.height = fromH + 'px'; box.style.overflow = 'hidden';
+  void box.offsetHeight;   // reflow
+  box.style.transition = 'height .28s cubic-bezier(.4,0,.2,1)';
+  box.style.height = toH + 'px';
+  const done = () => { box.style.transition = ''; box.style.height = ''; box.style.overflow = ''; box.removeEventListener('transitionend', done); };
+  box.addEventListener('transitionend', done);
+  setTimeout(done, 380);
 }
 function _facMSearch(q) {
   const S = _facM; S.q = q; S.apiResult = null; S.noEncontrado = false;
@@ -1896,7 +1910,10 @@ function _facMDrop() {
 async function _facMHist() {
   const S = _facM; S.cargandoHist = true; _facMRender();
   try { S.historial = await window.SupaAPI.listarComprobantesDia(myOpName); } catch (e) { S.historial = []; }
+  if (!_facM || _facM.tab !== 'historial') return;
+  const box = document.getElementById('facm-box'); const fromH = box ? box.offsetHeight : 0;
   S.cargandoHist = false; _facMRender();
+  _facMAnimHeight(fromH);   // "Cargando…" → lista: anima la altura, no salta
 }
 // Reenviar por WhatsApp (correo eliminado — decisión dueño). Sin número guardado, wa.me abre
 // el selector de contactos de WhatsApp con el mensaje listo.
@@ -2095,14 +2112,13 @@ function _facMRender() {
   // ANTI-PARPADEO: slideUp SOLO al abrir — un re-render no debe "reaparecer" el modal entero
   const _anim = S.shake ? 'animation:siShakeM .42s' : (S._animado ? '' : 'animation:slideUp .25s ease');
   S._animado = true;
-  // Cambio Emitir⇄Historial SUAVE: el cuerpo mantiene la altura previa (blanco abajo si es corto)
-  // y hace un fade — sin salto brusco. _lockH lo fija _facMTab justo antes de cambiar.
-  const bodyMin = S._lockH ? `min-height:${S._lockH}px;` : '';
+  // Cambio Emitir⇄Historial SUAVE: el cuerpo hace fade y el modal ANIMA su altura hacia el
+  // contenido natural (sin min-height acumulativo — antes crecía y nunca encogía).
   const bodyFade = S._tabFade ? ' facm-tabfade' : ''; S._tabFade = false;
   ov.innerHTML = `<div id="facm-box" style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;${_anim}">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(140deg,#7a1015,#56070c);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(86,7,12,.3)"><span style="color:#e8b840;display:flex">${_FAC_ICON.replace('<svg ', '<svg width="21" height="21" ')}</span></div><div style="flex:1;font-weight:900;font-size:17px;color:#3d0508">Facturación</div><button onclick="cerrarBoletaMuelle()" style="font-size:24px;color:#9ca3af;background:none;border:none">×</button></div>
     <div style="display:flex;border-bottom:1px solid #f0e6e7;margin-bottom:14px">${tabBtn('emitir','Emitir')}${tabBtn('historial','Historial',histBadge)}</div>
-    <div id="facm-tabbody" class="${bodyFade}" style="${bodyMin}">${S.tab === 'emitir' ? emitir : historial}</div>
+    <div id="facm-tabbody" class="${bodyFade}">${S.tab === 'emitir' ? emitir : historial}</div>
   </div>`;
 
   const g = id => ov.querySelector('#' + id);
