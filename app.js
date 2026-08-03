@@ -1649,20 +1649,22 @@ function _facMSearch(q) {
   clearTimeout(S._t);
   const qq = (q || '').trim();
   if (qq.length < 2) { S.resultados = []; S.buscando = false; _facMDrop(); return; }
-  S.buscando = true; _facMDrop();
+  S.buscando = true; _facMDrop();   // los resultados previos SIGUEN visibles mientras busca (sin parpadeo)
+  // capa 1: clientes frecuentes (rápida) — un doc completo (8/11 díg) NO espera el debounce largo
+  const digits = qq.replace(/\D/g, '');
+  const esDocCompleto = digits === qq && (digits.length === 8 || digits.length === 11);
   S._t = setTimeout(async () => {
     let res = [];
     try { res = await window.SupaAPI.buscarContactosFac(qq); } catch (e) {}
     if (S.q.trim() !== qq) return;
     S.resultados = res || [];
-    if (!S.resultados.length) {
-      const digits = qq.replace(/\D/g, '');
-      if (digits.length === 8 || digits.length === 11) {
-        try { const d = await window.SupaAPI.consultarDocumento(digits, digits.length === 8 ? '1' : '6'); if (S.q.trim() !== qq) return; if (d && d.ok && d.nombre) S.apiResult = d; else S.noEncontrado = true; } catch (e) { S.noEncontrado = true; }
-      } else { S.noEncontrado = true; }
-    }
+    if (S.resultados.length) { S.buscando = false; _facMDrop(); return; }
+    _facMDrop();   // sigue "buscando" → capa 2 API
+    if (digits.length === 8 || digits.length === 11) {
+      try { const d = await window.SupaAPI.consultarDocumento(digits, digits.length === 8 ? '1' : '6'); if (S.q.trim() !== qq) return; if (d && d.ok && d.nombre) S.apiResult = d; else S.noEncontrado = true; } catch (e) { S.noEncontrado = true; }
+    } else { S.noEncontrado = true; }
     S.buscando = false; _facMDrop();
-  }, 450);
+  }, esDocCompleto ? 120 : 250);
 }
 function _facMPick(c) {
   const S = _facM; fx('sel');
@@ -1674,15 +1676,38 @@ function _facMPick(c) {
   _facMRender();
 }
 function _facMClearCliente() { fx('sel'); const S = _facM; S._localId = null; S.cliente = null; S.q = ''; S.resultados = []; S.noEncontrado = false; S.apiResult = null; S.manual = false; _facMRender(); }
-// Registro manual COMPLETO como en PS: 4 tipos, dirección fiscal si RUC, y AUTOGRABA el cliente.
-function _facMManual() {
-  resTap(); const S = _facM; S.manual = true; S.noEncontrado = false;
+// ＋ cliente: OVERLAY (como PS) — 4 tipos con sus condiciones (RUC exige domicilio fiscal),
+// autograba el contacto. El overlay vive fuera del modal → cero parpadeo.
+function _facMManual() { _facMManOvOpen(); }
+function _facMManOvOpen() {
+  resTap(); const S = _facM; S.noEncontrado = false;
   const digits = (S.q || '').replace(/\D/g, '');
   S._manualDoc = (S.q || '').trim();
-  S.manualTipo = /^\d{8}$/.test(digits) && digits === S._manualDoc ? '1' : (/^(10|15|17|20)\d{9}$/.test(digits) && digits === S._manualDoc ? '6' : '7');
+  S.manualTipo = (/^\d{8}$/.test(digits) && digits === S._manualDoc) ? '1' : ((/^(10|15|17|20)\d{9}$/.test(digits) && digits === S._manualDoc) ? '6' : '7');
   S._manualNombre = ''; S._manualDir = '';
-  _facMRender();
+  _facMManOvRender();
+  requestAnimationFrame(() => { const el = document.getElementById('facm-mnom'); if (el) el.focus(); });
 }
+function _facMManOvClose() { const ov = document.getElementById('facm-manov'); if (ov) ov.remove(); }
+function _facMManOvRender() {
+  const S = _facM;
+  let ov = document.getElementById('facm-manov');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'facm-manov'; ov.style.cssText = 'position:fixed;inset:0;z-index:9700;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:18px'; ov.onclick = e => { if (e.target === ov) _facMManOvClose(); }; document.body.appendChild(ov); }
+  const segT = [['1', 'DNI'], ['4', 'CE'], ['7', 'Pasaporte'], ['6', 'RUC']];
+  ov.innerHTML = `<div class="facm-expand" style="width:100%;max-width:380px;background:#fff;border-radius:16px;padding:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><span style="font-weight:900;font-size:14px;color:#3d0508">＋ Registrar cliente</span><button onclick="_facMManOvClose()" style="border:none;background:none;font-size:20px;color:#9ca3af;cursor:pointer">×</button></div>
+    <div style="font-size:11px;color:#9b6b6e;margin-bottom:9px">No está en el registro — puede ser real igual. Confirma sus datos:</div>
+    <div style="display:flex;gap:6px;margin-bottom:9px">
+      ${segT.map(d => `<button onclick="_facMManTipo('${d[0]}')" style="flex:1;padding:8px 4px;border-radius:9px;font-weight:700;font-size:11.5px;cursor:pointer;border:1px solid ${S.manualTipo === d[0] ? '#56070c' : '#e5e7eb'};background:${S.manualTipo === d[0] ? '#fdf2f2' : '#fff'};color:${S.manualTipo === d[0] ? '#56070c' : '#6b7280'}">${d[1]}</button>`).join('')}
+    </div>
+    <input id="facm-mdoc" placeholder="N° de documento" value="${_facEscM(S._manualDoc)}" autocomplete="off" oninput="_facM._manualDoc=this.value" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
+    <input id="facm-mnom" placeholder="Nombre / Razón social" value="${_facEscM(S._manualNombre)}" autocomplete="off" oninput="_facM._manualNombre=this.value" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
+    ${S.manualTipo === '6' ? `<input id="facm-mdir" placeholder="Domicilio fiscal *" value="${_facEscM(S._manualDir)}" autocomplete="off" oninput="_facM._manualDir=this.value" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">` : ''}
+    ${S.manualTipo === '6' ? '<div style="font-size:10px;color:#a16207;margin:-2px 0 8px">El RUC necesita domicilio fiscal — va impreso en la factura.</div>' : ''}
+    <div style="display:flex;gap:8px"><button onclick="_facMManOvClose()" style="flex:1;padding:10px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700">Cancelar</button><button onclick="_facMManualOK()" style="flex:1.4;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800">💾 Guardar cliente</button></div>
+  </div>`;
+}
+function _facMManTipo(t) { resTap(); resHap(6); _facM.manualTipo = t; _facMManOvRender(); }
 async function _facMManualOK() {
   const S = _facM;
   const nom = (S._manualNombre || '').trim(), doc = (S._manualDoc || '').trim().toUpperCase(), dir = (S._manualDir || '').trim();
@@ -1692,50 +1717,120 @@ async function _facMManualOK() {
   if (S.manualTipo === '6' && !/^(10|15|17|20)\d{9}$/.test(doc)) return _facMErr('Un RUC tiene 11 dígitos (empieza en 10/15/17/20)');
   if (S.manualTipo === '6' && !dir) return _facMErr('El RUC necesita su domicilio fiscal (obligatorio en factura)');
   resTap(); resHap(10);
+  _facMManOvClose();
   // autograba como cliente frecuente (la próxima búsqueda SÍ lo encuentra) — fire-and-forget
   try { window.SupaAPI.guardarClienteFac({ doc_tipo: S.manualTipo, doc_numero: doc, nombre: nom, direccion: dir || null, es_extranjero: S.manualTipo === '7' }); } catch (e) {}
   _facMPick({ doc_tipo: S.manualTipo, doc_numero: doc, nombre: nom, direccion: dir, es_extranjero: S.manualTipo === '7' });
   mostrarToast('✓ Cliente registrado', 'success');
 }
 function _facMVarios() { _facMPick({ doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' }); }
-// ── Servicios como en PS: lista con stepper −/+ por línea, a CERO se elimina, ＋ del catálogo ──
+// ── Servicios como en PS: stepper −/+ por línea, a CERO se elimina, ＋ del catálogo.
+// ANTI-PARPADEO: cantidad/precio/total se actualizan EN SITIO — el modal completo NO se
+// re-renderiza (el re-render replayaba slideUp y "aparecía y reaparecía" todo).
 function _facMItQty(i, d) {
   const S = _facM; const it = S.items[i]; if (!it) return;
   const nv = Math.max(0, (Number(it.cantidad) || 0) + d);
-  if (nv === 0) { S.items.splice(i, 1); fx('sel'); resHap([8, 20, 8]); _facMRender(); return; }
+  if (nv === 0) { S.items.splice(i, 1); fx('sel'); resHap([8, 20, 8]); _facMRepaintItems(); return; }
   it.cantidad = nv; resTap(); resHap(d > 0 ? 8 : 6);
-  _facMRender();
-  if (d > 0) _facMPlusFx(i);   // DESPUÉS del render — si no, el re-render se come el "+1"
+  const q = document.getElementById('facm-itq-' + i); if (q) { q.textContent = nv; q.animate([{ transform: 'scale(1.35)' }, { transform: 'scale(1)' }], { duration: 160 }); }
+  _facMRepaintSouth();
+  if (d > 0) _facMPlusFx(i);
 }
 function _facMPlusFx(i) {   // "+1" flotante como en PS
   const row = document.querySelector('[data-facm-it="' + i + '"]');
   if (row) { const el = document.createElement('span'); el.className = 'facm-plus1'; el.textContent = '+1'; row.appendChild(el); setTimeout(() => el.remove(), 800); }
 }
 function _facMItPrecioEdit(i) {
-  resTap(); _facM._precioEdit = i; _facMRender();
+  resTap(); const S = _facM; S._precioEdit = i;
+  const chip = document.getElementById('facm-iprice-' + i);
+  if (!chip) return;
+  chip.outerHTML = `<input id="facm-pin-${i}" type="number" inputmode="decimal" value="${S.items[i] ? S.items[i].precio : 0}" onblur="_facMItPrecioSet(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()" style="width:64px;padding:4px 6px;border:1px solid #e0b04a;border-radius:8px;text-align:center;font-weight:800;font-size:12px">`;
   requestAnimationFrame(() => { const el = document.getElementById('facm-pin-' + i); if (el) { el.focus(); el.select(); } });
 }
 function _facMItPrecioSet(i, v) {
   const S = _facM; if (S.items[i]) S.items[i].precio = Math.max(0, parseFloat(v) || 0);
-  S._precioEdit = null; resHap(8); _facMRender();
+  S._precioEdit = null; resHap(8);
+  const el = document.getElementById('facm-pin-' + i);
+  if (el) el.outerHTML = _facMPriceChip(i);
+  _facMRepaintSouth();
 }
-function _facMSvcPickOpen() { resTap(); resHap(8); _facM._svcPick = { sel: {} }; _facMRender(); }
-function _facMSvcPickToggle(id) {
+function _facMPriceChip(i) {
+  const it = _facM.items[i] || { precio: 0 };
+  return `<button id="facm-iprice-${i}" onclick="_facMItPrecioEdit(${i})" title="Toca para editar el precio" style="border:1px solid #f0e6e7;background:#faf7f7;border-radius:8px;padding:4px 8px;font-weight:800;font-size:11.5px;color:#56070c;cursor:pointer;white-space:nowrap">S/ ${it.precio}</button>`;
+}
+function _facMItemRow(it, i) {
+  const d = String(it.nombre || ''); const sp = d.indexOf(' — ');
+  const tit = sp > 0 ? d.slice(0, sp) : d; const sub = sp > 0 ? d.slice(sp + 3) : '';
+  const q = Number(it.cantidad) || 0;
+  return `<div data-facm-it="${i}" style="position:relative;display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid #f0e6e7;border-radius:11px;margin-bottom:6px;background:#fff">
+    <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(tit)}</div>${sub ? `<div style="font-size:10px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(sub)}</div>` : ''}</div>
+    ${_facMPriceChip(i)}
+    <button class="facm-step" onclick="_facMItQty(${i},-1)" style="width:32px;height:32px;border-radius:9px;border:1px solid #e5e7eb;background:#fff;color:#56070c;font-size:17px;font-weight:800;cursor:pointer;line-height:1">−</button>
+    <span id="facm-itq-${i}" style="min-width:20px;text-align:center;font-weight:900;font-size:15px;color:#3d0508;display:inline-block">${q}</span>
+    <button class="facm-step" onclick="_facMItQty(${i},1)" style="width:32px;height:32px;border-radius:9px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-size:17px;font-weight:800;cursor:pointer;line-height:1">+</button>
+  </div>`;
+}
+function _facMItemsHtml() {
+  const rows = (_facM.items || []).map((it, i) => _facMItemRow(it, i)).join('');
+  return rows || '<div style="padding:14px;text-align:center;color:#b91c1c;font-size:12px;border:1px dashed #f0c4c6;border-radius:11px;margin-bottom:8px">Sin servicios — toca ＋ para agregar</div>';
+}
+// Zona sur (mp + reglas + total + botón): depende del total → se repinta junta, EN SITIO.
+function _facMSouthHtml() {
+  const S = _facM, t = _facMTotal();
+  return `${t.total >= 2000 ? `<div style="margin-bottom:10px"><div style="font-size:11px;color:#a16207;font-weight:800;margin-bottom:4px">⚠️ ≥ S/2000 · medio de pago (bancarización)</div><select id="facm-mp" onchange="_facMSetMp(this.value)" style="width:100%;padding:10px;border:1px solid #e0b04a;border-radius:10px;font-weight:700;background:#fffdf5">${['', 'Efectivo', 'Transferencia', 'Yape/Plin', 'Tarjeta', 'Depósito en cuenta'].map(o => `<option value="${o}"${(S.medioPago || '') === o ? ' selected' : ''}>${o || 'Elige…'}</option>`).join('')}</select></div>` : ''}
+    ${_facMReglasHtml()}
+    <div style="display:flex;justify-content:space-between;font-weight:900;font-size:17px;margin-bottom:12px;padding:10px 2px;border-top:1px dashed #e5e7eb;color:#3d0508"><span>TOTAL</span><span id="facm-tt">S/ ${t.total.toFixed(2)}</span></div>
+    <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;box-shadow:0 6px 16px rgba(86,7,12,.32);${_facMPuede() ? '' : 'opacity:.55'}">${S.tipo === 1 ? 'Emitir factura' : 'Emitir boleta'}${_facMPuede() ? '' : ' · faltan requisitos'}</button>`;
+}
+function _facMRepaintItems() { const el = document.getElementById('facm-items'); if (el) el.innerHTML = _facMItemsHtml(); _facMRepaintSouth(); }
+function _facMRepaintSouth() { const el = document.getElementById('facm-south'); if (el) el.innerHTML = _facMSouthHtml(); }
+// ── ＋ servicio: OVERLAY con check (como PS) — no estorba dentro del modal ──
+function _facMSvcOvOpen() { resTap(); resHap(8); _facM._svcPick = { sel: {} }; _facMSvcOvRender(); }
+function _facMSvcOvClose() { _facM._svcPick = null; const ov = document.getElementById('facm-svcov'); if (ov) ov.remove(); }
+function _facMSvcOvRender() {
+  const S = _facM, P = S._svcPick; if (!P) return;
+  let ov = document.getElementById('facm-svcov');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'facm-svcov'; ov.style.cssText = 'position:fixed;inset:0;z-index:9700;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:18px'; ov.onclick = e => { if (e.target === ov) _facMSvcOvClose(); }; document.body.appendChild(ov); }
+  const n = Object.keys(P.sel).length;
+  ov.innerHTML = `<div class="facm-expand" style="width:100%;max-width:380px;background:#fff;border-radius:16px;padding:14px;max-height:70vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><span style="font-weight:900;font-size:14px;color:#3d0508">Servicios del catálogo</span><button onclick="_facMSvcOvClose()" style="border:none;background:none;font-size:20px;color:#9ca3af;cursor:pointer">×</button></div>
+    <div style="flex:1;overflow-y:auto">
+    ${(S.servicios || []).map(sv => { const on = !!P.sel[sv.id]; const d = String(sv.nombre || ''); const sp = d.indexOf(' — '); const tit = sp > 0 ? d.slice(0, sp) : d; const sub = sp > 0 ? d.slice(sp + 3) : '';
+      return `<button data-facm-sv="${String(sv.id).replace(/"/g, '')}" onclick="_facMSvcOvToggle('${String(sv.id).replace(/'/g, '')}')" style="display:flex;width:100%;align-items:center;gap:9px;padding:10px;border-radius:11px;border:1px solid ${on ? '#c9a84c' : '#eee'};background:${on ? '#fdf6ec' : '#fff'};margin-bottom:6px;cursor:pointer;text-align:left;transition:background .15s,border-color .15s">
+        <span class="facm-svchk" style="width:18px;font-weight:900;color:#8a6d1e">${on ? '✓' : ''}</span>
+        <span style="flex:1;min-width:0"><span style="display:block;font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(tit)}</span>${sub ? `<span style="display:block;font-size:10px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(sub)}</span>` : ''}</span>
+        <span style="font-size:11px;color:#9b6b6e;white-space:nowrap">S/ ${sv.precio}</span>
+      </button>`; }).join('') || '<div style="padding:12px;color:#9ca3af;font-size:12px;text-align:center">Catálogo vacío</div>'}
+    </div>
+    <button id="facm-svgo" onclick="_facMSvcPickAdd()" ${n ? '' : 'disabled'} style="margin-top:10px;width:100%;padding:11px;border-radius:11px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:13px;${n ? '' : 'opacity:.5'}">${n ? `✓ Agregar ${n} servicio${n === 1 ? '' : 's'}` : 'Elige uno o más servicios'}</button>
+  </div>`;
+}
+function _facMSvcOvToggle(id) {
   const P = _facM._svcPick; if (!P) return;
-  if (P.sel[id]) delete P.sel[id]; else P.sel[id] = true;
-  resTap(); resHap(6); _facMRender();
+  const on = !P.sel[id];
+  if (on) P.sel[id] = true; else delete P.sel[id];
+  resTap(); resHap(6);
+  // EN SITIO: solo esta fila + el botón (el overlay NO se reconstruye)
+  const it = document.querySelector('[data-facm-sv="' + id + '"]');
+  if (it) { it.style.borderColor = on ? '#c9a84c' : '#eee'; it.style.background = on ? '#fdf6ec' : '#fff'; const chk = it.querySelector('.facm-svchk'); if (chk) chk.textContent = on ? '✓' : ''; }
+  const go = document.getElementById('facm-svgo');
+  if (go) { const n = Object.keys(P.sel).length; go.disabled = !n; go.style.opacity = n ? '' : '.5'; go.textContent = n ? `✓ Agregar ${n} servicio${n === 1 ? '' : 's'}` : 'Elige uno o más servicios'; }
 }
 function _facMSvcPickAdd() {
   const S = _facM, P = S._svcPick; if (!P) return;
-  Object.keys(P.sel).forEach(id => { const sv = (S.servicios || []).find(x => String(x.id) === String(id)); if (sv) S.items.push({ nombre: sv.nombre, precio: Number(sv.precio) || 0, cantidad: 1 }); });
-  S._svcPick = null; fx('sel'); resHap([10, 25, 10]); _facMRender();
+  const ids = Object.keys(P.sel);
+  ids.forEach(id => { const sv = (S.servicios || []).find(x => String(x.id) === String(id)); if (sv) S.items.push({ nombre: sv.nombre, precio: Number(sv.precio) || 0, cantidad: 1 }); });
+  _facMSvcOvClose();
+  if (ids.length) { fx('sel'); resHap([10, 25, 10]); }
+  _facMRepaintItems();
 }
 function _facMDrop() {
   const d = document.getElementById('facm-drop'); if (!d) return;
   const S = _facM; let h = '';
   const J = o => JSON.stringify(o).replace(/'/g, '&#39;');
-  if (S.buscando) h = '<div style="padding:10px;text-align:center;color:#9ca3af;font-size:12px">Buscando…</div>';
-  else if (S.resultados.length) h = S.resultados.map((c, i) => `<div class="facm-drop-item" style="animation-delay:${i * 30}ms;padding:9px 11px;border-bottom:1px solid #f3e9ea;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center" onclick='_facMPick(${J(c)})'><span style="font-weight:700;font-size:13px;color:#3d0508">${_facEscM(c.nombre)}</span><span style="font-size:11px;color:#9ca3af;white-space:nowrap">${_facMDocLbl(c.doc_tipo)} ${_facEscM(c.doc_numero)}</span></div>`).join('');
+  // resultados previos visibles MIENTRAS busca (solo spinner cuando no hay nada que mostrar)
+  if (S.resultados.length) h = S.resultados.map((c, i) => `<div class="facm-drop-item" style="animation-delay:${i * 30}ms;padding:9px 11px;border-bottom:1px solid #f3e9ea;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center;${S.buscando ? 'opacity:.6' : ''}" onclick='_facMPick(${J(c)})'><span style="font-weight:700;font-size:13px;color:#3d0508">${_facEscM(c.nombre)}</span><span style="font-size:11px;color:#9ca3af;white-space:nowrap">${_facMDocLbl(c.doc_tipo)} ${_facEscM(c.doc_numero)}</span></div>`).join('');
+  else if (S.buscando) h = '<div style="padding:10px;text-align:center;color:#9ca3af;font-size:12px">Buscando…</div>';
   else if (S.apiResult) { const a = S.apiResult; h = `<div class="facm-drop-item" style="padding:11px;cursor:pointer;background:#fdf6ec;border:1px solid #f0d9a8;border-radius:10px;display:flex;justify-content:space-between;gap:8px;align-items:center" onclick='_facMPick(${J({ doc_tipo: a.doc_tipo, doc_numero: a.doc_numero, nombre: a.nombre, direccion: a.direccion })})'><span style="font-weight:800;font-size:13px;color:#3d0508">✓ ${_facEscM(a.nombre)}</span><span style="font-size:11px;color:#a16207;white-space:nowrap">${_facMDocLbl(a.doc_tipo)}</span></div>`; }
   else if (S.noEncontrado) h = `<div class="facm-expand" style="padding:8px 2px"><div style="font-size:12px;color:#9ca3af;margin-bottom:8px">No está en RENIEC/SUNAT ni en tus clientes — puede ser real igual: regístralo.</div><div style="display:flex;gap:8px"><button onclick="_facMClearCliente()" style="flex:1;padding:9px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700;font-size:13px">Limpiar</button><button onclick="_facMManual()" style="flex:1;padding:9px;border-radius:10px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:13px">＋ Registrar cliente</button></div></div>`;
   d.innerHTML = h;
@@ -1863,56 +1958,18 @@ function _facMRender() {
       <div style="flex:1;min-width:0"><div style="font-weight:800;font-size:14px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(c.nombre)}</div><div style="font-size:11px;color:#9b6b6e">${_facMDocLbl(c.doc_tipo)}${c.doc_numero?' · '+_facEscM(c.doc_numero):''}</div></div>
       <button onclick="_facMClearCliente()" style="flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:none;background:#fff;color:#9b6b6e;font-size:16px;cursor:pointer">×</button>
     </div>`;
-  } else if (S.manual) {
-    const segT = [['1','DNI'],['4','CE'],['7','Pasaporte'],['6','RUC']];
-    emitir += `<div class="facm-expand" style="margin-bottom:10px">
-      <div style="font-size:11px;color:#9b6b6e;font-weight:700;margin-bottom:7px">No está en el registro — puede ser real igual. Regístralo:</div>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
-        ${segT.map(d=>`<button onclick="_facM.manualTipo='${d[0]}';_facMRender()" style="flex:1;padding:8px 4px;border-radius:9px;font-weight:700;font-size:11.5px;cursor:pointer;border:1px solid ${S.manualTipo===d[0]?'#56070c':'#e5e7eb'};background:${S.manualTipo===d[0]?'#fdf2f2':'#fff'};color:${S.manualTipo===d[0]?'#56070c':'#6b7280'}">${d[1]}</button>`).join('')}
-      </div>
-      <input id="facm-mdoc" placeholder="N° de documento" value="${_facEscM(S._manualDoc)}" autocomplete="off" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
-      <input id="facm-mnom" placeholder="Nombre / Razón social" value="${_facEscM(S._manualNombre)}" autocomplete="off" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
-      ${S.manualTipo==='6' ? `<input id="facm-mdir" placeholder="Domicilio fiscal *" value="${_facEscM(S._manualDir)}" autocomplete="off" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">` : ''}
-      <div style="display:flex;gap:8px"><button onclick="_facMClearCliente()" style="flex:1;padding:10px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700">Cancelar</button><button onclick="_facMManualOK()" style="flex:1;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800">💾 Guardar cliente</button></div>
-    </div>`;
   } else {
     emitir += `<input id="facm-q" autocomplete="off" placeholder="Buscar cliente o documento…" value="${_facEscM(S.q)}" style="width:100%;padding:11px 12px;border:1px solid #e5e7eb;border-radius:11px;font-size:14px;margin-bottom:6px">
     <div id="facm-drop" style="margin-bottom:6px"></div>
     <button onclick="_facMVarios()" style="width:100%;padding:8px;border-radius:9px;border:1px dashed #e0c9cb;background:none;color:#9b6b6e;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:10px">Cliente varios (sin documento)</button>`;
   }
-  // ── SERVICIOS como en PS: lista con stepper por línea + ＋ del catálogo (a cero se elimina) ──
-  const itemRows = (S.items||[]).map((it,i)=>{
-    const d = String(it.nombre||''); const sp = d.indexOf(' — ');
-    const tit = sp>0?d.slice(0,sp):d; const sub = sp>0?d.slice(sp+3):'';
-    const q = Number(it.cantidad)||0;
-    const priceCell = S._precioEdit===i
-      ? `<input id="facm-pin-${i}" type="number" inputmode="decimal" value="${it.precio}" onblur="_facMItPrecioSet(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()" style="width:64px;padding:4px 6px;border:1px solid #e0b04a;border-radius:8px;text-align:center;font-weight:800;font-size:12px">`
-      : `<button onclick="_facMItPrecioEdit(${i})" title="Toca para editar el precio" style="border:1px solid #f0e6e7;background:#faf7f7;border-radius:8px;padding:4px 8px;font-weight:800;font-size:11.5px;color:#56070c;cursor:pointer;white-space:nowrap">S/ ${it.precio}</button>`;
-    return `<div data-facm-it="${i}" style="position:relative;display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid #f0e6e7;border-radius:11px;margin-bottom:6px;background:#fff">
-      <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(tit)}</div>${sub?`<div style="font-size:10px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(sub)}</div>`:''}</div>
-      ${priceCell}
-      <button class="facm-step" onclick="_facMItQty(${i},-1)" style="width:32px;height:32px;border-radius:9px;border:1px solid #e5e7eb;background:#fff;color:#56070c;font-size:17px;font-weight:800;cursor:pointer;line-height:1">−</button>
-      <span style="min-width:20px;text-align:center;font-weight:900;font-size:15px;color:#3d0508">${q}</span>
-      <button class="facm-step" onclick="_facMItQty(${i},1)" style="width:32px;height:32px;border-radius:9px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-size:17px;font-weight:800;cursor:pointer;line-height:1">+</button>
-    </div>`;
-  }).join('');
+  // ── SERVICIOS como en PS: lista con stepper por línea + ＋ overlay del catálogo ──
   emitir += `<div style="display:flex;align-items:center;justify-content:space-between;margin:2px 0 7px">
       <div style="font-size:11px;color:#6b7280;font-weight:800;letter-spacing:.4px">SERVICIOS</div>
-      <button onclick="_facMSvcPickOpen()" title="Agregar servicio del catálogo" style="width:30px;height:30px;border-radius:9px;border:1px dashed #c9a84c;background:#fffdf5;color:#8a6d1e;font-size:16px;font-weight:800;cursor:pointer;line-height:1">＋</button>
+      <button onclick="_facMSvcOvOpen()" title="Agregar servicio del catálogo" style="width:30px;height:30px;border-radius:9px;border:1px dashed #c9a84c;background:#fffdf5;color:#8a6d1e;font-size:16px;font-weight:800;cursor:pointer;line-height:1">＋</button>
     </div>
-    ${itemRows || '<div style="padding:14px;text-align:center;color:#b91c1c;font-size:12px;border:1px dashed #f0c4c6;border-radius:11px;margin-bottom:8px">Sin servicios — toca ＋ para agregar</div>'}`;
-  if (S._svcPick) {
-    const P = S._svcPick; const nSel = Object.keys(P.sel).length;
-    emitir += `<div class="facm-expand" style="border:1px solid #eadfce;background:#faf7f2;border-radius:12px;padding:9px;margin-bottom:8px">
-      ${(S.servicios||[]).map(sv=>{ const on=!!P.sel[sv.id]; return `<button onclick="_facMSvcPickToggle('${String(sv.id).replace(/'/g,'')}')" style="display:flex;width:100%;align-items:center;gap:8px;padding:8px 9px;border-radius:9px;border:1px solid ${on?'#c9a84c':'#eee'};background:${on?'#fdf6ec':'#fff'};margin-bottom:5px;cursor:pointer;text-align:left"><span style="width:16px;font-weight:900;color:#8a6d1e">${on?'✓':''}</span><span style="flex:1;min-width:0;font-weight:700;font-size:12px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(sv.nombre)}</span><span style="font-size:11px;color:#9b6b6e">S/ ${sv.precio}</span></button>`; }).join('') || '<div style="padding:8px;color:#9ca3af;font-size:12px;text-align:center">Catálogo vacío</div>'}
-      <div style="display:flex;gap:8px;margin-top:4px"><button onclick="_facM._svcPick=null;_facMRender()" style="flex:1;padding:8px;border-radius:9px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700;font-size:12px">Cancelar</button><button onclick="_facMSvcPickAdd()" ${nSel?'':'disabled'} style="flex:1.4;padding:8px;border-radius:9px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:12px;${nSel?'':'opacity:.5'}">${nSel?`✓ Agregar ${nSel}`:'Elige servicios'}</button></div>
-    </div>`;
-  }
-  emitir += `
-    ${t.total >= 2000 ? `<div style="margin-bottom:10px"><div style="font-size:11px;color:#a16207;font-weight:800;margin-bottom:4px">⚠️ ≥ S/2000 · medio de pago (bancarización)</div><select id="facm-mp" onchange="_facMSetMp(this.value)" style="width:100%;padding:10px;border:1px solid #e0b04a;border-radius:10px;font-weight:700;background:#fffdf5">${['','Efectivo','Transferencia','Yape/Plin','Tarjeta','Depósito en cuenta'].map(o=>`<option value="${o}"${(S.medioPago||'')===o?' selected':''}>${o||'Elige…'}</option>`).join('')}</select></div>` : ''}
-    ${_facMReglasHtml()}
-    <div style="display:flex;justify-content:space-between;font-weight:900;font-size:17px;margin-bottom:12px;padding:10px 2px;border-top:1px dashed #e5e7eb;color:#3d0508"><span>TOTAL</span><span id="facm-tt">S/ ${t.total.toFixed(2)}</span></div>
-    <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;box-shadow:0 6px 16px rgba(86,7,12,.32);${_facMPuede() ? '' : 'opacity:.55'}">${esFactura?'Emitir factura':'Emitir boleta'}${_facMPuede() ? '' : ' · faltan requisitos'}</button>`;
+    <div id="facm-items">${_facMItemsHtml()}</div>
+    <div id="facm-south">${_facMSouthHtml()}</div>`;
 
   // ─────────── HISTORIAL ───────────
   let historial;
@@ -1943,7 +2000,10 @@ function _facMRender() {
   const histBadge = S.contadorHoy ? `<span style="background:#56070c;color:#fff;border-radius:999px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:5px">${S.contadorHoy}</span>` : '';
   const tabBtn = (id, label, extra) => `<button onclick="_facMTab('${id}')" style="flex:1;padding:9px;border:none;background:none;cursor:pointer;font-weight:800;font-size:13px;border-bottom:2px solid ${S.tab===id?'#56070c':'transparent'};color:${S.tab===id?'#56070c':'#9b7d80'}">${label}${extra||''}</button>`;
 
-  ov.innerHTML = `<div id="facm-box" style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;animation:slideUp .25s ease${S.shake?';animation:siShakeM .42s':''}">
+  // ANTI-PARPADEO: slideUp SOLO al abrir — un re-render no debe "reaparecer" el modal entero
+  const _anim = S.shake ? 'animation:siShakeM .42s' : (S._animado ? '' : 'animation:slideUp .25s ease');
+  S._animado = true;
+  ov.innerHTML = `<div id="facm-box" style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;${_anim}">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(140deg,#7a1015,#56070c);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(86,7,12,.3)"><span style="color:#e8b840;display:flex">${_FAC_ICON.replace('<svg ', '<svg width="21" height="21" ')}</span></div><div style="flex:1;font-weight:900;font-size:17px;color:#3d0508">Facturación</div><button onclick="cerrarBoletaMuelle()" style="font-size:24px;color:#9ca3af;background:none;border:none">×</button></div>
     <div style="display:flex;border-bottom:1px solid #f0e6e7;margin-bottom:14px">${tabBtn('emitir','Emitir')}${tabBtn('historial','Historial',histBadge)}</div>
     ${S.tab === 'emitir' ? emitir : historial}
