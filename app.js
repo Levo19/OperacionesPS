@@ -1871,7 +1871,15 @@ function _facMDrop() {
   if (S.resultados.length) h = S.resultados.map((c, i) => `<div class="facm-drop-item" style="animation-delay:${i * 30}ms;padding:9px 11px;border-bottom:1px solid #f3e9ea;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center;${S.buscando ? 'opacity:.6' : ''}" onclick='_facMPick(${J(c)})'><span style="font-weight:700;font-size:13px;color:#3d0508">${_facEscM(c.nombre)}</span><span style="font-size:11px;color:#9ca3af;white-space:nowrap">${_facMDocLbl(c.doc_tipo)} ${_facEscM(c.doc_numero)}</span></div>`).join('');
   else if (S.buscando) h = '<div style="padding:10px;text-align:center;color:#9ca3af;font-size:12px">Buscando…</div>';
   else if (S.apiResult) { const a = S.apiResult; h = `<div class="facm-drop-item" style="padding:11px;cursor:pointer;background:#fdf6ec;border:1px solid #f0d9a8;border-radius:10px;display:flex;justify-content:space-between;gap:8px;align-items:center" onclick='_facMPickApi(${J({ doc_tipo: a.doc_tipo, doc_numero: a.doc_numero, nombre: a.nombre, direccion: a.direccion })})'><span style="font-weight:800;font-size:13px;color:#3d0508">✓ ${_facEscM(a.nombre)}</span><span style="font-size:11px;color:#a16207;white-space:nowrap">${_facMDocLbl(a.doc_tipo)}</span></div>`; }
-  else if (S.noEncontrado) h = `<div class="facm-expand" style="padding:8px 2px"><div style="font-size:12px;color:#9ca3af;margin-bottom:8px">No está en RENIEC/SUNAT ni en tus clientes — puede ser real igual: regístralo.</div><div style="display:flex;gap:8px"><button onclick="_facMClearCliente()" style="flex:1;padding:9px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700;font-size:13px">Limpiar</button><button onclick="_facMManual()" style="flex:1;padding:9px;border-radius:10px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:13px">＋ Registrar cliente</button></div></div>`;
+  else if (S.noEncontrado) {
+    // Mensaje honesto: por NOMBRE solo se busca en tus clientes (RENIEC/SUNAT es por documento);
+    // por DNI/RUC sí se consultó el registro oficial.
+    const esDoc = /^\d{8}$|^\d{11}$/.test((S.q || '').replace(/\D/g, '')) && (S.q || '').replace(/\D/g, '') === (S.q || '').trim();
+    const msg = esDoc
+      ? 'No está en RENIEC/SUNAT ni en tus clientes — puede ser real igual: regístralo.'
+      : 'No está en tus clientes guardados. Búscalo por su DNI/RUC o regístralo a mano.';
+    h = `<div class="facm-expand" style="padding:8px 2px"><div style="font-size:12px;color:#9ca3af;margin-bottom:8px">${msg}</div><div style="display:flex;gap:8px"><button onclick="_facMClearCliente()" style="flex:1;padding:9px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-weight:700;font-size:13px">Limpiar</button><button onclick="_facMManual()" style="flex:1;padding:9px;border-radius:10px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:13px">＋ Registrar cliente</button></div></div>`;
+  }
   d.innerHTML = h;
 }
 async function _facMHist() {

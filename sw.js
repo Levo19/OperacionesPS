@@ -1,5 +1,5 @@
 // Service Worker — Operaciones PS
-const CACHE_NAME = 'ops-v79';
+const CACHE_NAME = 'ops-v80';
 const SHELL = [
     './index.html',
     './app.js',
@@ -30,6 +30,9 @@ self.addEventListener('activate', e => {
 // Fetch: estrategia mixta
 self.addEventListener('fetch', e => {
     let url = e.request.url;
+
+    // Solo GET es cacheable. HEAD/POST/etc → red nativa (Cache.put revienta con HEAD).
+    if (e.request.method !== 'GET') return;
 
     // En desarrollo local (localhost / 127.0.0.1) → siempre red, nunca cache
     if (url.includes('localhost') || url.includes('127.0.0.1')) {
