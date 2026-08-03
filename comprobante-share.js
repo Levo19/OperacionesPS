@@ -757,11 +757,12 @@ async function compartirCPE(c, opts) {
   if (btn) { btn.setAttribute('aria-disabled', 'true'); btn.style.opacity = '.6'; }
   var restore = function () { if (btn) { btn.removeAttribute('aria-disabled'); btn.style.opacity = ''; btn.innerHTML = btnHtml; } _cpeSending = false; };
   try { if (window.resTap) resTap(); if (window.resHap) resHap(10); } catch (e) {}
-  // imagen + subidas
+  // imagen (nuestra) + PDF: preferir el enlace OFICIAL de NubeFact (más rápido, es el legal).
   var imgBlob = null;
   try { var img = await _facRasterizar(c, fmt); imgBlob = img.blob; } catch (e) {}
-  var links = await Promise.all([_cpeSubir(sb, c, 'pdf', null), imgBlob ? _cpeSubir(sb, c, 'png', imgBlob) : Promise.resolve('')]);
-  var pdfLink = links[0] || (/^https?:/.test(String(c.enlace_pdf || '')) ? c.enlace_pdf : '');
+  var oficial = /^https?:\/\//.test(String(c.enlace_pdf || ''));
+  var links = await Promise.all([oficial ? Promise.resolve('') : _cpeSubir(sb, c, 'pdf', null), imgBlob ? _cpeSubir(sb, c, 'png', imgBlob) : Promise.resolve('')]);
+  var pdfLink = oficial ? c.enlace_pdf : (links[0] || '');
   var imgLink = links[1] || '';
   var msgEmbebido = _cpeMensaje(c, T, pdfLink ? '\n\n📄 Descarga tu comprobante en PDF:\n' + pdfLink : '');
   var msgLinks = _cpeMensaje(c, T, (imgLink ? '\n\n🖼️ Ver tu comprobante (imagen):\n' + imgLink : '') + (pdfLink ? '\n\n📄 Descargar en PDF:\n' + pdfLink : ''));
