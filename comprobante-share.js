@@ -765,7 +765,8 @@ async function compartirCPE(c, opts) {
   // imagen (nuestra) + PDF: preferir el enlace OFICIAL de NubeFact (más rápido, es el legal).
   var imgBlob = null;
   try { var img = await _facRasterizar(c, fmt); imgBlob = img.blob; } catch (e) {}
-  var oficial = /^https?:\/\//.test(String(c.enlace_pdf || ''));
+  // ANULADO: el PDF oficial se ve "válido" (SUNAT no lo estampa) → usar el NUESTRO con sello.
+  var oficial = String(c.estado || '') !== 'anulada' && /^https?:\/\//.test(String(c.enlace_pdf || ''));
   var links = await Promise.all([oficial ? Promise.resolve('') : _cpeSubir(sb, c, 'pdf', null), imgBlob ? _cpeSubir(sb, c, 'png', imgBlob) : Promise.resolve('')]);
   var pdfLink = oficial ? c.enlace_pdf : (links[0] || '');
   var imgLink = links[1] || '';
