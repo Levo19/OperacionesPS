@@ -1,11 +1,11 @@
--- SNAPSHOT VIVO tras revisión 500x (emitir_nota_credito: A4 for update + A6 total_gratuita + persiste total_gratuita en la fila) — _apply_*.js
+-- SNAPSHOT VIVO (emitir_nota_credito: A4 for update + A6 total_gratuita + persiste total_gratuita + total=suma de buckets) — _apply_*.js
 CREATE OR REPLACE FUNCTION public.emitir_nota_credito(p_ref_id text, p_tipo_nota integer DEFAULT 1, p_motivo text DEFAULT 'Anulacion de la operacion'::text)
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public', 'auth', 'extensions'
 AS $function$
-declare v_o comprobantes; v_cfg facturacion_config; v_num int; v_body jsonb; v_resp text; v_j jsonb; v_id text; v_estado text; v_pdf text; v_try int; v_errlow text; v_ncgra numeric;
+declare v_o comprobantes; v_cfg facturacion_config; v_num int; v_body jsonb; v_resp text; v_j jsonb; v_id text; v_estado text; v_pdf text; v_try int; v_errlow text; v_ncgra numeric; v_nctot numeric;
 begin
   perform _req_admin();
   select * into v_o from comprobantes where id = p_ref_id for update;
@@ -15,6 +15,7 @@ begin
 
   select * into v_cfg from facturacion_config where id=1;
   select coalesce(sum(round((i->>'cantidad')::numeric*(i->>'precio')::numeric,2)),0) into v_ncgra from jsonb_array_elements(v_o.items) i where coalesce(i->>'afectacion','')='gratuito';
+  v_nctot := round(coalesce(v_o.total_gravada,0)+coalesce(v_o.total_exonerada,0)+coalesce(v_o.total_inafecta,0)+coalesce(v_o.total_igv,0),2);
   -- A3: serializar la numeración de NC por serie (lock tx-local), como la factura con FOR UPDATE sobre series.
   -- Evita que dos NC concurrentes calculen el mismo max()+1.
   perform pg_advisory_xact_lock(hashtext('nc:'||v_o.serie));
@@ -26,7 +27,7 @@ begin
         total_gravada,total_exonerada,total_inafecta,total_igv,total,total_gratuita,items,estado,enlace_pdf,qr,
         doc_modifica_tipo,doc_modifica_serie,doc_modifica_numero,errores,origen)
       values(3,v_o.serie,v_num,v_o.moneda,v_o.cliente_doc_tipo,v_o.cliente_doc,v_o.cliente_nombre,
-        v_o.total_gravada,v_o.total_exonerada,coalesce(v_o.total_inafecta,0),v_o.total_igv,v_o.total,coalesce(v_ncgra,0),v_o.items,'stub','(demo) NC',
+        v_o.total_gravada,v_o.total_exonerada,coalesce(v_o.total_inafecta,0),v_o.total_igv,v_nctot,coalesce(v_ncgra,0),v_o.items,'stub','(demo) NC',
         '(demo)',v_o.tipo,v_o.serie,v_o.numero,coalesce(p_motivo,'NC'),'panel')
       returning id into v_id;
     if p_tipo_nota = 1 then update comprobantes set estado='anulada', anulacion_estado='aprobada' where id=p_ref_id; end if;
@@ -45,7 +46,7 @@ begin
       'fecha_de_emision', to_char((now() at time zone 'America/Lima')::date,'DD-MM-YYYY'),
       'moneda', case when v_o.moneda='USD' then 2 else 1 end, 'porcentaje_de_igv', 18,
       'total_gravada', v_o.total_gravada, 'total_exonerada', v_o.total_exonerada, 'total_inafecta', coalesce(v_o.total_inafecta,0),
-      'total_igv', v_o.total_igv, 'total', v_o.total,
+      'total_igv', v_o.total_igv, 'total', v_nctot,
       'observaciones', coalesce(p_motivo,'Anulacion'),
       'enviar_automaticamente_a_la_sunat', true,
       'items', _nf_items(v_o.items, coalesce(v_o.exonerado,false), coalesce(v_o.es_exportacion,false)));
@@ -70,7 +71,7 @@ begin
       total_gravada,total_exonerada,total_inafecta,total_igv,total,total_gratuita,items,estado,enlace_pdf,enlace_xml,enlace_cdr,qr,hash,
       aceptada_por_sunat,sunat_descripcion,nf_respuesta,doc_modifica_tipo,doc_modifica_serie,doc_modifica_numero,errores,origen)
     values(3,v_o.serie,v_num,v_o.moneda,v_o.cliente_doc_tipo,v_o.cliente_doc,v_o.cliente_nombre,
-      v_o.total_gravada,v_o.total_exonerada,coalesce(v_o.total_inafecta,0),v_o.total_igv,v_o.total,coalesce(v_ncgra,0),v_o.items,'aceptada',
+      v_o.total_gravada,v_o.total_exonerada,coalesce(v_o.total_inafecta,0),v_o.total_igv,v_nctot,coalesce(v_ncgra,0),v_o.items,'aceptada',
       v_pdf,v_j->>'enlace_del_xml',v_j->>'enlace_del_cdr',v_j->>'cadena_para_codigo_qr',v_j->>'codigo_hash',
       true,v_j->>'sunat_description',v_j,v_o.tipo,v_o.serie,v_o.numero,coalesce(p_motivo,'NC'),'panel')
     returning id into v_id;

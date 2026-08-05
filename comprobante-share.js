@@ -1,7 +1,7 @@
-// comprobante-share.js — MÓDULO COMPARTIDO CPE (OPS muelle).
-// Funciones de render/ticket/PDF COPIADAS VERBATIM del PS Panel (código probado) + una función
-// de compartir propia adaptada a OPS. Expone window.CPEShare.compartir(c, {origen, tel, btn}).
-// NO editar a mano las funciones _fac*: se regeneran desde PS con el extractor.
+// comprobante-share.js — MÓDULO COMPARTIDO CPE (OPS muelle). GENERADO por _build_cpe_module.js.
+// Funciones de render/ticket/PDF COPIADAS VERBATIM del PS Panel (código probado) + compartir propio de OPS.
+// Expone window.CPEShare.compartir(c, {origen, tel, btn}). NO editar a mano las _fac*: regenerar con
+//   node _build_cpe_module.js   (extrae de C:/Users/ISO/PS/index.html)
 (function () {
   'use strict';
   // stub inofensivo: _facGenPDF referencia _facState._pdf.fmt como fallback; aquí SIEMPRE pasamos fmt.
@@ -9,21 +9,21 @@
   // Inyecta la CSS del ticket (.fpdf-*) una sola vez.
   if (!document.getElementById('cpe-share-css')) {
     var st = document.createElement('style'); st.id = 'cpe-share-css';
-    st.textContent = ".fpdf-paper { position:relative; background:#fff; color:#1a1a1a; box-shadow:0 10px 30px rgba(0,0,0,.4); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }\n/* Sello ANULADO — diagonal, sobre el ticket, sin tapar la lectura de los datos */\n.fpdf-anulado { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:5; overflow:hidden; }\n.fpdf-anulado span { transform:rotate(-24deg); border:4px solid rgba(168,28,45,.55); color:rgba(168,28,45,.55); font-weight:900; letter-spacing:.12em; padding:6px 22px; border-radius:8px; font-size:34px; white-space:nowrap; text-transform:uppercase; }\n.fpdf-paper.mm80 .fpdf-anulado span { font-size:26px; border-width:3px; padding:4px 14px; }\n.fpdf-paper.mm80 { width:280px; padding:16px 14px; border-radius:4px; font-size:11px; line-height:1.42; }\n.fpdf-paper.a4 { width:430px; max-width:100%; padding:26px 26px; border-radius:3px; font-size:12px; line-height:1.5; }\n/* A4 apaisado (landscape) — fiel al PDF */\n.fpdf-paper.a4l { width:100%; max-width:640px; padding:20px 22px; border-radius:3px; font-size:11px; line-height:1.45; }\n.fpdf-a4-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }\n.fpdf-a4-emisor { display:flex; align-items:flex-start; gap:11px; min-width:0; flex:1 1 auto; }\n.fpdf-a4-emisor > div { min-width:0; }\n.fpdf-a4-emisor img { height:46px; flex:0 0 auto; }\n.fpdf-a4-docbox { flex:0 0 auto; text-align:center; border:1px solid #A81C2D; border-radius:5px; padding:8px 12px; width:150px; }\n.fpdf-a4-meta { display:flex; justify-content:space-between; gap:16px; font-size:10.5px; }\n.fpdf-a4-metacol { min-width:0; }\n.fpdf-a4-metacol > div { padding:1px 0; }\n.fpdf-a4-metacol.r { text-align:right; }\n.fpdf-a4-meta .lbl { color:#A81C2D; font-weight:800; font-size:8.5px; letter-spacing:.04em; margin-right:4px; }\n.fpdf-a4-body { display:flex; gap:14px; align-items:flex-start; margin-top:11px; }\n.fpdf-a4-tbl { flex:1 1 auto; min-width:0; }\n.fpdf-a4-tot { flex:0 0 36%; max-width:220px; min-width:0; background:#faf6ef; border:1px solid #A81C2D; border-radius:5px; padding:10px 12px; font-size:11px; }\n.fpdf-a4-tot .fpdf-tot-row span:first-child { min-width:0; }\n.fpdf-a4-tot b, .fpdf-a4-tot .fpdf-tot-grand span:last-child { white-space:nowrap; }\n@media(max-width:560px){\n  .fpdf-paper.a4 { width:100%; padding:18px 16px; } .fpdf-paper.mm80 { width:250px; }\n  .fpdf-paper.a4l { padding:13px 13px; font-size:9.5px; }\n  .fpdf-paper.a4l .fpdf-brand { font-size:13px !important; }\n  .fpdf-a4-emisor { gap:7px; } .fpdf-a4-emisor img { height:30px; }\n  .fpdf-a4-docbox { width:108px; padding:5px 6px; }\n  .fpdf-a4-docbox > div:first-child { font-size:8.5px !important; }\n  .fpdf-a4-docbox > div:last-child { font-size:10.5px !important; }\n  .fpdf-a4-body { gap:8px; }\n  .fpdf-a4-tot { flex-basis:41%; padding:8px 6px; font-size:9px; }\n  .fpdf-a4-tot .fpdf-tot-grand { font-size:10px; margin-top:3px; padding-top:4px; }\n  .fpdf-a4-tot .fpdf-tot-row { gap:4px; }\n  .fpdf-a4-tbl { font-size:9px; }\n}\n.fpdf-brand { font-weight:900; letter-spacing:-.4px; color:#A81C2D; }\n.fpdf-gold { color:#8a6d1f; }\n.fpdf-hr { border:none; border-top:1px dashed #c9c1c1; margin:9px 0; }\n.fpdf-hr-solid { border:none; border-top:1.5px solid #A81C2D; margin:9px 0; }\n.fpdf-tbl { width:100%; border-collapse:collapse; }\n.fpdf-tbl th { text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:.03em; color:#A81C2D; border-bottom:1px solid #A81C2D; padding:4px 2px; }\n.fpdf-tbl td { padding:4px 2px; border-bottom:1px solid #eee; vertical-align:top; }\n.fpdf-tbl .num { text-align:right; white-space:nowrap; }\n.fpdf-tot-row { display:flex; justify-content:space-between; gap:12px; padding:1.5px 0; }\n.fpdf-tot-grand { font-weight:900; font-size:14px; color:#A81C2D; border-top:1.5px solid #A81C2D; margin-top:4px; padding-top:5px; }\n.fpdf-foot { margin-top:10px; font-size:8.5px; color:#666; line-height:1.4; text-align:center; }\n";
+    st.textContent = ".fpdf-paper { position:relative; background:#fff; color:#1a1a1a; box-shadow:0 10px 30px rgba(0,0,0,.4); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }\n/* Sello ANULADO — diagonal, sobre el ticket, sin tapar la lectura de los datos */\n.fpdf-anulado { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:5; overflow:hidden; }\n.fpdf-anulado span { transform:rotate(-24deg); border:4px solid rgba(168,28,45,.55); color:rgba(168,28,45,.55); font-weight:900; letter-spacing:.12em; padding:6px 22px; border-radius:8px; font-size:34px; white-space:nowrap; text-transform:uppercase; }\n.fpdf-paper.mm80 .fpdf-anulado span { font-size:26px; border-width:3px; padding:4px 14px; }\n.fpdf-paper.mm80 { width:280px; padding:16px 14px; border-radius:4px; font-size:11px; line-height:1.42; }\n.fpdf-paper.a4 { width:430px; max-width:100%; padding:26px 26px; border-radius:3px; font-size:12px; line-height:1.5; }\n/* A4 apaisado (landscape) — fiel al PDF */\n.fpdf-paper.a4l { width:100%; max-width:640px; padding:20px 22px; border-radius:3px; font-size:11px; line-height:1.45; }\n.fpdf-a4-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }\n.fpdf-a4-emisor { display:flex; align-items:flex-start; gap:11px; min-width:0; flex:1 1 auto; }\n.fpdf-a4-emisor > div { min-width:0; }\n.fpdf-a4-emisor img { height:46px; flex:0 0 auto; }\n.fpdf-a4-docbox { flex:0 0 auto; text-align:center; border:1px solid #A81C2D; border-radius:5px; padding:8px 12px; width:150px; }\n.fpdf-a4-meta { display:flex; justify-content:space-between; gap:16px; font-size:10.5px; }\n.fpdf-a4-metacol { min-width:0; }\n.fpdf-a4-metacol > div { padding:1px 0; }\n.fpdf-a4-metacol.r { text-align:right; }\n.fpdf-a4-meta .lbl { color:#A81C2D; font-weight:800; font-size:8.5px; letter-spacing:.04em; margin-right:4px; }\n.fpdf-a4-body { display:flex; gap:14px; align-items:flex-start; margin-top:11px; }\n.fpdf-a4-tbl { flex:1 1 auto; min-width:0; }\n.fpdf-a4-tot { flex:0 0 36%; max-width:220px; min-width:0; background:#faf6ef; border:1px solid #A81C2D; border-radius:5px; padding:10px 12px; font-size:11px; }\n.fpdf-a4-tot .fpdf-tot-row span:first-child { min-width:0; }\n.fpdf-a4-tot b, .fpdf-a4-tot .fpdf-tot-grand span:last-child { white-space:nowrap; }\n@media(max-width:560px){\n  .fpdf-paper.a4 { width:100%; padding:18px 16px; } .fpdf-paper.mm80 { width:250px; }\n  .fpdf-paper.a4l { padding:13px 13px; font-size:9.5px; }\n  .fpdf-paper.a4l .fpdf-brand { font-size:13px !important; }\n  .fpdf-a4-emisor { gap:7px; } .fpdf-a4-emisor img { height:30px; }\n  .fpdf-a4-docbox { width:108px; padding:5px 6px; }\n  .fpdf-a4-docbox > div:first-child { font-size:8.5px !important; }\n  .fpdf-a4-docbox > div:last-child { font-size:10.5px !important; }\n  .fpdf-a4-body { gap:8px; }\n  .fpdf-a4-tot { flex-basis:41%; padding:8px 6px; font-size:9px; }\n  .fpdf-a4-tot .fpdf-tot-grand { font-size:10px; margin-top:3px; padding-top:4px; }\n  .fpdf-a4-tot .fpdf-tot-row { gap:4px; }\n  .fpdf-a4-tbl { font-size:9px; }\n}\n.fpdf-brand { font-weight:900; letter-spacing:-.4px; color:#A81C2D; }\n.fpdf-gold { color:#8a6d1f; }\n.fpdf-hr { border:none; border-top:1px dashed #c9c1c1; margin:9px 0; }\n.fpdf-hr-solid { border:none; border-top:1.5px solid #A81C2D; margin:9px 0; }\n.fpdf-tbl { width:100%; border-collapse:collapse; }\n.fpdf-tbl th { text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:.03em; color:#A81C2D; border-bottom:1px solid #A81C2D; padding:4px 2px; }\n.fpdf-tbl td { padding:4px 2px; border-bottom:1px solid #eee; vertical-align:top; }\n.fpdf-tbl .num { text-align:right; white-space:nowrap; }\n.fpdf-tot-row { display:flex; justify-content:space-between; gap:12px; padding:1.5px 0; }\n.fpdf-tot-grand { font-weight:900; font-size:14px; color:#A81C2D; border-top:1.5px solid #A81C2D; margin-top:4px; padding-top:5px; }\n.fpdf-foot { margin-top:10px; font-size:8.5px; color:#666; line-height:1.4; text-align:center; }";
     document.head.appendChild(st);
   }
 
-// ── Constantes ──
+// ── Constantes (verbatim PS) ──
 const _FAC_EMISOR = { marca: 'PARACAS SIGHTS & TOURS', razon: 'PARACAS SIGHTS & TOURS AGENCIA DE VIAJES Y TURISMO S.A.C.', ruc: '20494562716', direccion: 'Gral. José de San Martín Mz. E Lt. 8 - A.H. HH.UU. de Oficio, Paracas - Pisco - Ica', actividad: '7912 - Actividades de operadores turísticos', web: 'paracas' };
 const _FAC_DETRACCION = { rate: 0.12, umbral: 700, codigo: '037', concepto: 'Demás servicios gravados', banco: 'Banco de la Nación', cuenta: '' };
 const _FAC_UNIDAD = 'ZZ';
 // caches de carga perezosa (declaradas fuera de las funciones en PS)
 let _facJsPDFPromise = null, _facH2CPromise = null, _facQRPromise = null, _facLogoPromise = null;
 
-// ── Funciones (verbatim PS) ──
-const _facMoney = v => (Number(v) || 0).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });;
+// ── Funciones del ticket (verbatim PS) ──
+const _facMoney = v => (Number(v) || 0).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const _facEsc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));;
+const _facEsc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function _facEnsureJsPDF() {
   if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
@@ -171,7 +171,7 @@ function _facDetraccion(c, T) {
   // Exportación (0% IGV) NO está sujeta a detracción — es una operación sin porción gravada.
   if ((Number(T && T.exportacion) || 0) > 0 || (Number(T && T.grav) || 0) <= 0) return null;
   var total = Number(T && T.total) || 0;
-  if (total < _FAC_DETRACCION.umbral) return null;
+  if (total <= _FAC_DETRACCION.umbral) return null;   // SPOT aplica a operaciones MAYORES a S/700 (backend: v_total > 700)
   return {
     rate: _FAC_DETRACCION.rate,
     monto: Math.round(total * _FAC_DETRACCION.rate * 100) / 100,
@@ -716,6 +716,9 @@ async function _facGenPDF(c, fmtOverride) {
   return doc;
 }
 
+// ── Compartir (propio de OPS) ──
+var _cpeSending = false;   // guard de reentrada de compartirCPE (declarado a nivel de módulo)
+// ── Compartir (propio de OPS) ──
 // ── Subida a Storage (bucket comprobante-pdfs) → enlace firmado ~1 año. '' si falla. ──
 async function _cpeSubir(sb, c, ext, blobPng) {
   try {
@@ -731,6 +734,7 @@ async function _cpeSubir(sb, c, ext, blobPng) {
     return (sd && sd.data && sd.data.signedUrl) || '';
   } catch (e) { return ''; }
 }
+
 // Mensaje profesional del muelle (cálido). linksBlock entre cuerpo y cierre.
 function _cpeMensaje(c, T, linksBlock) {
   var num = _facNumFmt(c), tipo = _facTipoWord(c);
@@ -743,11 +747,12 @@ function _cpeMensaje(c, T, linksBlock) {
     + (linksBlock || '')
     + '\n\n¡Gracias por navegar con nosotros! 🐧\n*' + marca + '* — ¡te esperamos pronto!';
 }
+
 function _cpePuedeArchivos() {
   try { return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [new File([new Blob(['x'])], 't.png', { type: 'image/png' })] })); }
   catch (e) { return false; }
 }
-var _cpeSending = false;
+
 // origen='ops' → imagen 80mm. tel opcional. btn: botón para spinner.
 async function compartirCPE(c, opts) {
   opts = opts || {};
@@ -785,5 +790,6 @@ async function compartirCPE(c, opts) {
   else window.open(url, '_blank', 'noopener');
   restore(); try { if (window.resOk) resOk(); } catch (e) {}
 }
+
 window.CPEShare = { compartir: compartirCPE, rasterizar: function (c, fmt) { return _facRasterizar(c, fmt); } };
 })();
