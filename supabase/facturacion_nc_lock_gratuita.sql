@@ -1,4 +1,4 @@
--- SNAPSHOT VIVO tras revisión 500x (emitir_nota_credito) — patch aplicado por _apply_*.js
+-- SNAPSHOT VIVO tras revisión 500x (emitir_nota_credito: A4 for update + A6 total_gratuita + persiste total_gratuita en la fila) — _apply_*.js
 CREATE OR REPLACE FUNCTION public.emitir_nota_credito(p_ref_id text, p_tipo_nota integer DEFAULT 1, p_motivo text DEFAULT 'Anulacion de la operacion'::text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -23,10 +23,10 @@ begin
 
   if not (v_cfg.activo and coalesce(v_cfg.nubefact_ruta,'')<>'' and coalesce(v_cfg.nubefact_token,'')<>'') then
     insert into comprobantes(tipo,serie,numero,moneda,cliente_doc_tipo,cliente_doc,cliente_nombre,
-        total_gravada,total_exonerada,total_inafecta,total_igv,total,items,estado,enlace_pdf,qr,
+        total_gravada,total_exonerada,total_inafecta,total_igv,total,total_gratuita,items,estado,enlace_pdf,qr,
         doc_modifica_tipo,doc_modifica_serie,doc_modifica_numero,errores,origen)
       values(3,v_o.serie,v_num,v_o.moneda,v_o.cliente_doc_tipo,v_o.cliente_doc,v_o.cliente_nombre,
-        v_o.total_gravada,v_o.total_exonerada,coalesce(v_o.total_inafecta,0),v_o.total_igv,v_o.total,v_o.items,'stub','(demo) NC',
+        v_o.total_gravada,v_o.total_exonerada,coalesce(v_o.total_inafecta,0),v_o.total_igv,v_o.total,coalesce(v_ncgra,0),v_o.items,'stub','(demo) NC',
         '(demo)',v_o.tipo,v_o.serie,v_o.numero,coalesce(p_motivo,'NC'),'panel')
       returning id into v_id;
     if p_tipo_nota = 1 then update comprobantes set estado='anulada', anulacion_estado='aprobada' where id=p_ref_id; end if;
@@ -67,10 +67,10 @@ begin
   if v_estado is null then raise exception 'NC_SIN_NUMERO_LIBRE: no se encontró número libre para la NC en la serie %', v_o.serie; end if;
 
   insert into comprobantes(tipo,serie,numero,moneda,cliente_doc_tipo,cliente_doc,cliente_nombre,
-      total_gravada,total_exonerada,total_inafecta,total_igv,total,items,estado,enlace_pdf,enlace_xml,enlace_cdr,qr,hash,
+      total_gravada,total_exonerada,total_inafecta,total_igv,total,total_gratuita,items,estado,enlace_pdf,enlace_xml,enlace_cdr,qr,hash,
       aceptada_por_sunat,sunat_descripcion,nf_respuesta,doc_modifica_tipo,doc_modifica_serie,doc_modifica_numero,errores,origen)
     values(3,v_o.serie,v_num,v_o.moneda,v_o.cliente_doc_tipo,v_o.cliente_doc,v_o.cliente_nombre,
-      v_o.total_gravada,v_o.total_exonerada,coalesce(v_o.total_inafecta,0),v_o.total_igv,v_o.total,v_o.items,'aceptada',
+      v_o.total_gravada,v_o.total_exonerada,coalesce(v_o.total_inafecta,0),v_o.total_igv,v_o.total,coalesce(v_ncgra,0),v_o.items,'aceptada',
       v_pdf,v_j->>'enlace_del_xml',v_j->>'enlace_del_cdr',v_j->>'cadena_para_codigo_qr',v_j->>'codigo_hash',
       true,v_j->>'sunat_description',v_j,v_o.tipo,v_o.serie,v_o.numero,coalesce(p_motivo,'NC'),'panel')
     returning id into v_id;
