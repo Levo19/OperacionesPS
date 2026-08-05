@@ -43,7 +43,9 @@ chk('RPC set_detraccion_voucher existe', (await c.query("select 1 from pg_proc p
 // smoke: set en un comprobante fantasma → NO_EXISTE (ejercita _req_staff + update)
 const adm=(await c.query("select p.auth_uid::text u from equipo p join equipo_accesos a on a.equipo_id=p.id where a.app='ps' and a.rol='admin' and p.activo and a.activo and p.auth_uid is not null limit 1")).rows[0];
 if(adm){ await c.query("select set_config('request.jwt.claims',$1,true)",[J({sub:adm.u,role:'authenticated'})]);
+  await c.query('savepoint sv');   // CRÍTICO: el smoke lanza NO_EXISTE → sin savepoint aborta la TX y el commit = rollback
   let raised=false; try{ await c.query("select set_detraccion_voucher('no-existe-xyz','voucher/x.jpg')"); }catch(e){ raised=/NO_EXISTE/.test(e.message); }
+  await c.query('rollback to savepoint sv');
   chk('smoke: set en id inexistente → NO_EXISTE', raised);
 }
 if(!pass){await c.query('rollback');console.log('\n✗ ROLLBACK');process.exit(1);}
