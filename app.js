@@ -1725,8 +1725,15 @@ function _facMSouthHtml() {
   const S = _facM, t = _facMTotal();
   const puede = t.total > 0 && _facMPuede();   // sin monto cobrado el botón se atenúa (no solo al tocarlo)
   const hint = t.total <= 0 ? ' · agrega un servicio' : (_facMPuede() ? '' : ' · faltan requisitos');
+  const detrM = S.tipo === 1 && !S.export && t.total > 700;   // detracción SPOT (factura nacional > S/700)
+  const detrMonto = detrM ? Math.round(t.total * 0.12 * 100) / 100 : 0;
+  const detrNeto = detrM ? Math.round((t.total - detrMonto) * 100) / 100 : 0;
   return `${S.tipo === 1 ? `<div style="margin-bottom:10px"><button onclick="_facMToggleExport()" title="${S.export ? 'Volver a factura nacional 18%' : 'Exportación de servicios (turismo receptivo) — 0% IGV'}" style="width:100%;padding:9px;border-radius:10px;border:1px solid ${S.export ? '#0ea5e9' : '#e5e7eb'};background:${S.export ? 'rgba(14,165,233,.1)' : '#fff'};color:${S.export ? '#0369a1' : '#6b7280'};font-weight:800;font-size:12.5px;cursor:pointer">🌎 ${S.export ? 'Exportación 0% IGV — activa' : '¿Exportación? (turista extranjero)'}</button></div>` : ''}${t.total >= 2000 ? `<div style="margin-bottom:10px"><div style="font-size:11px;color:#a16207;font-weight:800;margin-bottom:4px">⚠️ ≥ S/2000 · medio de pago (bancarización)</div><select id="facm-mp" onchange="_facMSetMp(this.value)" style="width:100%;padding:10px;border:1px solid #e0b04a;border-radius:10px;font-weight:700;background:#fffdf5">${['', 'Efectivo', 'Transferencia', 'Yape/Plin', 'Tarjeta', 'Depósito en cuenta'].map(o => `<option value="${o}"${(S.medioPago || '') === o ? ' selected' : ''}>${o || 'Elige…'}</option>`).join('')}</select></div>` : ''}
     ${_facMReglasHtml()}
+    ${detrM ? `<div style="margin:8px 0;padding:7px 10px;border:1px solid #A81C2D;background:#FBF0EE;border-radius:8px;line-height:1.35">
+      <div style="display:flex;justify-content:space-between;gap:8px;font-weight:900;color:#A81C2D;font-size:11px"><span>Neto a pagar al proveedor</span><span>S/ ${detrNeto.toFixed(2)}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-weight:800;color:#A81C2D;font-size:11px;margin-top:1px"><span>Detracción 12% → depositar en cta. BN</span><span>S/ ${detrMonto.toFixed(2)}</span></div>
+    </div>` : ''}
     <div style="display:flex;justify-content:space-between;font-weight:900;font-size:17px;margin-bottom:12px;padding:10px 2px;border-top:1px dashed #e5e7eb;color:#3d0508"><span>TOTAL</span><span id="facm-tt">S/ ${t.total.toFixed(2)}</span></div>
     <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;box-shadow:0 6px 16px rgba(86,7,12,.32);${puede ? '' : 'opacity:.55'}">${S.tipo === 1 ? 'Emitir factura' : 'Emitir boleta'}${puede ? '' : hint}</button>`;
 }
@@ -1792,7 +1799,7 @@ function _facMDrop() {
   d.innerHTML = h;
 }
 async function _facMHist() {
-  const S = _facM; S.cargandoHist = true; _facMRender();
+  const S = _facM; _facMVchStyle(); S.cargandoHist = true; _facMRender();
   try { S.historial = await window.SupaAPI.listarComprobantesDia(myOpName); } catch (e) { S.historial = []; }
   if (!_facM || _facM.tab !== 'historial') return;
   const box = document.getElementById('facm-box'); const fromH = box ? box.offsetHeight : 0;
@@ -1812,6 +1819,70 @@ function _facMReenviar(c, btn) {
     const msg = 'Hola ' + (c.cliente_nombre || '') + ', tu comprobante ' + numero + (realPdf ? ': ' + pdf : ' por S/ ' + (c.total || 0));
     window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
   }
+}
+// ── VOUCHER de detracción (constancia del depósito del 12% en cta. BN) — botón verde/rojo en el historial ──
+function _facMVchStyle() { if (document.getElementById('facm-vch-style')) return; var s = document.createElement('style'); s.id = 'facm-vch-style'; s.textContent = '@keyframes facmVchPulse{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.35)}50%{box-shadow:0 0 0 5px rgba(220,38,38,0)}}'; document.head.appendChild(s); }
+function _facMVchFind(id) { return ((_facM && _facM.historial) || []).find(function (x) { return String(x.id) === String(id); }); }
+function _facMVoucher(id) {
+  var c = _facMVchFind(id); if (!c) return;
+  if (c.detraccion_voucher && String(c.detraccion_voucher).trim()) _facMVoucherVer(id);
+  else _facMVoucherPick(id);
+}
+function _facMVchCloseSheet() { var s = document.getElementById('facm-vch-sheet'); if (s) s.remove(); }
+function _facMVoucherPick(id) {
+  _facMVchCloseSheet();
+  var ov = document.createElement('div'); ov.id = 'facm-vch-sheet';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center';
+  ov.innerHTML = '<div style="width:100%;max-width:430px;background:#fff;border-radius:18px 18px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom))" onclick="event.stopPropagation()">' +
+    '<div style="font-weight:800;font-size:15px;color:#3d0508;margin-bottom:3px">Voucher de detracción</div>' +
+    '<div style="font-size:12px;color:#9b6b6e;margin-bottom:13px;line-height:1.4">Sube la constancia del depósito del 12% en la cuenta del Banco de la Nación.</div>' +
+    '<label style="display:flex;align-items:center;gap:10px;padding:14px;border:1px solid #f0e6e7;border-radius:12px;margin-bottom:9px;font-weight:700;font-size:14px;color:#3d0508;cursor:pointer">📷 Tomar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="_facMVoucherUpload(&#39;' + id + '&#39;,this.files&&this.files[0])"></label>' +
+    '<label style="display:flex;align-items:center;gap:10px;padding:14px;border:1px solid #f0e6e7;border-radius:12px;margin-bottom:9px;font-weight:700;font-size:14px;color:#3d0508;cursor:pointer">🖼️ Elegir de galería<input type="file" accept="image/*" style="display:none" onchange="_facMVoucherUpload(&#39;' + id + '&#39;,this.files&&this.files[0])"></label>' +
+    '<button onclick="_facMVchCloseSheet()" style="width:100%;padding:12px;border:none;background:transparent;color:#9b6b6e;font-weight:700;font-size:14px;cursor:pointer">Cancelar</button>' +
+    '</div>';
+  ov.onclick = function (e) { if (e.target === ov) _facMVchCloseSheet(); };
+  document.body.appendChild(ov); resHap(8);
+}
+async function _facMVoucherUpload(id, file) {
+  _facMVchCloseSheet(); if (!file) return;
+  var c = _facMVchFind(id); if (!c) return;
+  try {
+    mostrarToast('Subiendo voucher…');
+    var ext = (file.type && file.type.indexOf('png') >= 0) ? 'png' : 'jpg';
+    var path = 'voucher/' + String(id) + '.' + ext;
+    var up = await window.SupaAPI.sb.storage.from('comprobante-pdfs').upload(path, file, { contentType: file.type || 'image/jpeg', upsert: true });
+    if (up.error) throw up.error;
+    var r = await window.SupaAPI.post('set_detraccion_voucher', { ref_id: id, path: path });
+    if (!r || r.status === 'error') throw new Error('no se pudo guardar');
+    c.detraccion_voucher = path; fx('ok'); mostrarToast('✓ Voucher guardado'); _facMRender();
+  } catch (e) { fx('err'); mostrarToast('No se pudo subir el voucher', 'error'); }
+}
+function _facMVchCerrar() { var s = document.getElementById('facm-vch-ov'); if (s) s.remove(); }
+async function _facMVoucherVer(id) {
+  var c = _facMVchFind(id); if (!c || !c.detraccion_voucher) return;
+  var url = '';
+  try { var sd = await window.SupaAPI.sb.storage.from('comprobante-pdfs').createSignedUrl(c.detraccion_voucher, 3600); url = (sd.data && sd.data.signedUrl) || ''; } catch (e) {}
+  if (!url) { mostrarToast('No se pudo abrir el voucher', 'error'); return; }
+  var ov = document.createElement('div'); ov.id = 'facm-vch-ov';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10060;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML = '<div style="width:100%;max-width:430px;background:#fff;border-radius:16px;overflow:hidden;position:relative">' +
+    '<button onclick="_facMVchCerrar()" style="position:absolute;top:8px;right:10px;z-index:2;border:none;background:rgba(0,0,0,.5);color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>' +
+    '<div style="max-height:70vh;overflow:auto"><img src="' + url + '" alt="Voucher de detracción" style="width:100%;display:block"></div>' +
+    '<div style="display:flex;gap:8px;padding:10px 12px">' +
+    '<button onclick="_facMVchCerrar();_facMVoucherPick(&#39;' + id + '&#39;)" style="flex:1;padding:11px;border-radius:11px;border:1px solid #f0e6e7;background:#fff;color:#3d0508;font-weight:700;cursor:pointer">Cambiar</button>' +
+    '<button onclick="_facMVoucherDel(&#39;' + id + '&#39;)" style="flex:1;padding:11px;border-radius:11px;border:none;background:linear-gradient(135deg,#b91c1c,#7f1d1d);color:#fff;font-weight:800;cursor:pointer">Quitar</button>' +
+    '</div></div>';
+  ov.onclick = function (e) { if (e.target === ov) _facMVchCerrar(); };
+  document.body.appendChild(ov);
+}
+async function _facMVoucherDel(id) {
+  var c = _facMVchFind(id); if (!c) return;
+  try { if (c.detraccion_voucher) await window.SupaAPI.sb.storage.from('comprobante-pdfs').remove([c.detraccion_voucher]); } catch (e) {}
+  try {
+    var r = await window.SupaAPI.post('set_detraccion_voucher', { ref_id: id, path: '' });
+    if (!r || r.status === 'error') throw new Error('error');
+    c.detraccion_voucher = null; _facMVchCerrar(); fx('sel'); _facMRender();
+  } catch (e) { mostrarToast('No se pudo quitar el voucher', 'error'); }
 }
 function _facMAnularToggle(id) { const S = _facM; S.anularId = (S.anularId === id ? null : id); S._anularMotivo = ''; resTap(); resHap(8); _facMRender(); }
 async function _facMAnularEnviar(id) {
@@ -1994,6 +2065,8 @@ function _facMRender() {
     const pend = c.anulacion_estado === 'solicitada';
     const abierto = S.anularId === c.id;
     const cj = JSON.stringify(c).replace(/'/g, '&#39;');
+    const detrM = !!(c.detraccion || Number(c.detraccion_total) > 0);   // factura con detracción → control de voucher
+    const vhas = !!(c.detraccion_voucher && String(c.detraccion_voucher).trim());
     return `<div class="facm-row" style="animation-delay:${i*40}ms;border:1px solid #f0e6e7;border-radius:13px;padding:11px;margin-bottom:9px;${anulada?'opacity:.55':''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div style="min-width:0"><div style="font-weight:800;font-size:13px;color:#3d0508;${anulada?'text-decoration:line-through':''}">${num} ${_facMChip(c)}</div><div style="font-size:11px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(c.cliente_nombre||'—')} · ${c.hora}</div></div>
@@ -2003,6 +2076,7 @@ function _facMRender() {
       ${anulada?'<div style="margin-top:7px;font-size:11px;font-weight:700;color:#9ca3af">Anulada</div>':`
       <div style="display:flex;gap:6px;margin-top:9px">
         <button onclick='_facMReenviar(${cj},this)' style="flex:1.6;padding:8px;border-radius:9px;border:none;background:#25D366;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px"><i class="fab fa-whatsapp" style="font-size:15px"></i> Enviar</button>
+        ${detrM ? `<button onclick="_facMVoucher('${c.id}')" title="${vhas ? 'Voucher de detracción cargado — ver/cambiar' : 'Falta el voucher de detracción (12% BN) — subir'}" aria-label="Voucher de detracción" style="flex:0 0 auto;padding:8px 11px;border-radius:9px;border:1px solid ${vhas ? '#22c55e' : '#dc2626'};background:${vhas ? '#f0fdf4' : '#fef2f2'};color:${vhas ? '#15803d' : '#dc2626'};font-weight:800;font-size:14px;cursor:pointer${vhas ? '' : ';animation:facmVchPulse 1.5s ease-in-out infinite'}">🧾</button>` : ''}
         <button onclick="_facMAnularToggle('${c.id}')" style="flex:1;padding:8px;border-radius:9px;border:1px solid ${abierto?'#dc2626':'#f0c4c6'};background:${abierto?'#fef2f2':'#fff'};color:#dc2626;font-weight:800;font-size:12px;cursor:pointer">⊘ Anular</button>
       </div>
       ${abierto?`<div class="facm-expand" style="margin-top:8px"><input id="facm-anmot" placeholder="Motivo de la anulación…" value="${_facEscM(S._anularMotivo)}" style="width:100%;padding:9px;border:1px solid #f0c4c6;border-radius:9px;margin-bottom:6px;font-size:13px"><button onclick="_facMAnularEnviar('${c.id}')" style="width:100%;padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#b91c1c,#7f1d1d);color:#fff;font-weight:800;font-size:13px">Enviar solicitud a PS</button><div style="font-size:10px;color:#9ca3af;margin-top:4px;text-align:center">No anula directo — un admin de PS revisa y aprueba.</div></div>`:''}`}

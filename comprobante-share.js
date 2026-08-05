@@ -172,9 +172,11 @@ function _facDetraccion(c, T) {
   if ((Number(T && T.exportacion) || 0) > 0 || (Number(T && T.grav) || 0) <= 0) return null;
   var total = Number(T && T.total) || 0;
   if (total <= _FAC_DETRACCION.umbral) return null;   // SPOT aplica a operaciones MAYORES a S/700 (backend: v_total > 700)
+  var monto = Math.round(total * _FAC_DETRACCION.rate * 100) / 100;
   return {
     rate: _FAC_DETRACCION.rate,
-    monto: Math.round(total * _FAC_DETRACCION.rate * 100) / 100,
+    monto: monto,
+    neto: Math.round((total - monto) * 100) / 100,   // lo que el cliente paga directo al proveedor
     codigo: _FAC_DETRACCION.codigo, concepto: _FAC_DETRACCION.concepto,
     banco: _FAC_DETRACCION.banco, cuenta: String(_FAC_DETRACCION.cuenta || '').trim()
   };
@@ -190,8 +192,12 @@ function _facDetraccionHTML(c, T, compact) {
   var d = _facDetraccion(c, T); if (!d) return '';
   var pad = compact ? '5px 8px' : '7px 11px';
   var fs = compact ? '8px' : '9px';
+  var fsRow = compact ? '9px' : '10.5px';
+  var pct = (d.rate * 100).toLocaleString('es-PE', { maximumFractionDigits: 2 });
   return '<div style="margin:' + (compact ? '5px 0' : '9px 0') + ';padding:' + pad + ';border:1px solid #A81C2D;background:#FBF0EE;border-radius:6px;line-height:1.35">' +
-    '<div style="font-weight:900;color:#A81C2D;font-size:' + fs + ';letter-spacing:.01em">' + _facEsc(_facDetraccionTexto(d)) + '</div></div>';
+    '<div style="display:flex;justify-content:space-between;gap:8px;font-weight:900;color:#A81C2D;font-size:' + fsRow + '"><span>Neto a pagar al proveedor</span><span>S/ ' + _facMoney(d.neto) + '</span></div>' +
+    '<div style="display:flex;justify-content:space-between;gap:8px;font-weight:800;color:#A81C2D;font-size:' + fsRow + ';margin-top:1px"><span>Detracción ' + pct + '% → depositar en cta. BN</span><span>S/ ' + _facMoney(d.monto) + '</span></div>' +
+    '<div style="font-weight:700;color:#A81C2D;font-size:' + fs + ';letter-spacing:.01em;margin-top:3px">' + _facEsc(_facDetraccionTexto(d)) + '</div></div>';
 }
 
 function _facNCLegal(c) {
