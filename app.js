@@ -2013,7 +2013,7 @@ function _facMEmitir() {
   const cli = S.cliente;
   const payload = {
     tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
-    cliente_doc_tipo: cli.doc_tipo, cliente_doc: cli.doc_tipo === '0' ? '' : cli.doc_numero, cliente_nombre: cli.nombre,
+    cliente_doc_tipo: cli.doc_tipo, cliente_doc: (cli.doc_tipo === '0' && (!cli.doc_numero || cli.doc_numero === '00000000')) ? '' : cli.doc_numero, cliente_nombre: cli.nombre,   // '0' con doc REAL = Tax-ID extranjero (no blanquear); '0' vacío/00000000 = Varios
     cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!cli.es_extranjero,
     items: items.map(it => ({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0 })),
     exonerado: false, medio_pago: S.medioPago || null, exportacion: false, operador: myOpName,
@@ -2024,7 +2024,8 @@ function _facMEmitir() {
   fx('emit'); resHap([10, 25, 10]);
   // libera el form YA — el operador arranca el siguiente sin esperar a SUNAT
   S.cliente = { doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' };
-  S.items = _facMItemsDefecto(); S.exonerado = false; S.medioPago = ''; S.q = ''; S.resultados = [];
+  S.tipo = 2;   // vuelve a Boleta — evita quedar Factura+Varios pulsando rojo tras emitir una factura
+  S.items = []; S.exonerado = false; S.medioPago = ''; S.q = ''; S.resultados = [];   // A3: NO re-poblar el paquete por defecto → el botón queda bloqueado hasta agregar un servicio (evita re-emitir un CPE real por doble toque)
   _facMRender();
   _facMSend(entry);
 }
