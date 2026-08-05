@@ -204,7 +204,7 @@
       p_exonerado: !!p.exonerado, p_moneda: 'PEN', p_origen: 'muelle', p_creado_por: p.operador || 'App',
       p_local_id: p.localId || null, p_cliente_tel: p.cliente_tel || null,
       p_cliente_dir: p.cliente_dir || null, p_es_extranjero: !!p.es_extranjero,
-      p_medio_pago: p.medio_pago || null, p_exportacion: !!p.exportacion })
+      p_medio_pago: p.medio_pago || null, p_exportacion: !!p.exportacion, p_detraccion: !!p.detraccion })
   };
 
   // lecturas de facturación (toggle + catálogo) para el muelle

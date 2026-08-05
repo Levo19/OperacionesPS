@@ -1496,7 +1496,7 @@ async function abrirBoletaMuelle() {
     q: '', resultados: [], buscando: false, apiResult: null, noEncontrado: false,
     manual: false, manualTipo: '1', _manualNombre: '', _manualDoc: '', _manualDir: '',
     tel: '', email: '',
-    items: [], exonerado: false, medioPago: '', _svcPick: null, _precioEdit: null,
+    items: [], exonerado: false, export: false, medioPago: '', _svcPick: null, _precioEdit: null,
     historial: [], cargandoHist: false, contadorHoy: 0,
     shake: false, _t: null, anularId: null, _anularMotivo: '', _feed: [], _emitCd: 0
   };
@@ -1505,143 +1505,6 @@ async function abrirBoletaMuelle() {
 }
 function cerrarBoletaMuelle() { const ov = document.getElementById('facm-ov'); if (ov) ov.style.display = 'none'; resHap(8); }
 
-// ════════════════ JALAR ZARPE CON IA (foto → Claude vision → facturar) ════════════════
-let _zar = null;
-function _zarEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-async function abrirZarpe(idOperacion){
-  let b = {}; try { b = await window.SupaAPI.facturacionBootstrap() || {}; } catch(_){}
-  _zar = { idOperacion: idOperacion||'', serieB: (b.serie_boleta||'B002'), serieF: (b.serie_factura||'F002'), precioDef: Number(b.precio_defecto)||30,
-           fase:'foto', pax:[], analizando:false, emitiendo:false, servicio:'Tour Islas Ballestas' };
-  _zarRender();
-}
-function cerrarZarpe(){ const ov=document.getElementById('zar-ov'); if(ov) ov.style.display='none'; fx('sel'); }
-async function _zarFoto(input){
-  const f = input && input.files && input.files[0]; if(!f) return;
-  const S=_zar; S.analizando=true; _zarRender();
-  try{
-    // Comprimir ANTES de mandar a la IA/OCR: máx 2200px + JPEG 0.85 (legible pero liviano)
-    const cmp = await comprimirFotoZarpe(f);
-    const srcBlob = cmp.blob || f;
-    const mediaType = (cmp.blob && cmp.blob !== f) ? 'image/jpeg' : (f.type || 'image/jpeg');
-    const b64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=rej; r.readAsDataURL(srcBlob); });
-    const out = await window.SupaAPI.extraerZarpe(b64, mediaType);
-    if(out && out.ok && Array.isArray(out.pasajeros)){
-      // dudoso (letra a mano insegura / dato incompleto) → arranca SIN seleccionar: el operador
-      // revisa y confirma a mano antes de emitir un CPE fiscal con un DNI posiblemente mal leído.
-      S.pax = out.pasajeros.map((p,i)=>({ _i:i, dudoso:!!p.dudoso, sel:!p.dudoso, nombre:p.nombre||'', tipo_doc:p.tipo_doc||'', documento:p.documento||'', precio:S.precioDef, estado:'' }));
-      S.fase='lista'; fx('done');
-    } else { fx('err'); mostrarToast('⚠️ No se pudo leer el zarpe: '+((out&&out.motivo)||'error'),'error'); }
-  }catch(e){ fx('err'); mostrarToast('⚠️ Error al analizar la foto','error'); }
-  S.analizando=false; _zarRender();
-}
-// Re-evalúa tipo_doc + dudoso de un pax editado a mano (ESPEJO EXACTO de normalizarPasajeros del Edge,
-// para que corregir el dato en la UI limpie/active "revisar" con la misma regla que valida el backend).
-function _zarReeval(p){
-  let doc=String(p.documento||'').replace(/[\s.\-]/g,'').trim(); p.documento=doc;
-  let t=String(p.tipo_doc||'').trim();
-  if(/^\d{8}$/.test(doc)) t='1'; else if(/^\d{11}$/.test(doc)) t='6';
-  if(!['1','4','6','7'].includes(t)) t='';
-  p.tipo_doc=t;
-  let d=false;
-  if(!p.nombre||!doc||!t) d=true;
-  if(t==='1'&&!/^\d{8}$/.test(doc)) d=true; else if(t==='6'&&!/^\d{11}$/.test(doc)) d=true;
-  p.dudoso=d;
-}
-function _zarSet(i,k,v){ const p=_zar.pax.find(x=>x._i===i); if(!p) return; p[k]=(v==null?'':String(v)); if(k==='nombre'||k==='documento'||k==='tipo_doc'){ _zarReeval(p); if(p.dudoso) p.sel=false; /* un dato que quedó inválido no puede seguir armado para emitir */ } _zarRender(); }
-function _zarToggle(i){ const p=_zar.pax.find(x=>x._i===i); if(p){ p.sel=!p.sel; if(p.sel&&p.dudoso) p.dudoso=false; /* al seleccionarlo el operador lo dio por revisado */ fx('tap'); _zarRender(); } }
-// emite un CPE por cada pasajero seleccionado (con RUC válido → factura; el resto → boleta)
-async function _zarEmitir(){
-  const S=_zar; if(S.emitiendo) return;
-  const sel = S.pax.filter(p=>p.sel && p.estado!=='facturado');
-  if(!sel.length) return (fx('err'), mostrarToast('Selecciona al menos un pasajero','error'));
-  // Anti-colisión de local_id: dos pax con el MISMO documento comparten clave → el 2º "reusaría" el CPE
-  // del 1º y quedaría marcado facturado SIN comprobante propio. Detecta duplicados en la selección y frena.
-  const cuenta={}; sel.forEach(p=>{ const d=(p.documento||'').trim(); if(d) cuenta[d]=(cuenta[d]||0)+1; });
-  const dup = sel.filter(p=>p.documento && cuenta[p.documento]>1);
-  if(dup.length){ dup.forEach(p=>{ p.dudoso=true; p.sel=false; }); fx('err'); _zarRender();
-    return mostrarToast(`⚠️ ${dup.length} con documento repetido — corrige o desmarca antes de emitir`,'error'); }
-  S.emitiendo=true; _zarRender();
-  let ok=0, fail=0, reuse=0;
-  for(const p of sel){
-    const esFactura = p.tipo_doc==='6' && /^\d{11}$/.test(p.documento||'');
-    // local_id ESTABLE por (operación, documento|posición): sin Date.now(). Ante reintento tras timeout,
-    // el backend dedupea por ux_cmp_localid y NO re-emite a SUNAT (evita doble boleta del mismo pasajero).
-    // Se incluye el documento para que re-fotear la misma operación (otro set de pax) no reuse la clave de posición.
-    const localId = 'zar-'+(S.idOperacion||'x')+'-'+((p.documento||('i'+p._i)).replace(/[^A-Za-z0-9]/g,''));
-    try{
-      const r = await window.SupaAPI.post('emitir_comprobante',{
-        tipo: esFactura?1:2, serie: esFactura?S.serieF:S.serieB,
-        cliente_doc_tipo: p.tipo_doc||'0', cliente_doc: p.documento||'', cliente_nombre: p.nombre||'CLIENTE VARIOS',
-        cliente_dir:'', es_extranjero: p.tipo_doc==='7', items:[{descripcion:S.servicio,cantidad:1,precio:parseFloat(p.precio)||S.precioDef}],
-        exonerado:false, exportacion:false, operador: myOpName, operacion_ref:S.idOperacion, localId
-      });
-      if(r && r.status!=='error' && (r.id||r.numero) && r.estado!=='rechazada'){
-        p.estado='facturado'; p.cpe=r.serie+'-'+r.numero; p._motivo=null; p._reusado=!!r.reusado; ok++; if(r.reusado) reuse++;
-        // registrar el pax en el zarpe digitalizado + ligar el CPE
-        try{ await window.SupaAPI.registrarZarpePax(S.idOperacion,[{documento:p.documento,tipo_doc:p.tipo_doc,nombre:p.nombre}],myOpName); }catch(_){}
-      } else { p.estado='error'; p._motivo=String((r&&(r.errores||r.message))||'rechazado por SUNAT').slice(0,120); fail++; }
-    }catch(e){ p.estado='error'; p._motivo=String((e&&e.message)||'error de red').slice(0,120); fail++; }
-    _zarRender();
-  }
-  S.emitiendo=false;
-  fx(fail?'warn':'emit');
-  mostrarToast(`✅ ${ok} emitidos${fail?` · ⚠️ ${fail} con error`:''}${reuse?` · ↺ ${reuse} ya existían`:''}`, fail?'error':'success');
-  // M3 · aviso DURO de fuga: pasajeros que quedaron sin comprobante (dudosos sin resolver, desmarcados o con error).
-  const pend = S.pax.filter(p=>p.estado!=='facturado').length;
-  if(pend>0) setTimeout(()=>mostrarToast(`⚠️ Quedan ${pend} pasajero(s) SIN comprobante`,'error'), 500);
-  _zarRender();
-}
-function _zarRender(){
-  let ov=document.getElementById('zar-ov');
-  if(!ov){ ov=document.createElement('div'); ov.id='zar-ov'; ov.style.cssText='position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center'; ov.onclick=e=>{if(e.target===ov)cerrarZarpe();}; document.body.appendChild(ov); }
-  ov.style.display='flex'; const S=_zar;
-  let body;
-  if(S.fase==='foto'){
-    body = `<div style="text-align:center;padding:20px 6px">
-      <div style="font-size:15px;font-weight:800;color:#3d0508;margin-bottom:6px">📸 Jalar zarpe</div>
-      <div style="font-size:12px;color:#9b6b6e;margin-bottom:16px">Toma o sube la foto del zarpe. La IA lee los documentos y prepara los comprobantes.</div>
-      ${S.analizando ? `<div style="padding:24px;color:#56070c;font-weight:800">🤖 Analizando con IA…</div>` :
-        `<label style="display:block;padding:16px;border:2px dashed #e0c9cb;border-radius:14px;color:#56070c;font-weight:800;cursor:pointer">📷 Tomar / subir foto<input type="file" accept="image/*" capture="environment" onchange="_zarFoto(this)" style="display:none"></label>`}
-    </div>`;
-  } else {
-    const TIPOS=[['','?'],['1','DNI'],['6','RUC'],['7','Pasaporte'],['4','CE']];
-    const filas = S.pax.map(p=>{
-      const done = p.estado==='facturado';
-      const err = p.estado==='error';
-      const revisar = p.dudoso && !done && !err;
-      const tipoLbl = ({'1':'DNI','4':'CE','7':'Pasaporte','6':'RUC','0':'Varios'})[p.tipo_doc]||p.tipo_doc||'?';
-      const chip = done?`<span style="font-size:9px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:6px;padding:1px 6px">🟢 ${_zarEsc(p.cpe||'ok')}${p._reusado?' ↺':''}</span>`:(err?'<span style="font-size:9px;font-weight:800;background:#fee2e2;color:#b91c1c;border-radius:6px;padding:1px 6px">🔴 error</span>':(revisar?'<span style="font-size:9px;font-weight:800;background:#fef3c7;color:#b45309;border-radius:6px;padding:1px 6px">⚠️ revisar</span>':''));
-      // Fila facturada = read-only. Fila pendiente = editable (el operador corrige lo que la IA leyó mal).
-      const cuerpo = done
-        ? `<div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_zarEsc(p.nombre||'—')} ${chip}</div>
-           <div style="font-size:10.5px;color:#9b6b6e">${tipoLbl} ${_zarEsc(p.documento)} · S/${p.precio}</div>`
-        : `<div style="display:flex;align-items:center;gap:6px">
-             <input value="${_zarEsc(p.nombre)}" placeholder="Nombre" onchange="_zarSet(${p._i},'nombre',this.value)" style="flex:1;min-width:0;border:none;border-bottom:1px solid #ececec;background:transparent;font-weight:700;font-size:12.5px;color:#3d0508;padding:2px 0">
-             ${chip}
-           </div>
-           <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
-             <select onchange="_zarSet(${p._i},'tipo_doc',this.value)" style="font-size:10px;border:1px solid #ececec;border-radius:6px;background:#fff;color:#6b4b4e;padding:2px">${TIPOS.map(([v,l])=>`<option value="${v}" ${p.tipo_doc===v?'selected':''}>${l}</option>`).join('')}</select>
-             <input value="${_zarEsc(p.documento)}" placeholder="Documento" onchange="_zarSet(${p._i},'documento',this.value)" style="flex:1;min-width:0;border:none;border-bottom:1px solid #ececec;background:transparent;font-size:10.5px;color:#9b6b6e;padding:2px 0">
-             <span style="font-size:10px;color:#9b6b6e;white-space:nowrap">S/${p.precio}</span>
-           </div>
-           ${err&&p._motivo?`<div style="font-size:10px;color:#b91c1c;margin-top:3px">⚠️ ${_zarEsc(p._motivo)}</div>`:(revisar?`<div style="font-size:10px;color:#b45309;margin-top:3px">Letra dudosa o dato incompleto — corrige antes de emitir.</div>`:'')}`;
-      return `<div style="display:flex;align-items:flex-start;gap:8px;border:1px solid ${revisar?'#fcd34d':'#f0e6e7'};background:${revisar?'#fffbeb':'#fff'};border-radius:11px;padding:9px;margin-bottom:7px;${done?'opacity:.6':''}">
-        <input type="checkbox" style="margin-top:2px" ${p.sel?'checked':''} ${done?'disabled':''} onchange="_zarToggle(${p._i})">
-        <div style="flex:1;min-width:0">${cuerpo}</div>
-      </div>`;
-    }).join('');
-    const nSel = S.pax.filter(p=>p.sel && p.estado!=='facturado').length;
-    const nRev = S.pax.filter(p=>p.dudoso && p.estado!=='facturado' && p.estado!=='error').length;
-    body = `<div style="margin-bottom:8px;font-size:14px;font-weight:800;color:#3d0508">Pasajeros detectados (${S.pax.length})${nRev?` <span style="font-size:10.5px;font-weight:800;color:#b45309;background:#fef3c7;border-radius:7px;padding:1px 7px;margin-left:4px">⚠️ ${nRev} por revisar</span>`:''}</div>
-      <div style="max-height:46vh;overflow-y:auto;margin-bottom:10px">${filas||'<div style="color:#9ca3af;text-align:center;padding:20px">Sin pasajeros</div>'}</div>
-      <div style="font-size:10.5px;color:#9b6b6e;margin-bottom:8px">Con RUC válido → factura; el resto → boleta. Corrige lo dudoso antes de emitir.</div>
-      <button onclick="_zarEmitir()" ${S.emitiendo?'disabled':''} style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;${S.emitiendo?'opacity:.6':''}">${S.emitiendo?'Emitiendo…':`Emitir ${nSel} comprobante(s)`}</button>`;
-  }
-  ov.innerHTML = `<div style="position:relative;width:100%;max-width:430px;background:#fff;border-radius:20px 20px 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;animation:slideUp .25s ease">
-    <button onclick="cerrarZarpe()" style="position:absolute;top:12px;right:14px;border:none;background:none;font-size:20px;color:#9b6b6e;cursor:pointer">✕</button>
-    ${body}
-  </div>`;
-}
 function _facMDocLbl(tipo) { return ({ '1': 'DNI', '6': 'RUC', '4': 'CE', '7': 'Pasaporte', '0': 'Varios' })[tipo] || tipo; }
 function _facMTab(t) {
   const S = _facM; if (S.tab === t) return; fx('sel');
@@ -1820,7 +1683,25 @@ function _facMItPrecioSet(i, v) {
 }
 function _facMPriceChip(i) {
   const it = _facM.items[i] || { precio: 0 };
+  if (it.gratis) return `<button id="facm-iprice-${i}" onclick="_facMItPrecioEdit(${i})" title="GRATIS — valor referencial S/ ${Number(it.precio) || 0} (toca para editarlo)" style="border:1px solid rgba(192,132,252,.45);background:rgba(192,132,252,.12);border-radius:8px;padding:4px 8px;font-weight:800;font-size:11px;color:#9333ea;cursor:pointer;white-space:nowrap">🎁 GRATIS</button>`;
   return `<button id="facm-iprice-${i}" onclick="_facMItPrecioEdit(${i})" title="Toca para editar el precio" style="border:1px solid #f0e6e7;background:#faf7f7;border-radius:8px;padding:4px 8px;font-weight:800;font-size:11.5px;color:#56070c;cursor:pointer;white-space:nowrap">S/ ${it.precio}</button>`;
+}
+// 🎁 Cortesía por servicio: no se cobra pero viaja con valor referencial (afectacion 'gratuito').
+// No se mezcla con exportación (regla SUNAT; el backend también lo rechaza).
+function _facMItGift(i) {
+  const S = _facM; const it = S.items[i]; if (!it) return;
+  if (S.export) return _facMErr('La cortesía no se mezcla con exportación');
+  it.gratis = !it.gratis;
+  fx(it.gratis ? 'ok' : 'sel');
+  _facMRepaintItems();   // repinta la fila (🎁/precio) + el sur (el total cambia)
+}
+// 🌎 Exportación de servicios (turismo receptivo) = 0% IGV. Solo factura; exige pasaporte/Tax-ID + 2 servicios.
+function _facMToggleExport() {
+  const S = _facM;
+  S.export = !S.export;
+  if (S.export) (S.items || []).forEach(it => { it.gratis = false; });   // export no mezcla cortesía
+  fx(S.export ? 'ok' : 'sel');
+  _facMRender();   // cambia reglas + total + oculta 🎁 en las filas → render completo
 }
 function _facMItemRow(it, i) {
   const d = String(it.nombre || ''); const sp = d.indexOf(' — ');
@@ -1828,6 +1709,7 @@ function _facMItemRow(it, i) {
   const q = Number(it.cantidad) || 0;
   return `<div data-facm-it="${i}" style="position:relative;display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid #f0e6e7;border-radius:11px;margin-bottom:6px;background:#fff">
     <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(tit)}</div>${sub ? `<div style="font-size:10px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(sub)}</div>` : ''}</div>
+    ${_facM.export ? '' : `<button onclick="_facMItGift(${i})" title="${it.gratis ? 'Quitar cortesía (vuelve a cobrarse)' : 'Marcar como cortesía — gratis'}" style="width:30px;height:30px;border-radius:8px;border:1px solid ${it.gratis ? 'rgba(192,132,252,.5)' : '#eee'};background:${it.gratis ? 'rgba(192,132,252,.15)' : '#fff'};font-size:14px;cursor:pointer;line-height:1;padding:0;flex:0 0 auto">🎁</button>`}
     ${_facMPriceChip(i)}
     <button class="facm-step" onclick="_facMItQty(${i},-1)" style="width:32px;height:32px;border-radius:9px;border:1px solid #e5e7eb;background:#fff;color:#56070c;font-size:17px;font-weight:800;cursor:pointer;line-height:1">−</button>
     <span id="facm-itq-${i}" style="min-width:20px;text-align:center;font-weight:900;font-size:15px;color:#3d0508;display:inline-block">${q}</span>
@@ -1841,7 +1723,7 @@ function _facMItemsHtml() {
 // Zona sur (mp + reglas + total + botón): depende del total → se repinta junta, EN SITIO.
 function _facMSouthHtml() {
   const S = _facM, t = _facMTotal();
-  return `${t.total >= 2000 ? `<div style="margin-bottom:10px"><div style="font-size:11px;color:#a16207;font-weight:800;margin-bottom:4px">⚠️ ≥ S/2000 · medio de pago (bancarización)</div><select id="facm-mp" onchange="_facMSetMp(this.value)" style="width:100%;padding:10px;border:1px solid #e0b04a;border-radius:10px;font-weight:700;background:#fffdf5">${['', 'Efectivo', 'Transferencia', 'Yape/Plin', 'Tarjeta', 'Depósito en cuenta'].map(o => `<option value="${o}"${(S.medioPago || '') === o ? ' selected' : ''}>${o || 'Elige…'}</option>`).join('')}</select></div>` : ''}
+  return `${S.tipo === 1 ? `<div style="margin-bottom:10px"><button onclick="_facMToggleExport()" title="${S.export ? 'Volver a factura nacional 18%' : 'Exportación de servicios (turismo receptivo) — 0% IGV'}" style="width:100%;padding:9px;border-radius:10px;border:1px solid ${S.export ? '#0ea5e9' : '#e5e7eb'};background:${S.export ? 'rgba(14,165,233,.1)' : '#fff'};color:${S.export ? '#0369a1' : '#6b7280'};font-weight:800;font-size:12.5px;cursor:pointer">🌎 ${S.export ? 'Exportación 0% IGV — activa' : '¿Exportación? (turista extranjero)'}</button></div>` : ''}${t.total >= 2000 ? `<div style="margin-bottom:10px"><div style="font-size:11px;color:#a16207;font-weight:800;margin-bottom:4px">⚠️ ≥ S/2000 · medio de pago (bancarización)</div><select id="facm-mp" onchange="_facMSetMp(this.value)" style="width:100%;padding:10px;border:1px solid #e0b04a;border-radius:10px;font-weight:700;background:#fffdf5">${['', 'Efectivo', 'Transferencia', 'Yape/Plin', 'Tarjeta', 'Depósito en cuenta'].map(o => `<option value="${o}"${(S.medioPago || '') === o ? ' selected' : ''}>${o || 'Elige…'}</option>`).join('')}</select></div>` : ''}
     ${_facMReglasHtml()}
     <div style="display:flex;justify-content:space-between;font-weight:900;font-size:17px;margin-bottom:12px;padding:10px 2px;border-top:1px dashed #e5e7eb;color:#3d0508"><span>TOTAL</span><span id="facm-tt">S/ ${t.total.toFixed(2)}</span></div>
     <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;box-shadow:0 6px 16px rgba(86,7,12,.32);${_facMPuede() ? '' : 'opacity:.55'}">${S.tipo === 1 ? 'Emitir factura' : 'Emitir boleta'}${_facMPuede() ? '' : ' · faltan requisitos'}</button>`;
@@ -1938,12 +1820,24 @@ async function _facMAnularEnviar(id) {
   if (r && r.ok) { fx('ok'); S.anularId = null; mostrarToast('Solicitud enviada a PS para revisión', 'success'); _facMHist(); }
   else _facMErr((r && r.message || 'No se pudo solicitar').replace(/^.*?:\s*/, ''));
 }
-function _facMTotal() { const total = (_facM.items||[]).reduce((a,it)=>a+(Number(it.cantidad)||0)*(Number(it.precio)||0),0); const grav = _facM.exonerado?0:Math.round(total/1.18*100)/100; return { total: Math.round(total*100)/100, grav, igv: _facM.exonerado?0:Math.round((total-grav)*100)/100 }; }
+function _facMTotal() {
+  const items = _facM.items || [];
+  // Cortesías (🎁 gratuito) NO suman al total a cobrar; Exportación = 0% IGV (el backend fija la afectación).
+  const total = items.reduce((a, it) => it.gratis ? a : a + (Number(it.cantidad) || 0) * (Number(it.precio) || 0), 0);
+  const gratis = items.reduce((a, it) => it.gratis ? a + (Number(it.cantidad) || 0) * (Number(it.precio) || 0) : a, 0);
+  const esExport = !!_facM.export;
+  const grav = esExport ? 0 : Math.round(total / 1.18 * 100) / 100;
+  return { total: Math.round(total * 100) / 100, grav, igv: esExport ? 0 : Math.round((total - grav) * 100) / 100, gratis: Math.round(gratis * 100) / 100, esExport };
+}
 // Motor de reglas SUNAT en vivo: devuelve [{ok, dura, txt}] según el estado actual del modal.
 function _facMReglas() {
   const S = _facM, t = _facMTotal(), cli = S.cliente, rules = [];
   const doc = cli && cli.doc_tipo !== '0' ? (cli.doc_numero || '') : '';
-  if (S.tipo === 1) { // FACTURA
+  const esTaxId = cli && cli.doc_tipo === '0' && cli.doc_numero && cli.doc_numero !== '00000000';   // '0' con doc REAL = Tax-ID extranjero
+  if (S.export) { // EXPORTACIÓN (0% IGV) — factura a turista/empresa extranjera
+    rules.push({ dura: true, ok: !!cli && (cli.doc_tipo === '7' || esTaxId) && !!(cli.doc_numero || ''), txt: 'Exportación → pasaporte del turista o Tax-ID extranjero' });
+    rules.push({ dura: true, ok: (S.items || []).length >= 2, txt: 'Paquete de 2 o más servicios' });
+  } else if (S.tipo === 1) { // FACTURA
     rules.push({ dura: true, ok: !!cli && cli.doc_tipo === '6' && /^\d{11}$/.test(doc), txt: 'Factura → RUC de 11 dígitos' });
     rules.push({ dura: true, ok: !!cli && !!(cli.nombre || '').trim(), txt: 'Razón social' });
     rules.push({ dura: true, ok: !!cli && !!(cli.direccion || '').trim(), txt: 'Dirección fiscal' });
@@ -1960,7 +1854,8 @@ function _facMSetMp(v) { _facM.medioPago = v; _facMRepaintSouth(); }
 // Toggle Boleta⇄Factura SUAVE: desliza la pastilla + repinta solo requisitos/total/botón (fade).
 function _facMSetTipo(t) {
   const S = _facM; if (S.tipo === t) return;
-  S.tipo = t; resTap(); resHap(6);
+  S.tipo = t; if (t === 2) S.export = false;   // exportación solo aplica a factura
+  resTap(); resHap(6);
   const pill = document.getElementById('facm-tgl-pill'); if (pill) pill.style.transform = t === 1 ? 'translateX(100%)' : 'translateX(0)';
   const bB = document.getElementById('facm-tgl-b'), bF = document.getElementById('facm-tgl-f');
   if (bB) bB.style.color = t === 2 ? '#56070c' : '#9b7d80';
@@ -2006,6 +1901,8 @@ function _facMEmitir() {
   const items = (S.items || []).filter(it => (Number(it.cantidad) || 0) > 0);
   const t = _facMTotal();
   if (!items.length || t.total <= 0) return _facMErr('Agrega al menos un servicio con monto');
+  if (!items.some(it => !it.gratis)) return _facMErr('La cortesía necesita al menos un servicio cobrado');
+  if (items.some(it => !it.gratis && (Number(it.precio) || 0) <= 0)) return _facMErr('Hay un servicio a S/0 — marca 🎁 para cortesías');
   if (!_facMPuede()) return _facMErr('Faltan requisitos SUNAT — revisa la lista');
   if (t.total >= 2000 && !S.medioPago) return _facMErr('Elige el medio de pago (operación ≥ S/2000 · bancarización)');
   if (S._emitCd && (window.performance.now() - S._emitCd) < 600) return;   // anti doble-toque
@@ -2014,9 +1911,9 @@ function _facMEmitir() {
   const payload = {
     tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
     cliente_doc_tipo: cli.doc_tipo, cliente_doc: (cli.doc_tipo === '0' && (!cli.doc_numero || cli.doc_numero === '00000000')) ? '' : cli.doc_numero, cliente_nombre: cli.nombre,   // '0' con doc REAL = Tax-ID extranjero (no blanquear); '0' vacío/00000000 = Varios
-    cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!cli.es_extranjero,
-    items: items.map(it => ({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0 })),
-    exonerado: false, medio_pago: S.medioPago || null, exportacion: false, operador: myOpName,
+    cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!S.export || !!cli.es_extranjero,
+    items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0 }, it.gratis ? { afectacion: 'gratuito' } : {})),
+    exonerado: false, medio_pago: S.medioPago || null, exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
     localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)   // idempotente por intento (mismo en reintentos)
   };
   const entry = { estado: 'enviando', nombre: cli.nombre, total: t.total, _payload: payload };
@@ -2024,7 +1921,7 @@ function _facMEmitir() {
   fx('emit'); resHap([10, 25, 10]);
   // libera el form YA — el operador arranca el siguiente sin esperar a SUNAT
   S.cliente = { doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' };
-  S.tipo = 2;   // vuelve a Boleta — evita quedar Factura+Varios pulsando rojo tras emitir una factura
+  S.tipo = 2; S.export = false;   // vuelve a Boleta nacional — evita quedar Factura+Varios pulsando rojo tras emitir
   S.items = []; S.exonerado = false; S.medioPago = ''; S.q = ''; S.resultados = [];   // A3: NO re-poblar el paquete por defecto → el botón queda bloqueado hasta agregar un servicio (evita re-emitir un CPE real por doble toque)
   _facMRender();
   _facMSend(entry);
