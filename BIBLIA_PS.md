@@ -226,6 +226,14 @@ Retoma de un feature a medias (5 jul): el prompt del OCR de zarpe ya estaba endu
 - **H2 [ALTA latente] — conciliación ciega.** `conciliacion_zarpe`/`marcar_zarpe_pax_facturado`/`listar_zarpe_pax` existen pero **no están cableadas** en el frontend; `conciliacion_zarpe` siempre daría 0 pax facturados/S0. Impacto hoy nulo (nadie la lee); al construir la UI de conciliación, llamar `marcar_zarpe_pax_facturado(idPax, idCPE)` tras cada emisión (requiere que `registrar_zarpe_pax` devuelva el id).
 - **M2 [MEDIA inherente al OCR] — DNI leído con confianza pero errado** (`dudoso=false`) se auto-selecciona → boleta a un DNI ajeno. NubeFact no valida DNI en boleta. La edición inline permite revisarlo, pero no hay validación RENIEC. 
 
+### Sprint 2026-08-11/13 (tarifa S/0 en el manifiesto — red de default de tarifa)
+| # | Reparación | Causa raíz | Deploy |
+|---|---|---|---|
+| P13 | Agencias/Libres entraban al manifiesto con monto S/0 (registro directo) | auto-llenado del precio en el front intermitente | red en `registrar_movimiento`/`editar_movimiento`: Agencia/Libre con monto 0 → `precio_defecto` del contacto × pax (precio >0 del operador se respeta) + backfill 7 movs · DB-live 11-ago |
+| P14 | **REINCIDENCIA 13-ago**: mismos S/0 pero por OTRO camino — abordar reserva (Sala de Espera) | `asignar_reserva` inserta en `movimientos` DIRECTO (no pasa por `registrar_movimiento`) con `coalesce(p_monto,0)` → la red de P13 no la cubría. Firma del flujo: `local_id` = `temp-asig-*` | misma red dentro de `asignar_reserva` + backfill 10 movs (S/1,425: 9 del 13-ago + 1 del 11-ago) · DB-live 13-ago (`_apply_asignar_reserva_default.js`) |
+
+**PATRÓN RECURRENTE (grabar a fuego):** una "red de seguridad" en una RPC NO cubre el invariante — cubrir TODOS los caminos de escritura. Para saber quiénes escriben en una tabla: `pg_get_functiondef` de todas las funciones + `ilike '%insert into%movimientos%'` (hoy insertan: `asignar_reserva`, `pase_desde_reserva`, `registrar_compra_espacio`, `registrar_movimiento`, `registrar_pase_directo`). Los pases van en S/0 por diseño; `registrar_compra_espacio` trae monto propio. El origen de un movimiento se rastrea por el prefijo del `local_id` (`temp-asig-*` = abordaje de reserva).
+
 ### 100x (Fase 1) — 2026-07-10 — guards money-safety
 - **A1 [ALTA]**: `admin_editar_contacto` no bloqueaba cambio de tipo con historial → borraba deuda del balance. **Fix**: guard TIENE_MOVIMIENTOS.
 - **A2 [ALTA]**: CON-00 mutable (nombre/tipo). **Fix**: solo precio.
