@@ -1496,7 +1496,7 @@ async function abrirBoletaMuelle() {
     q: '', resultados: [], buscando: false, apiResult: null, noEncontrado: false,
     manual: false, manualTipo: '1', _manualNombre: '', _manualDoc: '', _manualDir: '',
     tel: '', email: '',
-    items: [], exonerado: false, export: false, medioPago: '', _svcPick: null, _precioEdit: null,
+    items: [], exonerado: false, export: false, pagoTipo: 'efectivo', pagoEf: '', _svcPick: null, _precioEdit: null,
     historial: [], cargandoHist: false, contadorHoy: 0,
     shake: false, _t: null, anularId: null, _anularMotivo: '', _feed: [], _emitCd: 0
   };
@@ -1728,8 +1728,8 @@ function _facMSouthHtml() {
   const detrM = S.tipo === 1 && !S.export && t.total > 700;   // detracción SPOT (factura nacional > S/700)
   const detrMonto = detrM ? Math.round(t.total * 0.12 * 100) / 100 : 0;
   const detrNeto = detrM ? Math.round((t.total - detrMonto) * 100) / 100 : 0;
-  return `${S.tipo === 1 ? `<div style="margin-bottom:10px"><button onclick="_facMToggleExport()" title="${S.export ? 'Volver a factura nacional 18%' : 'Exportación de servicios (turismo receptivo) — 0% IGV'}" style="width:100%;padding:9px;border-radius:10px;border:1px solid ${S.export ? '#0ea5e9' : '#e5e7eb'};background:${S.export ? 'rgba(14,165,233,.1)' : '#fff'};color:${S.export ? '#0369a1' : '#6b7280'};font-weight:800;font-size:12.5px;cursor:pointer">🌎 ${S.export ? 'Exportación 0% IGV — activa' : '¿Exportación? (turista extranjero)'}</button></div>` : ''}${t.total >= 2000 ? `<div style="margin-bottom:10px"><div style="font-size:11px;color:#a16207;font-weight:800;margin-bottom:4px">⚠️ ≥ S/2000 · medio de pago (bancarización)</div><select id="facm-mp" onchange="_facMSetMp(this.value)" style="width:100%;padding:10px;border:1px solid #e0b04a;border-radius:10px;font-weight:700;background:#fffdf5">${['', 'Efectivo', 'Transferencia', 'Yape/Plin', 'Tarjeta', 'Depósito en cuenta'].map(o => `<option value="${o}"${(S.medioPago || '') === o ? ' selected' : ''}>${o || 'Elige…'}</option>`).join('')}</select></div>` : ''}
-    ${_facMReglasHtml()}
+  return `${S.tipo === 1 ? `<div style="margin-bottom:10px"><button onclick="_facMToggleExport()" title="${S.export ? 'Volver a factura nacional 18%' : 'Exportación de servicios (turismo receptivo) — 0% IGV'}" style="width:100%;padding:9px;border-radius:10px;border:1px solid ${S.export ? '#0ea5e9' : '#e5e7eb'};background:${S.export ? 'rgba(14,165,233,.1)' : '#fff'};color:${S.export ? '#0369a1' : '#6b7280'};font-weight:800;font-size:12.5px;cursor:pointer">🌎 ${S.export ? 'Exportación 0% IGV — activa' : '¿Exportación? (turista extranjero)'}</button></div>` : ''}<div id="facm-pago">${_facMPagoHTML(t)}</div>
+    <div id="facm-reglas">${_facMReglasHtml()}</div>
     ${detrM ? `<div style="margin:8px 0;padding:7px 10px;border:1px solid #A81C2D;background:#FBF0EE;border-radius:8px;line-height:1.35">
       <div style="display:flex;justify-content:space-between;gap:8px;font-weight:900;color:#A81C2D;font-size:11px"><span>Neto a pagar al proveedor</span><span>S/ ${detrNeto.toFixed(2)}</span></div>
       <div style="display:flex;justify-content:space-between;gap:8px;font-weight:800;color:#A81C2D;font-size:11px;margin-top:1px"><span>Detracción 12% → depositar en cta. BN</span><span>S/ ${detrMonto.toFixed(2)}</span></div>
@@ -1918,12 +1918,62 @@ function _facMReglas() {
     rules.push({ dura: true, ok: !!doc, txt: 'Boleta > S/700 → identificar cliente (DNI/CE/pasaporte)' });
     rules.push({ dura: true, ok: !!cli && !!(cli.nombre || '').trim(), txt: 'Nombre del cliente' });
   }
-  if (t.total >= 2000) {
-    rules.push({ dura: true, ok: !!S.medioPago, txt: 'Medio de pago (bancarización ≥ S/2000)' });
+  if (S.pagoTipo === 'mixto') {
+    const p = _facMPagoMxCalc(t.total);
+    rules.push({ dura: true, ok: p.ef > 0 && p.vi > 0, txt: 'Mixto: reparte el total entre Efectivo y Virtual' });
   }
   return rules;
 }
-function _facMSetMp(v) { _facM.medioPago = v; _facMRepaintSouth(); }
+// ── Chip TIPO DE PAGO (Efectivo → Virtual → Mixto, default Efectivo) — paridad PS ──
+function _facMPagoMxCalc(total) {
+  const S = _facM; let ef = Math.max(0, parseFloat(S.pagoEf) || 0);
+  if (ef > total) ef = total;
+  return { ef: Math.round(ef * 100) / 100, vi: Math.round((total - ef) * 100) / 100 };
+}
+function _facMPagoStr(total) {
+  const S = _facM;
+  if (S.pagoTipo === 'virtual') return 'Virtual (transferencia/Yape)';
+  if (S.pagoTipo === 'mixto') { const p = _facMPagoMxCalc(total); return 'Mixto: Efectivo S/' + p.ef.toFixed(2) + ' + Virtual S/' + p.vi.toFixed(2); }
+  return 'Efectivo';
+}
+function _facMPagoHTML(t) {
+  const S = _facM; const total = t.total;
+  const M = { efectivo: ['💵', 'Efectivo'], virtual: ['📲', 'Virtual'], mixto: ['🔀', 'Mixto'] }[S.pagoTipo] || ['💵', 'Efectivo'];
+  const p = _facMPagoMxCalc(total);
+  const inp = 'width:100%;padding:8px 9px;border:1px solid #e5e7eb;border-radius:9px;font-weight:700;font-size:13px;background:#fff';
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:${S.pagoTipo === 'mixto' ? '8' : '10'}px">
+      <span style="font-size:10px;font-weight:800;color:#9b7d80;letter-spacing:.5px">PAGO</span>
+      <button onclick="_facMPagoCiclo()" title="Toca para cambiar: Efectivo → Virtual → Mixto" style="border:1px solid ${S.pagoTipo === 'mixto' ? '#c9a84c' : '#e5e7eb'};background:${S.pagoTipo === 'mixto' ? '#fdf6ec' : '#fff'};color:#3d0508;font-weight:800;font-size:11.5px;border-radius:999px;padding:4px 13px;cursor:pointer">${M[0]} ${M[1]}</button>
+    </div>
+    ${S.pagoTipo === 'mixto' ? `<div style="display:flex;gap:8px;margin-bottom:10px">
+      <label style="flex:1;font-size:9.5px;font-weight:800;color:#9b7d80">EFECTIVO S/<input id="facm-mx-ef" type="number" inputmode="decimal" min="0" value="${p.ef || ''}" oninput="_facMPagoMxInput('ef',this.value)" style="${inp};margin-top:3px"></label>
+      <label style="flex:1;font-size:9.5px;font-weight:800;color:#9b7d80">VIRTUAL S/<input id="facm-mx-vi" type="number" inputmode="decimal" min="0" value="${p.vi || ''}" oninput="_facMPagoMxInput('vi',this.value)" style="${inp};margin-top:3px"></label>
+    </div>` : ''}
+    ${(total >= 2000 && S.pagoTipo === 'efectivo') ? '<div style="font-size:10px;color:#a16207;margin:-4px 0 8px">⚠ ≥ S/2000: SUNAT exige medio bancario — usa Virtual o Mixto</div>' : ''}`;
+}
+function _facMPagoCiclo() {
+  const S = _facM;
+  S.pagoTipo = S.pagoTipo === 'efectivo' ? 'virtual' : S.pagoTipo === 'virtual' ? 'mixto' : 'efectivo';
+  if (S.pagoTipo === 'mixto') { const t = _facMTotal().total; S.pagoEf = String(Math.round(t / 2 * 100) / 100); }   // arranca mitad-mitad, editable
+  else S.pagoEf = '';
+  resTap(); resHap(8);
+  _facMRepaintSouth();
+}
+function _facMPagoBtnSync() {
+  const t = _facMTotal(); const puede = t.total > 0 && _facMPuede();
+  const rg = document.getElementById('facm-reglas'); if (rg) rg.innerHTML = _facMReglasHtml();
+  const btn = document.getElementById('facm-emitir');
+  if (btn) { btn.style.opacity = puede ? '' : '.55'; btn.textContent = (_facM.tipo === 1 ? 'Emitir factura' : 'Emitir boleta') + (puede ? '' : (t.total <= 0 ? ' · agrega un servicio' : ' · faltan requisitos')); }
+}
+function _facMPagoMxInput(campo, v) {
+  const S = _facM; const t = _facMTotal().total;
+  let n = Math.max(0, parseFloat(v) || 0); if (n > t) n = t;
+  S.pagoEf = campo === 'ef' ? String(n) : String(Math.round((t - n) * 100) / 100);
+  const p = _facMPagoMxCalc(t);
+  const other = document.getElementById(campo === 'ef' ? 'facm-mx-vi' : 'facm-mx-ef');
+  if (other) other.value = campo === 'ef' ? p.vi : p.ef;   // contraparte en sitio — sin repintar el south (no pierde el foco)
+  _facMPagoBtnSync();
+}
 // Toggle Boleta⇄Factura SUAVE: desliza la pastilla + repinta solo requisitos/total/botón (fade).
 function _facMSetTipo(t) {
   const S = _facM; if (S.tipo === t) return;
@@ -1977,7 +2027,7 @@ function _facMEmitir() {
   if (!items.some(it => !it.gratis)) return _facMErr('La cortesía necesita al menos un servicio cobrado');
   if (items.some(it => !it.gratis && (Number(it.precio) || 0) <= 0)) return _facMErr('Hay un servicio a S/0 — marca 🎁 para cortesías');
   if (!_facMPuede()) return _facMErr('Faltan requisitos SUNAT — revisa la lista');
-  if (t.total >= 2000 && !S.medioPago) return _facMErr('Elige el medio de pago (operación ≥ S/2000 · bancarización)');
+  if (S.pagoTipo === 'mixto') { const p = _facMPagoMxCalc(t.total); if (!(p.ef > 0 && p.vi > 0)) return _facMErr('Mixto: reparte el total entre Efectivo y Virtual'); }
   if (S._emitCd && (window.performance.now() - S._emitCd) < 600) return;   // anti doble-toque
   S._emitCd = window.performance.now();
   const cli = S.cliente;
@@ -1986,7 +2036,7 @@ function _facMEmitir() {
     cliente_doc_tipo: cli.doc_tipo, cliente_doc: (cli.doc_tipo === '0' && (!cli.doc_numero || cli.doc_numero === '00000000')) ? '' : cli.doc_numero, cliente_nombre: cli.nombre,   // '0' con doc REAL = Tax-ID extranjero (no blanquear); '0' vacío/00000000 = Varios
     cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!S.export || !!cli.es_extranjero,
     items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0 }, it.gratis ? { afectacion: 'gratuito' } : {})),
-    exonerado: false, medio_pago: S.medioPago || null, exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
+    exonerado: false, medio_pago: _facMPagoStr(t.total), exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
     localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)   // idempotente por intento (mismo en reintentos)
   };
   const entry = { estado: 'enviando', nombre: cli.nombre, total: t.total, _payload: payload };
@@ -1995,7 +2045,7 @@ function _facMEmitir() {
   // libera el form YA — el operador arranca el siguiente sin esperar a SUNAT
   S.cliente = { doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' };
   S.tipo = 2; S.export = false;   // vuelve a Boleta nacional — evita quedar Factura+Varios pulsando rojo tras emitir
-  S.items = []; S.exonerado = false; S.medioPago = ''; S.q = ''; S.resultados = [];   // A3: NO re-poblar el paquete por defecto → el botón queda bloqueado hasta agregar un servicio (evita re-emitir un CPE real por doble toque)
+  S.items = []; S.exonerado = false; S.pagoTipo = 'efectivo'; S.pagoEf = ''; S.q = ''; S.resultados = [];   // A3: NO re-poblar el paquete por defecto → el botón queda bloqueado hasta agregar un servicio (evita re-emitir un CPE real por doble toque)
   _facMRender();
   _facMSend(entry);
 }
