@@ -1723,8 +1723,9 @@ function _facMItemsHtml() {
 // Zona sur (mp + reglas + total + botón): depende del total → se repinta junta, EN SITIO.
 function _facMSouthHtml() {
   const S = _facM, t = _facMTotal();
-  const puede = t.total > 0 && _facMPuede();   // sin monto cobrado el botón se atenúa (no solo al tocarlo)
-  const hint = t.total <= 0 ? ' · agrega un servicio' : (_facMPuede() ? '' : ' · faltan requisitos');
+  const hayVenta = t.total > 0 || (t.gratis > 0 && S.tipo === 2 && !S.export);   // boleta 100% gratuita también emite
+  const puede = hayVenta && _facMPuede();
+  const hint = !hayVenta ? ' · agrega un servicio' : (_facMPuede() ? '' : ' · faltan requisitos');
   const detrM = S.tipo === 1 && !S.export && t.total > 700;   // detracción SPOT (factura nacional > S/700)
   const detrMonto = detrM ? Math.round(t.total * 0.12 * 100) / 100 : 0;
   const detrNeto = detrM ? Math.round((t.total - detrMonto) * 100) / 100 : 0;
@@ -1960,10 +1961,12 @@ function _facMPagoCiclo() {
   _facMRepaintSouth();
 }
 function _facMPagoBtnSync() {
-  const t = _facMTotal(); const puede = t.total > 0 && _facMPuede();
+  const t = _facMTotal();
+  const hayVenta = t.total > 0 || (t.gratis > 0 && _facM.tipo === 2 && !_facM.export);
+  const puede = hayVenta && _facMPuede();
   const rg = document.getElementById('facm-reglas'); if (rg) rg.innerHTML = _facMReglasHtml();
   const btn = document.getElementById('facm-emitir');
-  if (btn) { btn.style.opacity = puede ? '' : '.55'; btn.textContent = (_facM.tipo === 1 ? 'Emitir factura' : 'Emitir boleta') + (puede ? '' : (t.total <= 0 ? ' · agrega un servicio' : ' · faltan requisitos')); }
+  if (btn) { btn.style.opacity = puede ? '' : '.55'; btn.textContent = (_facM.tipo === 1 ? 'Emitir factura' : 'Emitir boleta') + (puede ? '' : (!hayVenta ? ' · agrega un servicio' : ' · faltan requisitos')); }
 }
 function _facMPagoMxInput(campo, v) {
   const S = _facM; const t = _facMTotal().total;
@@ -2023,8 +2026,9 @@ function _facMEmitir() {
   if (!S.cliente) return _facMErr('Elige o registra un cliente');
   const items = (S.items || []).filter(it => (Number(it.cantidad) || 0) > 0);
   const t = _facMTotal();
-  if (!items.length || t.total <= 0) return _facMErr('Agrega al menos un servicio con monto');
-  if (!items.some(it => !it.gratis)) return _facMErr('La cortesía necesita al menos un servicio cobrado');
+  const soloGratis = t.total <= 0 && t.gratis > 0;   // CPE 100% gratuito (transferencia gratuita SUNAT) — solo boleta
+  if (!items.length || (t.total <= 0 && !soloGratis)) return _facMErr('Agrega al menos un servicio con monto');
+  if (soloGratis && S.tipo === 1) return _facMErr('Una factura no puede ser 100% gratuita — usa boleta o agrega la línea cobrada');
   if (items.some(it => !it.gratis && (Number(it.precio) || 0) <= 0)) return _facMErr('Hay un servicio a S/0 — marca 🎁 para cortesías');
   if (!_facMPuede()) return _facMErr('Faltan requisitos SUNAT — revisa la lista');
   if (S.pagoTipo === 'mixto') { const p = _facMPagoMxCalc(t.total); if (!(p.ef > 0 && p.vi > 0)) return _facMErr('Mixto: reparte el total entre Efectivo y Virtual'); }
@@ -2036,7 +2040,7 @@ function _facMEmitir() {
     cliente_doc_tipo: cli.doc_tipo, cliente_doc: (cli.doc_tipo === '0' && (!cli.doc_numero || cli.doc_numero === '00000000')) ? '' : cli.doc_numero, cliente_nombre: cli.nombre,   // '0' con doc REAL = Tax-ID extranjero (no blanquear); '0' vacío/00000000 = Varios
     cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!S.export || !!cli.es_extranjero,
     items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0 }, it.gratis ? { afectacion: 'gratuito' } : {})),
-    exonerado: false, medio_pago: _facMPagoStr(t.total), exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
+    exonerado: false, medio_pago: soloGratis ? null : _facMPagoStr(t.total), exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
     localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)   // idempotente por intento (mismo en reintentos)
   };
   const entry = { estado: 'enviando', nombre: cli.nombre, total: t.total, _payload: payload };
