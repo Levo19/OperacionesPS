@@ -1708,7 +1708,7 @@ function _facMItemRow(it, i) {
   const tit = sp > 0 ? d.slice(0, sp) : d; const sub = sp > 0 ? d.slice(sp + 3) : '';
   const q = Number(it.cantidad) || 0;
   return `<div data-facm-it="${i}" style="position:relative;display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid #f0e6e7;border-radius:11px;margin-bottom:6px;background:#fff">
-    <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(tit)}</div>${sub ? `<div style="font-size:10px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(sub)}</div>` : ''}</div>
+    <div style="flex:1;min-width:0"><div title="${_facEscM(d)}" style="font-weight:700;font-size:12.5px;color:#3d0508;line-height:1.28;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere">${_facEscM(tit)}</div>${sub ? `<div style="font-size:10px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(sub)}</div>` : ''}</div>
     ${_facM.export ? '' : `<button onclick="_facMItGift(${i})" title="${it.gratis ? 'Quitar cortesía (vuelve a cobrarse)' : 'Marcar como cortesía — gratis'}" style="width:30px;height:30px;border-radius:8px;border:1px solid ${it.gratis ? 'rgba(192,132,252,.5)' : '#eee'};background:${it.gratis ? 'rgba(192,132,252,.15)' : '#fff'};font-size:14px;cursor:pointer;line-height:1;padding:0;flex:0 0 auto">🎁</button>`}
     ${_facMPriceChip(i)}
     <button class="facm-step" onclick="_facMItQty(${i},-1)" style="width:32px;height:32px;border-radius:9px;border:1px solid #e5e7eb;background:#fff;color:#56070c;font-size:17px;font-weight:800;cursor:pointer;line-height:1">−</button>
