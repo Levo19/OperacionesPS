@@ -156,6 +156,24 @@ function _facInferDocTipo(c) {
   return '0';
 }
 
+function _facFormaPagoBase(c) {
+  var fp = String((c && c.forma_pago) || 'CONTADO').toUpperCase();
+  var s = fp === 'CREDITO' ? 'CRÉDITO' : 'CONTADO';
+  var v = String((c && c.credito_vencimiento) || '').slice(0, 10);
+  if (fp === 'CREDITO' && v) s += ' · vence ' + v;
+  return s;
+}
+
+function _facPagoDetalle(c) {
+  const m = String((c && c.medio_pago) || '').trim();
+  if (m) return m;
+  // CPE 100% gratuito (cortesía): no hubo cobro. Decirlo explícitamente — dejar la fila vacía
+  // parece un olvido y hace dudar de si el sistema registró el pago.
+  const grat = Number((c && c.total_gratuita) || 0), tot = Number((c && c.total) || 0);
+  if (grat > 0 && tot <= 0) return 'Cortesía · sin cobro';
+  return '';   // histórico anterior al registro del medio de pago: no se inventa
+}
+
 function _facFormaPago(c) {
   var s = _facFormaPagoBase(c); var m = _facPagoDetalle(c);
   return m ? s + ' · ' + m : s;
@@ -315,7 +333,10 @@ function _facPdfPreviewHTML(c, fmt) {
   const T = _facPdfTotales(c);
   const esA4 = fmt === 'a4';
   const num = _facNumFmt(c);
-  const fecha = _facEsc(String(c.creado || c.fecha || c.creado_at || '').slice(0, 16).replace('T', ' '));   // ISO → "2026-08-17 10:24" (sin la T)
+  // Fecha del COMPROBANTE: si se emitió con fecha anterior, manda esa (no la de registro).
+  const fecha = _facEsc(c.fecha_emision
+    ? String(c.fecha_emision).slice(0, 10)
+    : String(c.creado || c.fecha || c.creado_at || '').slice(0, 16).replace('T', ' '));
   const docCli = _facEsc(String(c.cliente_doc || '').trim() || '—');
   const nomCli = _facEsc(c.cliente_nombre || 'Cliente varios');
   const rucLine = _FAC_EMISOR.ruc ? ('R.U.C. ' + _facEsc(_FAC_EMISOR.ruc)) : 'R.U.C. —';
