@@ -201,7 +201,7 @@
     emitir_comprobante: async p => await rpc('emitir_comprobante', {
       p_tipo: p.tipo, p_serie: p.serie, p_cliente_doc_tipo: p.cliente_doc_tipo || null, p_cliente_doc: p.cliente_doc || null,
       p_cliente_nombre: p.cliente_nombre, p_cliente_email: p.cliente_email || null, p_items: p.items || [],
-      p_exonerado: !!p.exonerado, p_moneda: 'PEN', p_origen: 'muelle', p_creado_por: p.operador || 'App',
+      p_exonerado: !!p.exonerado, p_moneda: (String(p.moneda || 'PEN').toUpperCase() === 'USD' ? 'USD' : 'PEN'), p_origen: 'muelle', p_creado_por: p.operador || 'App',
       p_local_id: p.localId || null, p_cliente_tel: p.cliente_tel || null,
       p_cliente_dir: p.cliente_dir || null, p_es_extranjero: !!p.es_extranjero,
       p_medio_pago: p.medio_pago || null, p_exportacion: !!p.exportacion, p_detraccion: !!p.detraccion }),

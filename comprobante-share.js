@@ -139,6 +139,8 @@ function _facTipoSlug(c) {
   return 'boleta';
 }
 
+function _facSim(m) { return String(m || 'PEN').toUpperCase() === 'USD' ? 'US$' : 'S/'; }
+
 function _facTituloDoc(c) {
   var t = Number(c && c.tipo);
   if (t === 1) return 'FACTURA ELECTRÓNICA';
@@ -357,7 +359,8 @@ function _facPdfPreviewHTML(c, fmt) {
   const pagoDet = _facEsc(_facPagoDetalle(c));   // fila propia: efectivo / virtual / tarjeta / mixto detallado
   const vendedor = _facEsc(String(c.creado_por || '').trim());
   const vendedorLine = vendedor ? `Emitido por: ${vendedor}` : '';
-  const totRowsHtml = _facTotRows(T).map(r => `<div class="fpdf-tot-row"><span>${_facEsc(r.lbl)}</span><b>S/ ${_facMoney(r.val)}</b></div>`).join('');
+  const sim = _facSim(T.moneda);   // S/ o US$ según la moneda del comprobante
+  const totRowsHtml = _facTotRows(T).map(r => `<div class="fpdf-tot-row"><span>${_facEsc(r.lbl)}</span><b>${sim} ${_facMoney(r.val)}</b></div>`).join('');
   const detrHtmlA4 = _facDetraccionHTML(c, T, false);
   const detrHtml80 = _facDetraccionHTML(c, T, true);
   // Observaciones del emisor (opcional) + sello de EXPORTACIÓN (turismo receptivo, 0% IGV).
@@ -407,7 +410,7 @@ function _facPdfPreviewHTML(c, fmt) {
         </table>
         <div class="fpdf-a4-tot">
           ${totRowsHtml}
-          <div class="fpdf-tot-row fpdf-tot-grand"><span>TOTAL</span><span>S/ ${_facMoney(T.total)}</span></div>
+          <div class="fpdf-tot-row fpdf-tot-grand"><span>TOTAL</span><span>${sim} ${_facMoney(T.total)}</span></div>
         </div>
       </div>
       <div style="margin-top:8px;font-size:9px;font-weight:700;color:#333;letter-spacing:.01em">${letras}${esExportDoc ? ' &nbsp; ' + expBadgeA4 : ''}</div>
@@ -461,7 +464,7 @@ function _facPdfPreviewHTML(c, fmt) {
     <div class="fpdf-hr"></div>
     <div style="font-size:11px">
       ${totRowsHtml}
-      <div class="fpdf-tot-row fpdf-tot-grand"><span>TOTAL</span><span>S/ ${_facMoney(T.total)}</span></div>
+      <div class="fpdf-tot-row fpdf-tot-grand"><span>TOTAL</span><span>${sim} ${_facMoney(T.total)}</span></div>
     </div>
     <div style="font-size:8.5px;font-weight:700;color:#333;margin-top:5px;text-align:center;line-height:1.3">${letras}</div>
     ${esExportDoc ? `<div style="text-align:center;margin-top:3px">${expBadge80}</div>` : ''}
@@ -578,7 +581,7 @@ async function _facGenPDF(c, fmtOverride) {
     const gRow = (lbl, val, big) => {
       doc.setFont('helvetica', big ? 'bold' : 'normal'); doc.setFontSize(big ? 13 : 9.5);
       doc.setTextColor(...(big ? guinda : ink));
-      doc.text(lbl, glx, gy); doc.text('S/ ' + _facMoney(val), grx, gy, { align: 'right' });
+      doc.text(lbl, glx, gy); doc.text(_facSim(T.moneda) + ' ' + _facMoney(val), grx, gy, { align: 'right' });
       gy += big ? 10 : 7;
     };
     totR.forEach(r => gRow(r.lbl, r.val, false));
@@ -690,7 +693,7 @@ async function _facGenPDF(c, fmtOverride) {
     doc.setTextColor(...gray); doc.setFontSize(7); doc.text(_FAC_UNIDAD + ' · ' + i.cantidad + ' x ' + _facMoney(i.precio), mm, y); doc.setTextColor(...ink); doc.setFontSize(8); y += 3.8;
   });
   doc.setDrawColor(...guinda); doc.setLineWidth(0.4); doc.line(mm, y, w - mm, y); y += 4.2;
-  const trow = (lbl, val, bold, big) => { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(big ? 11 : 8); doc.setTextColor(...(big ? guinda : ink)); doc.text(lbl, mm, y); doc.text('S/ ' + _facMoney(val), w - mm, y, { align: 'right' }); y += big ? 6 : 3.8; };
+  const trow = (lbl, val, bold, big) => { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(big ? 11 : 8); doc.setTextColor(...(big ? guinda : ink)); doc.text(lbl, mm, y); doc.text(_facSim(T.moneda) + ' ' + _facMoney(val), w - mm, y, { align: 'right' }); y += big ? 6 : 3.8; };
   totR.forEach(r => trow(r.lbl, r.val, false, false));
   y += 1; trow('TOTAL', T.total, true, true);
   // Monto en letras

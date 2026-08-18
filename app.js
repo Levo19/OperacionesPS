@@ -1479,7 +1479,7 @@ function _facMItemsDefecto() {
   const S = _facM;
   const base = (S.paquete && S.paquete.length) ? S.paquete : (S.servicios || []).slice(0, 2);
   if (!base.length) return [{ nombre: 'Tour Islas Ballestas', precio: S.precioDef || 30, cantidad: 1, unidad: 'ZZ' }];
-  return base.map(p => ({ nombre: p.nombre, precio: Number(p.precio) || 0, cantidad: 1, unidad: p.unidad || 'ZZ' }));
+  return base.map(p => ({ nombre: p.nombre, precio: Number(p.precio) || 0, cantidad: 1, unidad: p.unidad || 'ZZ', moneda: p.moneda || 'PEN' }));
 }
 async function abrirBoletaMuelle() {
   resTap(); resHap(10);
@@ -1685,7 +1685,7 @@ function _facMPriceChip(i) {
   const it = _facM.items[i] || { precio: 0 };
   if (it.gratis) return `<button id="facm-iprice-${i}" onclick="_facMItPrecioEdit(${i})" title="GRATIS — valor referencial S/ ${Number(it.precio) || 0} (toca para editarlo)" style="border:1px solid rgba(192,132,252,.45);background:rgba(192,132,252,.12);border-radius:8px;padding:4px 8px;font-weight:800;font-size:11px;color:#9333ea;cursor:pointer;white-space:nowrap">🎁 GRATIS</button>`;
   const cero = (Number(it.precio) || 0) <= 0;   // SUNAT no acepta líneas en cero → se señala
-  return `<button id="facm-iprice-${i}" class="${cero ? 'facm-pulse' : ''}" onclick="_facMItPrecioEdit(${i})" title="${cero ? 'Está en S/ 0 — SUNAT no acepta líneas en cero. Toca para ponerle precio (o márcalo 🎁).' : 'Toca para editar el precio'}" style="border:1px solid ${cero ? '#fca5a5' : '#f0e6e7'};background:${cero ? '#fef2f2' : '#faf7f7'};border-radius:8px;padding:4px 8px;font-weight:800;font-size:11.5px;color:${cero ? '#b91c1c' : '#56070c'};cursor:pointer;white-space:nowrap">S/ ${it.precio}</button>`;
+  return `<button id="facm-iprice-${i}" class="${cero ? 'facm-pulse' : ''}" onclick="_facMItPrecioEdit(${i})" title="${cero ? 'Está en S/ 0 — SUNAT no acepta líneas en cero. Toca para ponerle precio (o márcalo 🎁).' : 'Toca para editar el precio'}" style="border:1px solid ${cero ? '#fca5a5' : '#f0e6e7'};background:${cero ? '#fef2f2' : '#faf7f7'};border-radius:8px;padding:4px 8px;font-weight:800;font-size:11.5px;color:${cero ? '#b91c1c' : '#56070c'};cursor:pointer;white-space:nowrap">${_facMSim(it.moneda)} ${it.precio}</button>`;
 }
 // 🎁 Cortesía por servicio: no se cobra pero viaja con valor referencial (afectacion 'gratuito').
 // No se mezcla con exportación (regla SUNAT; el backend también lo rechaza).
@@ -1736,7 +1736,7 @@ function _facMSouthHtml() {
       <div style="display:flex;justify-content:space-between;gap:8px;font-weight:900;color:#A81C2D;font-size:11px"><span>Neto a pagar al proveedor</span><span>S/ ${detrNeto.toFixed(2)}</span></div>
       <div style="display:flex;justify-content:space-between;gap:8px;font-weight:800;color:#A81C2D;font-size:11px;margin-top:1px"><span>Detracción 12% → depositar en cta. BN</span><span>S/ ${detrMonto.toFixed(2)}</span></div>
     </div>` : ''}
-    <div style="display:flex;justify-content:space-between;font-weight:900;font-size:17px;margin-bottom:12px;padding:10px 2px;border-top:1px dashed #e5e7eb;color:#3d0508"><span>TOTAL</span><span id="facm-tt">S/ ${t.total.toFixed(2)}</span></div>
+    <div style="display:flex;justify-content:space-between;font-weight:900;font-size:17px;margin-bottom:12px;padding:10px 2px;border-top:1px dashed #e5e7eb;color:#3d0508"><span>TOTAL</span><span id="facm-tt">${_facMSimCPE()} ${t.total.toFixed(2)}</span></div>
     <button id="facm-emitir" onclick="_facMEmitir()" style="width:100%;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:15px;box-shadow:0 6px 16px rgba(86,7,12,.32);${puede ? '' : 'opacity:.55'}">${S.tipo === 1 ? 'Emitir factura' : 'Emitir boleta'}${puede ? '' : hint}</button>`;
 }
 function _facMRepaintItems() { const el = document.getElementById('facm-items'); if (el) el.innerHTML = _facMItemsHtml(); _facMRepaintSouth(); }
@@ -1776,7 +1776,15 @@ function _facMSvcOvToggle(id) {
 function _facMSvcPickAdd() {
   const S = _facM, P = S._svcPick; if (!P) return;
   const ids = Object.keys(P.sel);
-  ids.forEach(id => { const sv = (S.servicios || []).find(x => String(x.id) === String(id)); if (sv) S.items.push({ nombre: sv.nombre, precio: Number(sv.precio) || 0, cantidad: 1, unidad: sv.unidad || 'ZZ' }); });
+  const monCarrito = S.items.length ? _facMMoneda() : null;
+  const rechazados = [];
+  ids.forEach(id => {
+    const sv = (S.servicios || []).find(x => String(x.id) === String(id)); if (!sv) return;
+    const mon = String(sv.moneda || 'PEN').toUpperCase() === 'USD' ? 'USD' : 'PEN';
+    if (monCarrito && mon !== monCarrito) { rechazados.push(sv.nombre); return; }
+    S.items.push({ nombre: sv.nombre, precio: Number(sv.precio) || 0, cantidad: 1, unidad: sv.unidad || 'ZZ', moneda: mon });
+  });
+  if (rechazados.length) { _facMSvcOvClose(); return _facMErr('Un comprobante no puede mezclar monedas: «' + String(rechazados[0]).slice(0, 26) + '» va en otra moneda — emítelo aparte.'); }
   _facMSvcOvClose();
   if (ids.length) { fx('sel'); resHap([10, 25, 10]); }
   _facMRepaintItems();
@@ -1908,6 +1916,14 @@ function _facMTotal() {
   const grav = esExport ? 0 : Math.round(total / 1.18 * 100) / 100;
   return { total, grav, igv: esExport ? 0 : Math.round((total - grav) * 100) / 100, gratis: Math.round(gratis * 100) / 100, esExport, base: Math.round(base * 100) / 100, rec };
 }
+// Un CPE lleva UNA sola moneda (SUNAT): la del primer servicio del carrito. Agregar uno de otra
+// moneda se BLOQUEA — el precio cobrado debe ser el del catálogo, no una conversión silenciosa.
+function _facMMoneda() {
+  const it = (_facM && _facM.items || []).find(i => i && i.moneda);
+  return (it && String(it.moneda).toUpperCase() === 'USD') ? 'USD' : 'PEN';
+}
+function _facMSim(m) { return String(m || 'PEN').toUpperCase() === 'USD' ? 'US$' : 'S/'; }
+function _facMSimCPE() { return _facMSim(_facMMoneda()); }
 // Recargo por pago con tarjeta (comisión del POS trasladada al cliente). Va como LÍNEA del CPE:
 // si se cobra 5% más, el comprobante debe declararlo (mayor contraprestación, mismo IGV).
 const _FACM_TARJETA = { rate: 0.05, label: 'Recargo por pago con tarjeta (5%)' };
@@ -1967,7 +1983,7 @@ function _facMPagoHTML(t) {
         <button onclick="_facMPagoCiclo()" title="Toca para cambiar: Efectivo → Virtual → Mixto → Tarjeta" style="border:1px solid ${(S.pagoTipo === 'mixto' || S.pagoTipo === 'tarjeta') ? '#c9a84c' : '#e5e7eb'};background:${(S.pagoTipo === 'mixto' || S.pagoTipo === 'tarjeta') ? '#fdf6ec' : '#fff'};color:#3d0508;font-weight:800;font-size:11.5px;border-radius:999px;padding:4px 13px;cursor:pointer">${M[0]} ${M[1]}</button>
       </span>
     </div>
-    ${t.rec > 0 ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#15803d;margin:-4px 0 8px"><span>Recargo tarjeta ${Math.round(_FACM_TARJETA.rate * 100)}% (va en el comprobante)</span><span>+ S/ ${t.rec.toFixed(2)}</span></div>` : ''}
+    ${t.rec > 0 ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#15803d;margin:-4px 0 8px"><span>Recargo tarjeta ${Math.round(_FACM_TARJETA.rate * 100)}% (va en el comprobante)</span><span>+ ${_facMSimCPE()} ${t.rec.toFixed(2)}</span></div>` : ''}
     ${S.pagoTipo === 'mixto' ? `<div style="display:flex;gap:8px;margin-bottom:10px">
       <label style="flex:1;font-size:9.5px;font-weight:800;color:#9b7d80">EFECTIVO S/<input id="facm-mx-ef" type="number" inputmode="decimal" min="0" value="${p.ef || ''}" oninput="_facMPagoMxInput('ef',this.value)" style="${inp};margin-top:3px"></label>
       <label style="flex:1;font-size:9.5px;font-weight:800;color:#9b7d80">VIRTUAL S/<input id="facm-mx-vi" type="number" inputmode="decimal" min="0" value="${p.vi || ''}" oninput="_facMPagoMxInput('vi',this.value)" style="${inp};margin-top:3px"></label>
@@ -2050,10 +2066,10 @@ function _facMFeedHtml() {
   const S = _facM; const f = S._feed || [];
   if (!f.length) return '';
   return '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">' + f.map((e, i) => {
-    if (e.estado === 'enviando') return `<div class="facm-feed-it" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:11px;background:#fff7ed;border:1px solid #fed7aa;font-size:12px;color:#9a3412"><span class="facm-spin"></span><span style="flex:1;min-width:0">Emitiendo · ${_facEscM(e.nombre)} · S/ ${e.total.toFixed(2)}</span></div>`;
+    if (e.estado === 'enviando') return `<div class="facm-feed-it" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:11px;background:#fff7ed;border:1px solid #fed7aa;font-size:12px;color:#9a3412"><span class="facm-spin"></span><span style="flex:1;min-width:0">Emitiendo · ${_facEscM(e.nombre)} · ${_facMSim(e.moneda)} ${e.total.toFixed(2)}</span></div>`;
     if (e.estado === 'error') return `<div class="facm-feed-it" style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:11px;background:#fef2f2;border:1px solid #fecaca;font-size:11.5px;color:#b91c1c"><span>⚠</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${_facEscM(e._err || 'No se pudo emitir')}</span><button onclick="_facMReintentar(${i})" style="border:none;background:#b91c1c;color:#fff;font-weight:800;font-size:11px;border-radius:7px;padding:5px 11px;cursor:pointer;flex:0 0 auto">Reintentar</button></div>`;
     const num = e.serie + '-' + String(e.numero).padStart(6, '0'); const pend = e.estado === 'pendiente';
-    return `<div class="facm-feed-it" style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:11px;background:${pend ? '#fefce8' : '#f0fdf4'};border:1px solid ${pend ? '#fde68a' : '#bbf7d0'};font-size:12px;color:${pend ? '#a16207' : '#15803d'}"><span>${pend ? '⏳' : '✓'}</span><span style="flex:1;min-width:0;font-weight:800">${num}${pend ? ' · en proceso' : ''}</span><span style="color:#6b7280">S/ ${e.total.toFixed(2)}</span></div>`;
+    return `<div class="facm-feed-it" style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:11px;background:${pend ? '#fefce8' : '#f0fdf4'};border:1px solid ${pend ? '#fde68a' : '#bbf7d0'};font-size:12px;color:${pend ? '#a16207' : '#15803d'}"><span>${pend ? '⏳' : '✓'}</span><span style="flex:1;min-width:0;font-weight:800">${num}${pend ? ' · en proceso' : ''}</span><span style="color:#6b7280">${_facMSim(e.moneda)} ${e.total.toFixed(2)}</span></div>`;
   }).join('') + '</div>';
 }
 function _facMRepaintFeed() { const el = document.getElementById('facm-feed'); if (el) el.innerHTML = _facMFeedHtml(); }
@@ -2077,12 +2093,13 @@ function _facMEmitir() {
     tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
     cliente_doc_tipo: cli.doc_tipo, cliente_doc: (cli.doc_tipo === '0' && (!cli.doc_numero || cli.doc_numero === '00000000')) ? '' : cli.doc_numero, cliente_nombre: cli.nombre,   // '0' con doc REAL = Tax-ID extranjero (no blanquear); '0' vacío/00000000 = Varios
     cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!S.export || !!cli.es_extranjero,
-    items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0, unidad: it.unidad || 'ZZ' }, it.gratis ? { afectacion: 'gratuito' } : {}))   // unidad = catálogo SUNAT 03 (ZZ servicio / NIU bien)
-      .concat(t.rec > 0 ? [Object.assign({ descripcion: _FACM_TARJETA.label, cantidad: 1, precio: t.rec, unidad: 'ZZ' }, S.export ? { afectacion: 'exportacion' } : {})] : []),   // el recargo del POS se declara en el CPE
+    moneda: _facMMoneda(),   // un CPE = una sola moneda (la del catálogo)
+    items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0, unidad: it.unidad || 'ZZ', moneda: it.moneda || 'PEN' }, it.gratis ? { afectacion: 'gratuito' } : {}))   // unidad = catálogo SUNAT 03 (ZZ servicio / NIU bien)
+      .concat(t.rec > 0 ? [Object.assign({ descripcion: _FACM_TARJETA.label, cantidad: 1, precio: t.rec, unidad: 'ZZ', moneda: _facMMoneda() }, S.export ? { afectacion: 'exportacion' } : {})] : []),   // el recargo del POS se declara en el CPE
     exonerado: false, medio_pago: soloGratis ? null : _facMPagoStr(t.total), exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
     localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)   // idempotente por intento (mismo en reintentos)
   };
-  const entry = { estado: 'enviando', nombre: cli.nombre, total: t.total, _payload: payload };
+  const entry = { estado: 'enviando', nombre: cli.nombre, total: t.total, moneda: _facMMoneda(), _payload: payload };
   S._feed = S._feed || []; S._feed.unshift(entry); if (S._feed.length > 5) S._feed.length = 5;
   fx('emit'); resHap([10, 25, 10]);
   // libera el form YA — el operador arranca el siguiente sin esperar a SUNAT

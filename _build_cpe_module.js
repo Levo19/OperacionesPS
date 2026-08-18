@@ -16,7 +16,7 @@ const CONSTS = ['_FAC_EMISOR', '_FAC_DETRACCION', '_FAC_UNIDAD'];
 const FUNCS = [
   '_facMoney', '_facEsc', '_facEnsureJsPDF', '_facEnsureH2C', '_facEnsureQR', '_facLoadLogo',
   '_facEnteroLetras', '_facMontoLetras', '_facNumFmt', '_facTipoWord', '_facTipoShort', '_facTipoSlug',
-  '_facTituloDoc', '_facInferDocTipo', '_facFormaPagoBase', '_facPagoDetalle', '_facFormaPago', '_facDetraccion', '_facDetraccionTexto',
+  '_facSim', '_facTituloDoc', '_facInferDocTipo', '_facFormaPagoBase', '_facPagoDetalle', '_facFormaPago', '_facDetraccion', '_facDetraccionTexto',
   '_facDetraccionHTML', '_facNCLegal', '_facNCLegalHTML', '_facDocModWord', '_facPdfItems',
   '_facPdfTotales', '_facTotRows', '_facQRData', '_facQRDataUrl', '_facRasterizar',
   '_facPdfPreviewHTML', '_facGenPDF'
