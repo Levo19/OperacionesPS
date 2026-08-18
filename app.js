@@ -1684,7 +1684,8 @@ function _facMItPrecioSet(i, v) {
 function _facMPriceChip(i) {
   const it = _facM.items[i] || { precio: 0 };
   if (it.gratis) return `<button id="facm-iprice-${i}" onclick="_facMItPrecioEdit(${i})" title="GRATIS — valor referencial S/ ${Number(it.precio) || 0} (toca para editarlo)" style="border:1px solid rgba(192,132,252,.45);background:rgba(192,132,252,.12);border-radius:8px;padding:4px 8px;font-weight:800;font-size:11px;color:#9333ea;cursor:pointer;white-space:nowrap">🎁 GRATIS</button>`;
-  return `<button id="facm-iprice-${i}" onclick="_facMItPrecioEdit(${i})" title="Toca para editar el precio" style="border:1px solid #f0e6e7;background:#faf7f7;border-radius:8px;padding:4px 8px;font-weight:800;font-size:11.5px;color:#56070c;cursor:pointer;white-space:nowrap">S/ ${it.precio}</button>`;
+  const cero = (Number(it.precio) || 0) <= 0;   // SUNAT no acepta líneas en cero → se señala
+  return `<button id="facm-iprice-${i}" class="${cero ? 'facm-pulse' : ''}" onclick="_facMItPrecioEdit(${i})" title="${cero ? 'Está en S/ 0 — SUNAT no acepta líneas en cero. Toca para ponerle precio (o márcalo 🎁).' : 'Toca para editar el precio'}" style="border:1px solid ${cero ? '#fca5a5' : '#f0e6e7'};background:${cero ? '#fef2f2' : '#faf7f7'};border-radius:8px;padding:4px 8px;font-weight:800;font-size:11.5px;color:${cero ? '#b91c1c' : '#56070c'};cursor:pointer;white-space:nowrap">S/ ${it.precio}</button>`;
 }
 // 🎁 Cortesía por servicio: no se cobra pero viaja con valor referencial (afectacion 'gratuito').
 // No se mezcla con exportación (regla SUNAT; el backend también lo rechaza).
@@ -1935,6 +1936,10 @@ function _facMReglas() {
     const p = _facMPagoMxCalc(t.total);
     rules.push({ dura: true, ok: p.ef > 0 && p.vi > 0, txt: 'Mixto: reparte el total entre Efectivo y Virtual' });
   }
+  // SUNAT rechaza líneas en S/0 (error 3105): avisar AQUÍ y no al emitir (antes el botón decía
+  // "listo" y luego rebotaba con un parpadeo mudo).
+  const cero = (S.items || []).find(it => !it.gratis && (Number(it.precio) || 0) <= 0);
+  if (cero) rules.push({ dura: true, ok: false, txt: '«' + String(cero.nombre || 'Un servicio').slice(0, 34) + '» está en S/ 0 — ponle precio o márcalo 🎁' });
   return rules;
 }
 // ── Chip TIPO DE PAGO (Efectivo → Virtual → Mixto, default Efectivo) — paridad PS ──
@@ -2031,7 +2036,15 @@ function _facMReglasHtml() {
   return `<div style="background:#faf7f2;border:1px solid #eadfce;border-radius:11px;padding:9px 11px;margin-bottom:10px"><div style="font-size:10px;color:#9b7d80;font-weight:800;letter-spacing:.5px;margin-bottom:3px">REQUISITOS SUNAT</div>${filas}</div>`;
 }
 function _facMPuede() { return _facMReglas().every(r => !r.dura || r.ok); }   // ¿cumple todas las reglas duras?
-function _facMErr(m) { fx('err'); mostrarToast('⚠️ ' + m, 'error'); if (_facM){ _facM.shake=true; _facMRender(); setTimeout(()=>{ if(_facM){_facM.shake=false;_facMRender();} },450); } }
+// Aviso EN SITIO: antes reconstruía TODO el modal dos veces (parpadeo) para mostrar un shake.
+function _facMErr(m) {
+  fx('err'); mostrarToast('⚠️ ' + m, 'error');
+  const box = document.getElementById('facm-box');
+  if (box) { box.style.animation = 'none'; void box.offsetWidth; box.style.animation = 'siShakeM .42s';
+    setTimeout(() => { try { box.style.animation = ''; } catch (e) {} }, 470); }
+  const rg = document.getElementById('facm-reglas');
+  if (rg) rg.innerHTML = '<div style="padding:8px 10px;margin-bottom:8px;border-radius:9px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:11.5px;font-weight:700;line-height:1.4">⚠ ' + _facEscM(m) + '</div>' + _facMReglasHtml();
+}
 // Mini-feed OPTIMISTA de emisiones (arriba del Emitir): "enviando → ✓/⏳/⚠".
 function _facMFeedHtml() {
   const S = _facM; const f = S._feed || [];
