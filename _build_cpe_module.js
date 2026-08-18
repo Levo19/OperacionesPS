@@ -25,8 +25,10 @@ const FUNCS = [
 const CPE_FUNCS = ['_cpeSubir', '_cpeMensaje', '_cpePuedeArchivos', 'compartirCPE'];
 
 function build() {
-  const PS = fs.readFileSync(PS_INDEX, 'utf8');
-  const CUR = fs.readFileSync(OUT, 'utf8');
+  // CRLF → LF: en Windows el índice se checa con CRLF y un \r crudo dentro de un string JS lo
+  // ROMPE (el escape de \n no lo cubre). Normalizar aquí evita regenerar un módulo inválido.
+  const PS = fs.readFileSync(PS_INDEX, 'utf8').replace(/\r\n?/g, '\n');
+  const CUR = fs.readFileSync(OUT, 'utf8').replace(/\r\n?/g, '\n');
 
   const cssRaw = extractCss(PS);
   const cssJsString = cssRaw.replace(/\\/g, '\\\\').replace(/"/g, '\\"').split('\n').join('\\n');

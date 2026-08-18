@@ -157,13 +157,8 @@ function _facInferDocTipo(c) {
 }
 
 function _facFormaPago(c) {
-  var fp = String((c && c.forma_pago) || 'CONTADO').toUpperCase();
-  var s = fp === 'CREDITO' ? 'CRÉDITO' : 'CONTADO';
-  var v = String((c && c.credito_vencimiento) || '').slice(0, 10);
-  if (fp === 'CREDITO' && v) s += ' · vence ' + v;
-  var m = String((c && c.medio_pago) || '').trim();
-  if (m) s += ' · ' + m;
-  return s;
+  var s = _facFormaPagoBase(c); var m = _facPagoDetalle(c);
+  return m ? s + ' · ' + m : s;
 }
 
 function _facDetraccion(c, T) {
@@ -320,7 +315,7 @@ function _facPdfPreviewHTML(c, fmt) {
   const T = _facPdfTotales(c);
   const esA4 = fmt === 'a4';
   const num = _facNumFmt(c);
-  const fecha = _facEsc(String(c.creado || c.fecha || c.creado_at || '').slice(0, 16));
+  const fecha = _facEsc(String(c.creado || c.fecha || c.creado_at || '').slice(0, 16).replace('T', ' '));   // ISO → "2026-08-17 10:24" (sin la T)
   const docCli = _facEsc(String(c.cliente_doc || '').trim() || '—');
   const nomCli = _facEsc(c.cliente_nombre || 'Cliente varios');
   const rucLine = _FAC_EMISOR.ruc ? ('R.U.C. ' + _facEsc(_FAC_EMISOR.ruc)) : 'R.U.C. —';
@@ -337,7 +332,8 @@ function _facPdfPreviewHTML(c, fmt) {
     : `<div style="width:${size}px;height:${size}px;border:1px dashed #bbb;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#999">QR</div>`;
   const hashTxt = hash ? `<div style="font-size:7px;color:#777;word-break:break-all;line-height:1.25">Hash: ${hash}</div>` : '';
   // Campos SUNAT añadidos: forma de pago, tipo de operación, vendedor, desglose por tipo de op. y detracción.
-  const formaPago = _facEsc(_facFormaPago(c));
+  const formaPago = _facEsc(_facFormaPagoBase(c));
+  const pagoDet = _facEsc(_facPagoDetalle(c));   // fila propia: efectivo / virtual / tarjeta / mixto detallado
   const vendedor = _facEsc(String(c.creado_por || '').trim());
   const vendedorLine = vendedor ? `Emitido por: ${vendedor}` : '';
   const totRowsHtml = _facTotRows(T).map(r => `<div class="fpdf-tot-row"><span>${_facEsc(r.lbl)}</span><b>S/ ${_facMoney(r.val)}</b></div>`).join('');
@@ -379,7 +375,7 @@ function _facPdfPreviewHTML(c, fmt) {
       </div>
       <div class="fpdf-hr-solid"></div>
       <div class="fpdf-a4-meta">
-        <div class="fpdf-a4-metacol"><div><span class="lbl">CLIENTE</span> ${nomCli}</div><div><span class="lbl">DOCUMENTO</span> ${docCli}</div><div><span class="lbl">FORMA DE PAGO</span> ${formaPago}</div></div>
+        <div class="fpdf-a4-metacol"><div><span class="lbl">CLIENTE</span> ${nomCli}</div><div><span class="lbl">DOCUMENTO</span> ${docCli}</div><div><span class="lbl">FORMA DE PAGO</span> ${formaPago}</div>${pagoDet ? `<div><span class="lbl">TIPO DE PAGO</span> ${pagoDet}</div>` : ''}</div>
         <div class="fpdf-a4-metacol r"><div><span class="lbl">FECHA</span> ${fecha || '—'}</div><div><span class="lbl">MONEDA</span> ${_facEsc(c.moneda || 'PEN')}</div><div><span class="lbl">OPERACIÓN</span> Venta interna</div></div>
       </div>
       ${_facNCLegalHTML(c)}
@@ -431,6 +427,7 @@ function _facPdfPreviewHTML(c, fmt) {
     </div>
     <div style="display:flex;justify-content:space-between;gap:8px;font-size:9.5px;margin-top:2px">
       <div><b>Pago:</b> ${formaPago}</div>
+      ${pagoDet ? `<div><b>Tipo de pago:</b> ${pagoDet}</div>` : ''}
       <div><b>Op.:</b> Venta interna</div>
     </div>
     <div style="font-size:10px;margin-top:4px"><b>Cliente:</b> ${nomCli}<br><b>Doc:</b> ${docCli}</div>

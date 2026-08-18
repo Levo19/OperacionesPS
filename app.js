@@ -1496,7 +1496,7 @@ async function abrirBoletaMuelle() {
     q: '', resultados: [], buscando: false, apiResult: null, noEncontrado: false,
     manual: false, manualTipo: '1', _manualNombre: '', _manualDoc: '', _manualDir: '',
     tel: '', email: '',
-    items: [], exonerado: false, export: false, pagoTipo: 'efectivo', pagoEf: '', _svcPick: null, _precioEdit: null,
+    items: [], exonerado: false, export: false, pagoTipo: 'efectivo', pagoEf: '', pagoRec: true, _svcPick: null, _precioEdit: null,
     historial: [], cargandoHist: false, contadorHoy: 0,
     shake: false, _t: null, anularId: null, _anularMotivo: '', _feed: [], _emitCd: 0
   };
@@ -1897,11 +1897,23 @@ async function _facMAnularEnviar(id) {
 function _facMTotal() {
   const items = _facM.items || [];
   // Cortesías (🎁 gratuito) NO suman al total a cobrar; Exportación = 0% IGV (el backend fija la afectación).
-  const total = items.reduce((a, it) => it.gratis ? a : a + (Number(it.cantidad) || 0) * (Number(it.precio) || 0), 0);
+  const base = items.reduce((a, it) => it.gratis ? a : a + (Number(it.cantidad) || 0) * (Number(it.precio) || 0), 0);
   const gratis = items.reduce((a, it) => it.gratis ? a + (Number(it.cantidad) || 0) * (Number(it.precio) || 0) : a, 0);
+  // Recargo por tarjeta = mayor contraprestación → entra al CPE como una línea más (se calcula
+  // solo sobre lo COBRADO, sin cortesías).
+  const rec = _facMRecargo(base);
+  const total = Math.round((base + rec) * 100) / 100;
   const esExport = !!_facM.export;
   const grav = esExport ? 0 : Math.round(total / 1.18 * 100) / 100;
-  return { total: Math.round(total * 100) / 100, grav, igv: esExport ? 0 : Math.round((total - grav) * 100) / 100, gratis: Math.round(gratis * 100) / 100, esExport };
+  return { total, grav, igv: esExport ? 0 : Math.round((total - grav) * 100) / 100, gratis: Math.round(gratis * 100) / 100, esExport, base: Math.round(base * 100) / 100, rec };
+}
+// Recargo por pago con tarjeta (comisión del POS trasladada al cliente). Va como LÍNEA del CPE:
+// si se cobra 5% más, el comprobante debe declararlo (mayor contraprestación, mismo IGV).
+const _FACM_TARJETA = { rate: 0.05, label: 'Recargo por pago con tarjeta (5%)' };
+function _facMRecargo(base) {
+  const S = _facM;
+  if (!S || S.pagoTipo !== 'tarjeta' || S.pagoRec === false) return 0;
+  return Math.round(Math.max(0, base) * _FACM_TARJETA.rate * 100) / 100;
 }
 // Motor de reglas SUNAT en vivo: devuelve [{ok, dura, txt}] según el estado actual del modal.
 function _facMReglas() {
@@ -1934,18 +1946,23 @@ function _facMPagoMxCalc(total) {
 function _facMPagoStr(total) {
   const S = _facM;
   if (S.pagoTipo === 'virtual') return 'Virtual (transferencia/Yape)';
+  if (S.pagoTipo === 'tarjeta') return 'Tarjeta' + (S.pagoRec === false ? ' (sin recargo)' : ' (incluye recargo ' + Math.round(_FACM_TARJETA.rate * 100) + '%)');
   if (S.pagoTipo === 'mixto') { const p = _facMPagoMxCalc(total); return 'Mixto: Efectivo S/' + p.ef.toFixed(2) + ' + Virtual S/' + p.vi.toFixed(2); }
   return 'Efectivo';
 }
 function _facMPagoHTML(t) {
   const S = _facM; const total = t.total;
-  const M = { efectivo: ['💵', 'Efectivo'], virtual: ['📲', 'Virtual'], mixto: ['🔀', 'Mixto'] }[S.pagoTipo] || ['💵', 'Efectivo'];
+  const M = { efectivo: ['💵', 'Efectivo'], virtual: ['📲', 'Virtual'], mixto: ['🔀', 'Mixto'], tarjeta: ['💳', 'Tarjeta'] }[S.pagoTipo] || ['💵', 'Efectivo'];
   const p = _facMPagoMxCalc(total);
   const inp = 'width:100%;padding:8px 9px;border:1px solid #e5e7eb;border-radius:9px;font-weight:700;font-size:13px;background:#fff';
   return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:${S.pagoTipo === 'mixto' ? '8' : '10'}px">
       <span style="font-size:10px;font-weight:800;color:#9b7d80;letter-spacing:.5px">PAGO</span>
-      <button onclick="_facMPagoCiclo()" title="Toca para cambiar: Efectivo → Virtual → Mixto" style="border:1px solid ${S.pagoTipo === 'mixto' ? '#c9a84c' : '#e5e7eb'};background:${S.pagoTipo === 'mixto' ? '#fdf6ec' : '#fff'};color:#3d0508;font-weight:800;font-size:11.5px;border-radius:999px;padding:4px 13px;cursor:pointer">${M[0]} ${M[1]}</button>
+      <span style="display:flex;align-items:center;gap:6px">
+        ${S.pagoTipo === 'tarjeta' ? `<button onclick="_facMPagoRecToggle()" title="${S.pagoRec === false ? 'Activar el recargo del POS' : 'Quitar el recargo (lo asume la empresa)'}" style="border:1px solid ${S.pagoRec === false ? '#e5e7eb' : '#86efac'};background:${S.pagoRec === false ? '#fff' : '#f0fdf4'};color:${S.pagoRec === false ? '#9ca3af' : '#15803d'};font-weight:800;font-size:11px;border-radius:999px;padding:4px 10px;cursor:pointer">${S.pagoRec === false ? '○' : '●'} ${Math.round(_FACM_TARJETA.rate * 100)}%</button>` : ''}
+        <button onclick="_facMPagoCiclo()" title="Toca para cambiar: Efectivo → Virtual → Mixto → Tarjeta" style="border:1px solid ${(S.pagoTipo === 'mixto' || S.pagoTipo === 'tarjeta') ? '#c9a84c' : '#e5e7eb'};background:${(S.pagoTipo === 'mixto' || S.pagoTipo === 'tarjeta') ? '#fdf6ec' : '#fff'};color:#3d0508;font-weight:800;font-size:11.5px;border-radius:999px;padding:4px 13px;cursor:pointer">${M[0]} ${M[1]}</button>
+      </span>
     </div>
+    ${t.rec > 0 ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#15803d;margin:-4px 0 8px"><span>Recargo tarjeta ${Math.round(_FACM_TARJETA.rate * 100)}% (va en el comprobante)</span><span>+ S/ ${t.rec.toFixed(2)}</span></div>` : ''}
     ${S.pagoTipo === 'mixto' ? `<div style="display:flex;gap:8px;margin-bottom:10px">
       <label style="flex:1;font-size:9.5px;font-weight:800;color:#9b7d80">EFECTIVO S/<input id="facm-mx-ef" type="number" inputmode="decimal" min="0" value="${p.ef || ''}" oninput="_facMPagoMxInput('ef',this.value)" style="${inp};margin-top:3px"></label>
       <label style="flex:1;font-size:9.5px;font-weight:800;color:#9b7d80">VIRTUAL S/<input id="facm-mx-vi" type="number" inputmode="decimal" min="0" value="${p.vi || ''}" oninput="_facMPagoMxInput('vi',this.value)" style="${inp};margin-top:3px"></label>
@@ -1954,10 +1971,18 @@ function _facMPagoHTML(t) {
 }
 function _facMPagoCiclo() {
   const S = _facM;
-  S.pagoTipo = S.pagoTipo === 'efectivo' ? 'virtual' : S.pagoTipo === 'virtual' ? 'mixto' : 'efectivo';
+  S.pagoTipo = S.pagoTipo === 'efectivo' ? 'virtual' : S.pagoTipo === 'virtual' ? 'mixto' : S.pagoTipo === 'mixto' ? 'tarjeta' : 'efectivo';
   if (S.pagoTipo === 'mixto') { const t = _facMTotal().total; S.pagoEf = String(Math.round(t / 2 * 100) / 100); }   // arranca mitad-mitad, editable
   else S.pagoEf = '';
+  if (S.pagoTipo === 'tarjeta') S.pagoRec = true;   // el recargo entra encendido; se apaga con el chip %
   resTap(); resHap(8);
+  _facMRepaintSouth();
+}
+// Enciende/apaga el 5% del POS (apagado = lo asume la empresa)
+function _facMPagoRecToggle() {
+  const S = _facM;
+  S.pagoRec = S.pagoRec === false;
+  if (S.pagoRec) { fx('sel'); resHap([12, 25, 12]); } else { resTap(); resHap(8); }
   _facMRepaintSouth();
 }
 function _facMPagoBtnSync() {
@@ -2039,7 +2064,8 @@ function _facMEmitir() {
     tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
     cliente_doc_tipo: cli.doc_tipo, cliente_doc: (cli.doc_tipo === '0' && (!cli.doc_numero || cli.doc_numero === '00000000')) ? '' : cli.doc_numero, cliente_nombre: cli.nombre,   // '0' con doc REAL = Tax-ID extranjero (no blanquear); '0' vacío/00000000 = Varios
     cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!S.export || !!cli.es_extranjero,
-    items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0, unidad: it.unidad || 'ZZ' }, it.gratis ? { afectacion: 'gratuito' } : {})),   // unidad = catálogo SUNAT 03 (ZZ servicio / NIU bien)
+    items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0, unidad: it.unidad || 'ZZ' }, it.gratis ? { afectacion: 'gratuito' } : {}))   // unidad = catálogo SUNAT 03 (ZZ servicio / NIU bien)
+      .concat(t.rec > 0 ? [Object.assign({ descripcion: _FACM_TARJETA.label, cantidad: 1, precio: t.rec, unidad: 'ZZ' }, S.export ? { afectacion: 'exportacion' } : {})] : []),   // el recargo del POS se declara en el CPE
     exonerado: false, medio_pago: soloGratis ? null : _facMPagoStr(t.total), exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
     localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)   // idempotente por intento (mismo en reintentos)
   };
@@ -2049,7 +2075,7 @@ function _facMEmitir() {
   // libera el form YA — el operador arranca el siguiente sin esperar a SUNAT
   S.cliente = { doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' };
   S.tipo = 2; S.export = false;   // vuelve a Boleta nacional — evita quedar Factura+Varios pulsando rojo tras emitir
-  S.items = []; S.exonerado = false; S.pagoTipo = 'efectivo'; S.pagoEf = ''; S.q = ''; S.resultados = [];   // A3: NO re-poblar el paquete por defecto → el botón queda bloqueado hasta agregar un servicio (evita re-emitir un CPE real por doble toque)
+  S.items = []; S.exonerado = false; S.pagoTipo = 'efectivo'; S.pagoEf = ''; S.pagoRec = true; S.q = ''; S.resultados = [];   // A3: NO re-poblar el paquete por defecto → el botón queda bloqueado hasta agregar un servicio (evita re-emitir un CPE real por doble toque)
   _facMRender();
   _facMSend(entry);
 }
