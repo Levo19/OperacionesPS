@@ -261,6 +261,34 @@ Retoma de un feature a medias (5 jul): el prompt del OCR de zarpe ya estaba endu
 
 | P24 | **Servicios en DÓLARES** (catálogo con moneda + CPE que la respeta) + **tipo de cambio oficial automático** | el catálogo no tenía moneda y el panel mandaba `moneda:'PEN'` fijo; el muelle además la forzaba en `supabase-data.js` | `servicios.moneda` (check PEN/USD, todo lo viejo en soles) con tag en el catálogo y CRUD; el CPE adopta la moneda del primer servicio y **bloquea mezclar** (SUNAT: un comprobante = una moneda; no se convierte a espaldas del usuario); símbolo dinámico en modal/historial/feed/ticket y monto en letras DÓLARES/SOLES. **TC OFICIAL:** tabla `tipo_cambio` + `tc_cargar()` (http a `api.apis.net.pe/v1/tipo-cambio-sunat`, sin token) + **cron diario `tc-diario` 12:05 UTC** + `tc_venta(fecha)` que aplica la regla del **último publicado** (art. 20.2). PS 2.18.0 / OPS v101 |
 
+### AUDITORÍA 1000x DE LA EMISIÓN DE CPE (2026-08-17, 5 agentes adversariales en paralelo)
+Backend SQL · frontend PS · frontend OPS · código obsoleto · QA E2E (224 casos, 257 capturas, 0 errores JS, 0 comprobantes reales emitidos). **CORREGIDO Y DESPLEGADO** (PS 2.19.2 / OPS v103):
+
+| Sev | Hallazgo | Fix |
+|---|---|---|
+| 🔴 | **Fuga de dinero (PS):** marcar en el MISMO lote del picker dos servicios de distinta moneda los metía a ambos y la emisión reetiquetaba todo a una sola → se facturaban dólares como soles. El guard solo miraba el carrito previo | el primer servicio del lote fija la moneda; el resto se rechaza avisando |
+| 🔴 | **Fuga de dinero (PS):** ítems sin moneda (＋libre, zarpe) se convertían 1:1 a la del CPE (tecleabas 40 soles y facturabas US$40) | el libre hereda la moneda; el zarpe rechaza USD (ese lote va en soles) |
+| 🔴 | **Fuga de dinero (OPS):** al rechazar un servicio de otra moneda, el `return` temprano metía los aceptados al estado **sin repintar** → la pantalla mostraba S/40 y se emitía un CPE de S/80 | repintar SIEMPRE antes de avisar |
+| 🔴 | **Las NOTAS DE CRÉDITO SUMABAN al IGV débito** en vez de restar (mes real: 966.12 en vez de 960.02) en balance_tributos/balance_meses/proyeccion_renta | `case when tipo=3 then -1 else 1 end` en los tres |
+| 🔴 | `tc_cargar` con **EXECUTE a PUBLIC**: con la anon key cualquiera disparaba HTTP saliente y escribía la tabla del TC (DoS de la facturación USD) | REVOCADO |
+| 🔴 | `buscar_cliente` **SECURITY DEFINER sin gate y expuesta a anon** → enumeración del padrón (nombre, dirección, correo, teléfono). Idem `listar_servicios` | `_req_staff()` + revoke |
+| 🔴 | **No había forma de conectar NubeFact desde la UI**: las pantallas de token/series/correlativo viven en `tab==='ajustes'`, destino inalcanzable desde que el tabbar quedó con solo 'historial' → imposible pasar de demo a producción | 'ajustes' vuelve a ser destino válido + botón ⚙ que avisa "sin conectar" |
+| 🔴 | `emitir_nota_credito` no mandaba `tipo_de_cambio` → **la NC de una factura en USD sería rechazada** por NubeFact | lo envía y lo persiste |
+| 🟠 | **Umbrales legales (S/700 · S/2000 · detracción) comparados contra el total EN DÓLARES**: boleta US$300 sin identificar, factura US$250 sin SPOT | conversión con TC en PS y OPS; **sin TC se usa piso conservador 3.0** (exigir de más, nunca de menos) |
+| 🟠 | Validaciones solo dentro de `_facEmitir` (nombre, doc, carrito vacío, factura 100% cortesía, cortesía+export) → botón "listo" que rebotaba | todas al motor de reglas |
+| 🟠 | `fechaEmision`/`exportacion` sobrevivían a la emisión (siguiente CPE retrofechado) y el **chip mostraba una fecha distinta de la emitida** al recortarse | reset completo + `_facFechaRepintaChip()` |
+| 🟠 | El lote de zarpe emitía siempre con fecha de hoy | fecha del zarpe recortada al plazo |
+| 🟠 | OPS: `cliente_email`/`cliente_tel` descartados → reenvío WhatsApp sin destinatario | se envían |
+| 🟠 | OPS: con exportación activa, un **pasaporte válido se marcaba en rojo** ("necesita RUC") mientras las reglas lo aprobaban | `_facMCliInvalido` evalúa export primero |
+| 🟠 | Guard de bancarización se evaporaba con `p_exportacion` NULL; períodos tributarios agrupados por `creado_at` y no por `fecha_emision` (CPE retrofechado que cruza el cierre se declara en el mes equivocado) | `coalesce` + `coalesce(fecha_emision, creado_at)` |
+| 🟡 | Símbolo "S/" fijo en el catálogo del picker, al editar precio y **en el texto de medio de pago que VIAJA al CPE**; residuos entre aperturas (obs de un borrador se imprimía en el CPE siguiente); `_facPdfGuardarContacto` era no-op permanente; paquete de zarpe perdía la moneda | corregidos |
+| 🟡 | 390px: título "Emitir CPE" colapsado a ancho 0 **encima del chip 📅**, importe de IGV partido en dos líneas, banner de éxito cortando serie y monto | header con wrap, importes nowrap, banner sin ellipsis |
+| 🟡 | Factura de exportación imprimía **"OPERACIÓN: Venta interna"** junto al sello de exportación 0% | "Exportación de servicios" en los 4 renders |
+
+**LIMPIO (verificado, no asumido):** 0 referencias rotas (incl. 202 handlers dentro de strings HTML) · 0 RPCs fantasma (94 llamadas vs 335 funciones) · 0 overloads PostgREST · correlativo/idempotencia/atomicidad resisten 12 rutas de raise sin mover `series` · Σ buckets == total exacto en 5 escenarios · ticket byte-idéntico entre PS y OPS · 0 errores JS en 224 casos · 0 scroll horizontal en 8 combos.
+
+**PENDIENTE (decisión del dueño, NO bloqueante de código):** `modo='demo'` es **letra muerta** (ninguna función lo lee: ya se emite contra el API real de NubeFact) · una baja rechazada por SUNAT queda `anulada` para siempre (el reconciliador no revisa anuladas y `error_baja` no lo escribe nadie) · NC múltiples sobre el mismo doc y siempre por el 100% · `es_staff()` incluye `hotel` → personal del hotel puede emitir CPE · `listar_comprobantes_atascados` sin cablear (es el monitor de pendientes) · backend sin guard antimezcla de monedas (hoy solo la UI) · `total_inafecta` incluye exportación y `v_ingresos` omite inafecta · TC sin reintento ni tope de antigüedad · código muerto (modal legacy ~120 líneas, 9 exports OPS, 33 clases CSS).
+
 **REGLAS DE MONEDA (grabar):**
 - **Legal:** la conversión a soles usa el **TC promedio ponderado VENTA** de la fecha en que nace la obligación del IGV —en la práctica la fecha de emisión— (**art. 20.1 R.S. 183-2004/SUNAT**); si ese día no hubo publicación, **el último publicado** (art. 20.2). El "TC publicado en la fecha D" es el cierre SBS del día hábil ANTERIOR: es justo lo que devuelve `apis.net.pe?fecha=D`. La regla "compra para ingresos / venta para gastos" es de RENTA (art. 61 LIR) y **no aplica** al IGV ni a detracciones.
 - **NUNCA consultar la API dentro de `emitir_comprobante`**: el proveedor limita ráfagas (429 real, verificado) y un timeout bloquearía la transacción de facturación. El cron llena la tabla; la emisión solo LEE (`tc_venta`). El TC usado se **persiste** en `comprobantes.tipo_cambio` (sustenta la detracción; jamás se recalcula).
