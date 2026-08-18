@@ -1478,8 +1478,8 @@ const _facEscM = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':
 function _facMItemsDefecto() {
   const S = _facM;
   const base = (S.paquete && S.paquete.length) ? S.paquete : (S.servicios || []).slice(0, 2);
-  if (!base.length) return [{ nombre: 'Tour Islas Ballestas', precio: S.precioDef || 30, cantidad: 1 }];
-  return base.map(p => ({ nombre: p.nombre, precio: Number(p.precio) || 0, cantidad: 1 }));
+  if (!base.length) return [{ nombre: 'Tour Islas Ballestas', precio: S.precioDef || 30, cantidad: 1, unidad: 'ZZ' }];
+  return base.map(p => ({ nombre: p.nombre, precio: Number(p.precio) || 0, cantidad: 1, unidad: p.unidad || 'ZZ' }));
 }
 async function abrirBoletaMuelle() {
   resTap(); resHap(10);
@@ -1775,7 +1775,7 @@ function _facMSvcOvToggle(id) {
 function _facMSvcPickAdd() {
   const S = _facM, P = S._svcPick; if (!P) return;
   const ids = Object.keys(P.sel);
-  ids.forEach(id => { const sv = (S.servicios || []).find(x => String(x.id) === String(id)); if (sv) S.items.push({ nombre: sv.nombre, precio: Number(sv.precio) || 0, cantidad: 1 }); });
+  ids.forEach(id => { const sv = (S.servicios || []).find(x => String(x.id) === String(id)); if (sv) S.items.push({ nombre: sv.nombre, precio: Number(sv.precio) || 0, cantidad: 1, unidad: sv.unidad || 'ZZ' }); });
   _facMSvcOvClose();
   if (ids.length) { fx('sel'); resHap([10, 25, 10]); }
   _facMRepaintItems();
@@ -2039,7 +2039,7 @@ function _facMEmitir() {
     tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
     cliente_doc_tipo: cli.doc_tipo, cliente_doc: (cli.doc_tipo === '0' && (!cli.doc_numero || cli.doc_numero === '00000000')) ? '' : cli.doc_numero, cliente_nombre: cli.nombre,   // '0' con doc REAL = Tax-ID extranjero (no blanquear); '0' vacío/00000000 = Varios
     cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!S.export || !!cli.es_extranjero,
-    items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0 }, it.gratis ? { afectacion: 'gratuito' } : {})),
+    items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0, unidad: it.unidad || 'ZZ' }, it.gratis ? { afectacion: 'gratuito' } : {})),   // unidad = catálogo SUNAT 03 (ZZ servicio / NIU bien)
     exonerado: false, medio_pago: soloGratis ? null : _facMPagoStr(t.total), exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
     localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)   // idempotente por intento (mismo en reintentos)
   };
