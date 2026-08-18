@@ -1616,6 +1616,12 @@ function _facMVarios() { _facMPick({ doc_tipo: '0', doc_numero: '', nombre: 'Cli
 function _facMCliInvalido() {
   const S = _facM, c = S.cliente;
   if (!c || S.tipo !== 1) return '';
+  // En EXPORTACIÓN el adquirente es extranjero: pasaporte (7) o Tax-ID ('0' con doc real). Sin esto
+  // el chip marcaba en rojo a un cliente válido mientras los requisitos de abajo lo daban por bueno.
+  if (S.export) {
+    const esTaxId = c.doc_tipo === '0' && c.doc_numero && c.doc_numero !== '00000000';
+    return (c.doc_tipo === '7' || esTaxId) ? '' : 'La exportación necesita pasaporte o Tax-ID del cliente extranjero';
+  }
   if (c.doc_tipo === '0') return 'La factura no puede ser a “Varios” — necesita un RUC';
   if (c.doc_tipo !== '6') return 'La factura necesita un RUC — este cliente no lo tiene';
   return '';
@@ -1728,8 +1734,8 @@ function _facMSouthHtml() {
   const S = _facM, t = _facMTotal();
   const hayVenta = t.total > 0 || (t.gratis > 0 && S.tipo === 2 && !S.export);   // boleta 100% gratuita también emite
   const puede = hayVenta && _facMPuede();
-  const hint = !hayVenta ? ' · agrega un servicio' : (_facMPuede() ? '' : ' · faltan requisitos');
-  const detrM = S.tipo === 1 && !S.export && t.total > 700;   // detracción SPOT (factura nacional > S/700)
+  const hint = !hayVenta ? ((S.items || []).length ? ' · falta ponerle precio' : ' · agrega un servicio') : (_facMPuede() ? '' : ' · faltan requisitos');
+  const detrM = S.tipo === 1 && !S.export && _facMTotalSoles(t.total) > 700;   // SPOT: el umbral es en SOLES
   const detrMonto = detrM ? Math.round(t.total * 0.12 * 100) / 100 : 0;
   const detrNeto = detrM ? Math.round((t.total - detrMonto) * 100) / 100 : 0;
   return `${S.tipo === 1 ? `<div style="margin-bottom:10px"><button onclick="_facMToggleExport()" title="${S.export ? 'Volver a factura nacional 18%' : 'Exportación de servicios (turismo receptivo) — 0% IGV'}" style="width:100%;padding:9px;border-radius:10px;border:1px solid ${S.export ? '#0ea5e9' : '#e5e7eb'};background:${S.export ? 'rgba(14,165,233,.1)' : '#fff'};color:${S.export ? '#0369a1' : '#6b7280'};font-weight:800;font-size:12.5px;cursor:pointer">🌎 ${S.export ? 'Exportación 0% IGV — activa' : '¿Exportación? (turista extranjero)'}</button></div>` : ''}<div id="facm-pago">${_facMPagoHTML(t)}</div>
@@ -1935,8 +1941,10 @@ function _facMSimCPE() { return _facMSim(_facMMoneda()); }
 function _facMTotalSoles(total) {
   const S = _facM;
   if (!S || _facMMoneda() !== 'USD') return Number(total) || 0;
-  const tc = Number(S.tc) || 0;
-  return tc > 0 ? Math.round((Number(total) || 0) * tc * 100) / 100 : (Number(total) || 0);
+  // Sin TC disponible se usa un PISO conservador (el dólar no ha bajado de 3.0 en años): así el
+  // umbral se exige de más y nunca se omite un requisito legal por falta de dato.
+  const tc = Number(S.tc) > 0 ? Number(S.tc) : 3.0;
+  return Math.round((Number(total) || 0) * tc * 100) / 100;
 }
 // Recargo por pago con tarjeta (comisión del POS trasladada al cliente). Va como LÍNEA del CPE:
 // si se cobra 5% más, el comprobante debe declararlo (mayor contraprestación, mismo IGV).
