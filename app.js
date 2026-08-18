@@ -1489,7 +1489,7 @@ async function abrirBoletaMuelle() {
   const servicios = boot.servicios || [];
   const precioDef = Number(boot.precio_defecto) || (servicios[0] && servicios[0].precio) || 30;
   _facM = {
-    tab: 'emitir', servicios, paquete: paq || [], serieB: boot.serie_boleta || 'B002', serieF: boot.serie_factura || 'F002', precioDef,
+    tab: 'emitir', servicios, paquete: paq || [], tc: Number(boot.tipo_cambio) || 0, serieB: boot.serie_boleta || 'B002', serieF: boot.serie_factura || 'F002', precioDef,
     tipo: 2,
     // VARIOS por defecto (con su ×) — el flujo más común del muelle; buscar solo si hace falta
     cliente: { doc_tipo: '0', doc_numero: '', nombre: 'Cliente varios' },
@@ -1702,7 +1702,9 @@ function _facMToggleExport() {
   S.export = !S.export;
   if (S.export) (S.items || []).forEach(it => { it.gratis = false; });   // export no mezcla cortesía
   fx(S.export ? 'ok' : 'sel');
-  _facMRender();   // cambia reglas + total + oculta 🎁 en las filas → render completo
+  // En sitio: `_facMRender()` reconstruía TODO el modal y con ello se perdían el scroll y el foco.
+  // Lo que cambia (chip del cliente, filas con/sin 🎁, reglas y total) ya tiene repintado propio.
+  _facMRepaintCli(); _facMRepaintItems();
 }
 function _facMItemRow(it, i) {
   const d = String(it.nombre || ''); const sp = d.indexOf(' — ');
@@ -1756,7 +1758,7 @@ function _facMSvcOvRender() {
       return `<button data-facm-sv="${String(sv.id).replace(/"/g, '')}" onclick="_facMSvcOvToggle('${String(sv.id).replace(/'/g, '')}')" style="display:flex;width:100%;align-items:center;gap:9px;padding:10px;border-radius:11px;border:1px solid ${on ? '#c9a84c' : '#eee'};background:${on ? '#fdf6ec' : '#fff'};margin-bottom:6px;cursor:pointer;text-align:left;transition:background .15s,border-color .15s">
         <span class="facm-svchk" style="width:18px;font-weight:900;color:#8a6d1e">${on ? '✓' : ''}</span>
         <span style="flex:1;min-width:0"><span style="display:block;font-weight:700;font-size:12.5px;color:#3d0508;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(tit)}</span>${sub ? `<span style="display:block;font-size:10px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(sub)}</span>` : ''}</span>
-        <span style="font-size:11px;color:#9b6b6e;white-space:nowrap">S/ ${sv.precio}</span>
+        <span style="font-size:11px;color:#9b6b6e;white-space:nowrap">${_facMSim(sv.moneda)} ${sv.precio}</span>
       </button>`; }).join('') || '<div style="padding:12px;color:#9ca3af;font-size:12px;text-align:center">Catálogo vacío</div>'}
     </div>
     <button id="facm-svgo" onclick="_facMSvcPickAdd()" ${n ? '' : 'disabled'} style="margin-top:10px;width:100%;padding:11px;border-radius:11px;border:none;background:linear-gradient(135deg,#8b1a1f,#56070c);color:#fff;font-weight:800;font-size:13px;${n ? '' : 'opacity:.5'}">${n ? `✓ Agregar ${n} servicio${n === 1 ? '' : 's'}` : 'Elige uno o más servicios'}</button>
@@ -1784,10 +1786,13 @@ function _facMSvcPickAdd() {
     if (monCarrito && mon !== monCarrito) { rechazados.push(sv.nombre); return; }
     S.items.push({ nombre: sv.nombre, precio: Number(sv.precio) || 0, cantidad: 1, unidad: sv.unidad || 'ZZ', moneda: mon });
   });
-  if (rechazados.length) { _facMSvcOvClose(); return _facMErr('Un comprobante no puede mezclar monedas: «' + String(rechazados[0]).slice(0, 26) + '» va en otra moneda — emítelo aparte.'); }
+  // El aviso va AL FINAL: con un `return` temprano los servicios aceptados entraban al estado pero
+  // la lista y el TOTAL no se repintaban → se cobraba lo que mostraba la pantalla y se emitía otro
+  // importe. Primero se repinta SIEMPRE, después se avisa.
   _facMSvcOvClose();
   if (ids.length) { fx('sel'); resHap([10, 25, 10]); }
   _facMRepaintItems();
+  if (rechazados.length) return _facMErr('Un comprobante no puede mezclar monedas: «' + String(rechazados[0]).slice(0, 26) + '» va en otra moneda — emítelo aparte.');
 }
 function _facMDrop() {
   const d = document.getElementById('facm-drop'); if (!d) return;
@@ -1924,6 +1929,15 @@ function _facMMoneda() {
 }
 function _facMSim(m) { return String(m || 'PEN').toUpperCase() === 'USD' ? 'US$' : 'S/'; }
 function _facMSimCPE() { return _facMSim(_facMMoneda()); }
+// Los umbrales legales (S/700 identificar, S/700 detracción, S/2000 bancarización) están en SOLES:
+// una venta en dólares se convierte con el TC oficial que trae el bootstrap. Sin TC no se convierte
+// (peor caso: se pide el requisito igual, nunca se lo salta).
+function _facMTotalSoles(total) {
+  const S = _facM;
+  if (!S || _facMMoneda() !== 'USD') return Number(total) || 0;
+  const tc = Number(S.tc) || 0;
+  return tc > 0 ? Math.round((Number(total) || 0) * tc * 100) / 100 : (Number(total) || 0);
+}
 // Recargo por pago con tarjeta (comisión del POS trasladada al cliente). Va como LÍNEA del CPE:
 // si se cobra 5% más, el comprobante debe declararlo (mayor contraprestación, mismo IGV).
 const _FACM_TARJETA = { rate: 0.05, label: 'Recargo por pago con tarjeta (5%)' };
@@ -1944,7 +1958,7 @@ function _facMReglas() {
     rules.push({ dura: true, ok: !!cli && cli.doc_tipo === '6' && /^\d{11}$/.test(doc), txt: 'Factura → RUC de 11 dígitos' });
     rules.push({ dura: true, ok: !!cli && !!(cli.nombre || '').trim(), txt: 'Razón social' });
     rules.push({ dura: true, ok: !!cli && !!(cli.direccion || '').trim(), txt: 'Dirección fiscal' });
-  } else if (t.total > 700) { // BOLETA > 700
+  } else if (_facMTotalSoles(t.total) > 700) { // BOLETA > 700 (en soles)
     rules.push({ dura: true, ok: !!doc, txt: 'Boleta > S/700 → identificar cliente (DNI/CE/pasaporte)' });
     rules.push({ dura: true, ok: !!cli && !!(cli.nombre || '').trim(), txt: 'Nombre del cliente' });
   }
@@ -1988,7 +2002,7 @@ function _facMPagoHTML(t) {
       <label style="flex:1;font-size:9.5px;font-weight:800;color:#9b7d80">EFECTIVO S/<input id="facm-mx-ef" type="number" inputmode="decimal" min="0" value="${p.ef || ''}" oninput="_facMPagoMxInput('ef',this.value)" style="${inp};margin-top:3px"></label>
       <label style="flex:1;font-size:9.5px;font-weight:800;color:#9b7d80">VIRTUAL S/<input id="facm-mx-vi" type="number" inputmode="decimal" min="0" value="${p.vi || ''}" oninput="_facMPagoMxInput('vi',this.value)" style="${inp};margin-top:3px"></label>
     </div>` : ''}
-    ${(total >= 2000 && S.pagoTipo === 'efectivo') ? '<div style="font-size:10px;color:#a16207;margin:-4px 0 8px">⚠ ≥ S/2000: SUNAT exige medio bancario — usa Virtual o Mixto</div>' : ''}`;
+    ${(_facMTotalSoles(total) >= 2000 && S.pagoTipo === 'efectivo') ? '<div style="font-size:10px;color:#a16207;margin:-4px 0 8px">⚠ ≥ S/2000: SUNAT exige medio bancario — usa Virtual o Mixto</div>' : ''}`;
 }
 function _facMPagoCiclo() {
   const S = _facM;
@@ -2092,11 +2106,11 @@ function _facMEmitir() {
   const payload = {
     tipo: S.tipo, serie: S.tipo === 1 ? S.serieF : S.serieB,
     cliente_doc_tipo: cli.doc_tipo, cliente_doc: (cli.doc_tipo === '0' && (!cli.doc_numero || cli.doc_numero === '00000000')) ? '' : cli.doc_numero, cliente_nombre: cli.nombre,   // '0' con doc REAL = Tax-ID extranjero (no blanquear); '0' vacío/00000000 = Varios
-    cliente_email: '', cliente_tel: '', cliente_dir: cli.direccion || '', es_extranjero: !!S.export || !!cli.es_extranjero,
+    cliente_email: (S.email || '').trim(), cliente_tel: (S.tel || '').trim(), cliente_dir: cli.direccion || '', es_extranjero: !!S.export || !!cli.es_extranjero,
     moneda: _facMMoneda(),   // un CPE = una sola moneda (la del catálogo)
     items: items.map(it => Object.assign({ descripcion: it.nombre, cantidad: Number(it.cantidad) || 0, precio: Number(it.precio) || 0, unidad: it.unidad || 'ZZ', moneda: it.moneda || 'PEN' }, it.gratis ? { afectacion: 'gratuito' } : {}))   // unidad = catálogo SUNAT 03 (ZZ servicio / NIU bien)
       .concat(t.rec > 0 ? [Object.assign({ descripcion: _FACM_TARJETA.label, cantidad: 1, precio: t.rec, unidad: 'ZZ', moneda: _facMMoneda() }, S.export ? { afectacion: 'exportacion' } : {})] : []),   // el recargo del POS se declara en el CPE
-    exonerado: false, medio_pago: soloGratis ? null : _facMPagoStr(t.total), exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && t.total > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
+    exonerado: false, medio_pago: soloGratis ? null : _facMPagoStr(t.total), exportacion: !!S.export, detraccion: (S.tipo === 1 && !S.export && _facMTotalSoles(t.total) > 700), operador: myOpName,   // SPOT 037: factura nacional > S/700
     localId: 'facm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)   // idempotente por intento (mismo en reintentos)
   };
   const entry = { estado: 'enviando', nombre: cli.nombre, total: t.total, moneda: _facMMoneda(), _payload: payload };
@@ -2180,7 +2194,7 @@ function _facMRender() {
     return `<div class="facm-row" style="animation-delay:${i*40}ms;border:1px solid #f0e6e7;border-radius:13px;padding:11px;margin-bottom:9px;${anulada?'opacity:.55':''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div style="min-width:0"><div style="font-weight:800;font-size:13px;color:#3d0508;${anulada?'text-decoration:line-through':''}">${num} ${_facMChip(c)}</div><div style="font-size:11px;color:#9b6b6e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_facEscM(c.cliente_nombre||'—')} · ${c.hora}</div></div>
-        <div style="font-weight:800;font-size:13px;color:#56070c;white-space:nowrap">S/ ${(c.total||0)}</div>
+        <div style="font-weight:800;font-size:13px;color:#56070c;white-space:nowrap">${_facMSim(c.moneda)} ${(c.total||0)}</div>
       </div>
       ${pend?'<div style="margin-top:7px;font-size:11px;font-weight:700;color:#a16207;background:#fdf6ec;border-radius:7px;padding:4px 8px">⏳ Anulación en revisión por PS</div>':''}
       ${anulada?'<div style="margin-top:7px;font-size:11px;font-weight:700;color:#9ca3af">Anulada</div>':`
