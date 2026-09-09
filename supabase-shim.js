@@ -189,6 +189,7 @@
         const { data: j, error } = await window.SupaAPI.sb.rpc('equipo_login');
         if (!error && j && j.ok && (j.accesos || {}).muelle) {
           _esAdminMuelle = (j.accesos || {}).muelle === 'admin';
+          window._esAdminMuelle = _esAdminMuelle;   // app.js: caja por operador (admin ve todo)
           hideLogin();
           if (typeof origSeleccionar === 'function') origSeleccionar(j.nombre);
           try { gateHorario(); } catch (e) {}

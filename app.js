@@ -2408,10 +2408,19 @@ function renderReservas(reservas) {
 
 function renderFinanzas() { renderCaja(window.cajaData); }
 
+// Caja POR OPERADOR (regla dueño 2026-09-09): el operador del muelle ve SOLO los cobros/pagos que ÉL registró;
+// el admin del muelle (acceso muelle='admin', o el panel PS) ve todo. La data completa sigue llegando en
+// window.cajaData porque los chips "pagado/cobrado" de pases y comisionados deben cruzar con TODA la caja.
+function _cajaEsMia(c) {
+    if (window._esAdminMuelle || !myOpName) return true;
+    return ((c.operador || '').trim().toLowerCase() === (myOpName || '').trim().toLowerCase());
+}
 function renderCaja(caja) {
+    let _cajaHoyTodos = (caja || []).filter(c => esFechaHoy(c.timestamp));
+    let _soloMia = !(window._esAdminMuelle || !myOpName);
     // Ordenar: _syncing/_queued primero, luego descendente por timestamp
-    let txHoy = (caja || [])
-        .filter(c => esFechaHoy(c.timestamp))
+    let txHoy = _cajaHoyTodos
+        .filter(_cajaEsMia)
         .sort((a, b) => {
             let aPrio = (a._syncing || a._queued) ? 1 : 0;
             let bPrio = (b._syncing || b._queued) ? 1 : 0;
@@ -2498,7 +2507,7 @@ function renderCaja(caja) {
             </div>
             <span class="font-black text-sm ${colorText} shrink-0">${signo} S/${monto.toFixed(2)}</span>
         </div>`;
-    }).join('') || '<div class="text-center p-6 text-gray-400 text-sm font-bold">No hay movimientos hoy.</div>';
+    }).join('') || `<div class="text-center p-6 text-gray-400 text-sm font-bold">${_soloMia ? 'No registraste cobros ni pagos hoy.' : 'No hay movimientos hoy.'}</div>`;
 
     let saldo = ingresos - salidas;
 
@@ -2627,7 +2636,8 @@ function renderCaja(caja) {
 
     // ── Cruzar con pagos ya realizados (categoria='Pagos' en cajaData de hoy) ──
     let pagosMap = {};
-    txHoy.filter(c => c.categoria === 'Pagos').forEach(c => {
+    // cruce con TODA la caja del día (un pago hecho por otro operador sigue siendo un pago)
+    _cajaHoyTodos.filter(c => c.categoria === 'Pagos').forEach(c => {
         // Resolver nombre: primero por id_contacto en catálogo, luego usar id_contacto directo
         let key = '';
         if (c.id_contacto) {
@@ -2716,7 +2726,7 @@ function renderCaja(caja) {
     if(hPanel) {
         hPanel.innerHTML = `
         <div class="bg-[#56070c] rounded-t-2xl p-4 text-white">
-            <p class="text-[9px] font-bold uppercase tracking-widest opacity-70 mb-1">Balance del turno</p>
+            <p class="text-[9px] font-bold uppercase tracking-widest opacity-70 mb-1">${_soloMia ? 'Mi caja · ' + myOpName : 'Balance del turno · todos'}</p>
             <p class="text-3xl font-black">S/ ${saldo.toFixed(2)}</p>
             <div class="flex justify-between mt-2 text-xs opacity-80">
                 <span>+ S/${ingresos.toFixed(2)} entradas</span>
